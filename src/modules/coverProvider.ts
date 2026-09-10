@@ -1,3 +1,5 @@
+import { findEPUBCoverURI } from "./epubCover";
+
 export class CoverProvider {
   private static cache = new Map<number, string | null>();
 
@@ -5,7 +7,18 @@ export class CoverProvider {
     return `chrome://${addon.data.config.addonRef}/content/icons/favicon.png`;
   }
 
-  static async findCover(_item: Zotero.Item): Promise<string | null> {
+  static async findCover(item: Zotero.Item): Promise<string | null> {
+    for (const attachment of this.findEPUBAttachments(item)) {
+      try {
+        const filePath = await attachment.getFilePathAsync();
+        if (!filePath) continue;
+
+        const cover = await findEPUBCoverURI(filePath);
+        if (cover) return cover;
+      } catch (error) {
+        ztoolkit.log("Failed to find EPUB cover", attachment.id, error);
+      }
+    }
     return null;
   }
 
@@ -15,5 +28,25 @@ export class CoverProvider {
 
   static clearCache(): void {
     this.cache.clear();
+  }
+
+  private static findEPUBAttachments(item: Zotero.Item): Zotero.Item[] {
+    if (this.isEPUBAttachment(item)) {
+      return [item];
+    }
+    if (!item.isRegularItem()) {
+      return [];
+    }
+    return Zotero.Items.get(item.getAttachments()).filter((attachment) =>
+      this.isEPUBAttachment(attachment),
+    );
+  }
+
+  private static isEPUBAttachment(item: Zotero.Item): boolean {
+    return (
+      item.isFileAttachment() &&
+      (item.attachmentContentType === "application/epub+zip" ||
+        item.attachmentReaderType === "epub")
+    );
   }
 }
