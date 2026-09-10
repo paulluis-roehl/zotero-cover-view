@@ -248,6 +248,32 @@ describe("EPUB cover discovery", function () {
     );
   });
 
+  it("caches cover lookup promises by item ID", async function () {
+    let lookups = 0;
+    const item = attachment(1, async () => {
+      lookups++;
+      return false;
+    });
+
+    CoverProvider.cacheCover(item);
+    const first = CoverProvider.getCover(item.id);
+    CoverProvider.cacheCover(item);
+    assert.strictEqual(CoverProvider.getCover(item.id), first);
+    assert.isNull(await first);
+    assert.equal(lookups, 1);
+  });
+
+  it("does not load an item when reading the cover cache", async function () {
+    let itemLoads = 0;
+    Zotero.Items.get = (() => {
+      itemLoads++;
+      return [];
+    }) as typeof originalGet;
+
+    assert.isNull(await CoverProvider.getCover(999));
+    assert.equal(itemLoads, 0);
+  });
+
   it("returns null when an attachment lookup fails", async function () {
     assert.isNull(
       await CoverProvider.findCover(

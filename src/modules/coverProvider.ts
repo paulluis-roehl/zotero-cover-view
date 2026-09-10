@@ -1,10 +1,20 @@
 import { findEPUBCoverURI } from "./epubCover";
 
 export class CoverProvider {
-  private static cache = new Map<number, string | null>();
+  private static cache = new Map<number, Promise<string | null>>();
 
-  static async getCover(_itemID: number): Promise<string> {
-    return `chrome://${addon.data.config.addonRef}/content/icons/favicon.png`;
+  static cacheCover(item: Zotero.Item): void {
+    if (!this.cache.has(item.id)) {
+      const cover = this.findCover(item).catch((error) => {
+        ztoolkit.log("Failed to resolve cover", item.id, error);
+        return null;
+      });
+      this.cache.set(item.id, cover);
+    }
+  }
+
+  static getCover(itemID: number): Promise<string | null> {
+    return this.cache.get(itemID) ?? Promise.resolve(null);
   }
 
   static async findCover(
