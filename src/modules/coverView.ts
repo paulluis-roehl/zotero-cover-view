@@ -20,8 +20,11 @@ export class CoverView {
         image.style.objectFit = "contain";
         span.appendChild(image);
         void CoverProvider.getCover(Number(data)).then((cover) => {
-          image.alt = "Cover";
-          image.src = cover;
+          const currentImage = span.querySelector("img");
+          if (currentImage) {
+            currentImage.alt = "Cover";
+            currentImage.src = cover;
+          }
         });
         return span;
       },
