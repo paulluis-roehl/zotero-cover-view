@@ -9,9 +9,14 @@ const PARSER_ERROR_NS = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
  */
 export async function findEPUBCoverURI(
   filePath: string,
+  readText: (uri: string) => Promise<string> = readURIText,
 ): Promise<string | null> {
   const archiveURI = Zotero.File.pathToFileURI(filePath);
-  const container = await readArchiveXML(archiveURI, "META-INF/container.xml");
+  const container = await readArchiveXML(
+    archiveURI,
+    "META-INF/container.xml",
+    readText,
+  );
   const rootfiles = children(
     container.documentElement,
     CONTAINER_NS,
@@ -34,6 +39,7 @@ export async function findEPUBCoverURI(
   const packageDocument = await readArchiveXML(
     archiveURI,
     normalizedPackagePath,
+    readText,
   );
   const href = findCoverHref(packageDocument);
   if (!href) return null;
@@ -82,10 +88,9 @@ function findCoverHref(document: Document): string | null {
 async function readArchiveXML(
   archiveURI: string,
   entryPath: string,
+  readText: (uri: string) => Promise<string>,
 ): Promise<Document> {
-  const text = await Zotero.File.getContentsFromURLAsync(
-    getArchiveEntryURI(archiveURI, entryPath),
-  );
+  const text = await readText(getArchiveEntryURI(archiveURI, entryPath));
   // The plugin's bootstrap script context need not expose browser DOM globals.
   const Parser = ztoolkit.getGlobal("DOMParser") as typeof DOMParser;
   const document = new Parser().parseFromString(text, "application/xml");
@@ -93,6 +98,34 @@ async function readArchiveXML(
     throw new Error(`Invalid EPUB XML: ${entryPath}`);
   }
   return document;
+}
+
+export function readURIText(uri: string): Promise<string> {
+  const { NetUtil } = ChromeUtils.importESModule(
+    "resource://gre/modules/NetUtil.sys.mjs",
+  );
+  const channel = NetUtil.newChannel({
+    uri: Services.io.newURI(uri),
+    loadUsingSystemPrincipal: true,
+  });
+
+  return new Promise((resolve, reject) => {
+    NetUtil.asyncFetch(channel, (stream: nsIInputStream, status: nsresult) => {
+      if (!Components.isSuccessCode(status)) {
+        reject(Components.Exception(`Failed to read ${uri}`, status));
+        return;
+      }
+      try {
+        resolve(
+          NetUtil.readInputStreamToString(stream, stream.available(), {
+            charset: "UTF-8",
+          }),
+        );
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
 }
 
 function getArchiveEntryURI(archiveURI: string, entryPath: string): string {

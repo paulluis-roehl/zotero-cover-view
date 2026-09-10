@@ -1,18 +1,30 @@
 import { assert } from "chai";
 import { BasicTool } from "zotero-plugin-toolkit";
-import { findEPUBCoverURI } from "../src/modules/epubCover";
+import {
+  findEPUBCoverURI as findEPUBCoverURIImpl,
+  readURIText,
+} from "../src/modules/epubCover";
 import { CoverProvider } from "../src/modules/coverProvider";
 
 describe("EPUB cover discovery", function () {
   const archiveURI = "file:///books/example.epub";
   const entries = new Map<string, string>();
-  let originalRead: typeof Zotero.File.getContentsFromURLAsync;
   let originalPath: typeof Zotero.File.pathToFileURI;
   let originalGet: typeof Zotero.Items.get;
   let toolkitDescriptor: PropertyDescriptor | undefined;
 
   function uri(path: string): string {
     return `jar:${archiveURI}!/${path}`;
+  }
+
+  function findEPUBCoverURI(filePath: string): Promise<string | null> {
+    return findEPUBCoverURIImpl(filePath, async (entryURI) => {
+      const text = entries.get(entryURI);
+      if (text === undefined) {
+        throw new Error(`Missing archive entry: ${entryURI}`);
+      }
+      return text;
+    });
   }
 
   function fixture(
@@ -56,7 +68,7 @@ describe("EPUB cover discovery", function () {
 
   beforeEach(function () {
     entries.clear();
-    originalRead = Zotero.File.getContentsFromURLAsync;
+    CoverProvider.clearCache();
     originalPath = Zotero.File.pathToFileURI;
     originalGet = Zotero.Items.get;
     toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
@@ -65,15 +77,9 @@ describe("EPUB cover discovery", function () {
       value: new BasicTool(),
     });
     Zotero.File.pathToFileURI = () => archiveURI;
-    Zotero.File.getContentsFromURLAsync = (async (url: string) => {
-      const text = entries.get(url);
-      if (text === undefined) throw new Error(`Missing archive entry: ${url}`);
-      return text;
-    }) as typeof originalRead;
   });
 
   afterEach(function () {
-    Zotero.File.getContentsFromURLAsync = originalRead;
     Zotero.File.pathToFileURI = originalPath;
     Zotero.Items.get = originalGet;
     if (toolkitDescriptor) {
@@ -81,6 +87,13 @@ describe("EPUB cover discovery", function () {
     } else {
       Reflect.deleteProperty(globalThis, "ztoolkit");
     }
+  });
+
+  it("reads text through Gecko network channels", async function () {
+    assert.equal(
+      await readURIText("data:text/plain,EPUB%20cover"),
+      "EPUB cover",
+    );
   });
 
   it("prefers EPUB 3 cover-image tokens over EPUB 2 metadata", async function () {
@@ -215,7 +228,9 @@ describe("EPUB cover discovery", function () {
           getAttachments: () => [1, 2],
         } as unknown as Zotero.Item;
         assert.equal(
-          await CoverProvider.findCover(parent),
+          await CoverProvider.findCover(parent, (filePath) =>
+            findEPUBCoverURI(filePath),
+          ),
           uri("OPS/cover.jpg"),
         );
       });
@@ -225,7 +240,10 @@ describe("EPUB cover discovery", function () {
   it("accepts an EPUB attachment directly", async function () {
     fixture('<item properties="cover-image" href="cover.jpg"/>');
     assert.equal(
-      await CoverProvider.findCover(attachment(1, async () => "book.epub")),
+      await CoverProvider.findCover(
+        attachment(1, async () => "book.epub"),
+        (filePath) => findEPUBCoverURI(filePath),
+      ),
       uri("OPS/cover.jpg"),
     );
   });

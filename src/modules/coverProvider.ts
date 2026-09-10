@@ -7,13 +7,16 @@ export class CoverProvider {
     return `chrome://${addon.data.config.addonRef}/content/icons/favicon.png`;
   }
 
-  static async findCover(item: Zotero.Item): Promise<string | null> {
+  static async findCover(
+    item: Zotero.Item,
+    findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
+  ): Promise<string | null> {
     for (const attachment of this.findEPUBAttachments(item)) {
       try {
         const filePath = await attachment.getFilePathAsync();
         if (!filePath) continue;
 
-        const cover = await findEPUBCoverURI(filePath);
+        const cover = await findEPUBCover(filePath);
         if (cover) return cover;
       } catch (error) {
         ztoolkit.log("Failed to find EPUB cover", attachment.id, error);
