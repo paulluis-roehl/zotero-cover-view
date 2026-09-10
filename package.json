@@ -1,24 +1,24 @@
 {
-  "name": "zotero-plugin-template",
+  "name": "zotero-cover-view",
   "type": "module",
-  "version": "3.1.0",
-  "description": "Zotero Plugin Template",
+  "version": "0.0.2",
+  "description": "Zotero Cover View",
   "config": {
-    "addonName": "Zotero Plugin Template",
-    "addonID": "addontemplate@euclpts.com",
-    "addonRef": "addontemplate",
-    "addonInstance": "AddonTemplate",
-    "prefsPrefix": "extensions.zotero.addontemplate"
+    "addonName": "Zotero Cover View",
+    "addonID": "coverview@insature.net",
+    "addonRef": "coverview",
+    "addonInstance": "CoverView",
+    "prefsPrefix": "extensions.zotero.coverview"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/windingwind/zotero-plugin-template.git"
+    "url": "git+https://github.com/paulluis-roehl/zotero-cover-view.git"
   },
-  "author": "windingwind",
+  "author": "PL Roehl",
   "bugs": {
-    "url": "https://github.com/windingwind/zotero-plugin-template/issues"
+    "url": "https://github.com/paulluis-roehl/zotero-cover-view/issues"
   },
-  "homepage": "https://github.com/windingwind/zotero-plugin-template#readme",
+  "homepage": "https://github.com/paulluis-roehl/zotero-cover-view#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",
@@ -39,10 +39,10 @@
     "@zotero-plugin/eslint-config": "^0.6.7",
     "chai": "^6.2.1",
     "eslint": "^9.39.2",
-    "mocha": "^11.7.5",
+    "mocha": "^12.0.0",
     "prettier": "^3.7.4",
     "typescript": "^5.9.3",
-    "zotero-plugin-scaffold": "^0.8.2",
+    "zotero-plugin-scaffold": "^0.9.2",
     "zotero-types": "^4.1.0-beta.4"
   },
   "prettier": {
