@@ -1,4 +1,5 @@
 import { findEPUBCoverURI } from "./epubCover";
+import { findPDFCoverURI } from "./pdfCover";
 
 export class CoverProvider {
   private static cache = new Map<number, Promise<string | null>>();
@@ -20,6 +21,7 @@ export class CoverProvider {
   static async findCover(
     item: Zotero.Item,
     findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
+    findPDFCover: typeof findPDFCoverURI = findPDFCoverURI,
   ): Promise<string | null> {
     for (const attachment of this.findEPUBAttachments(item)) {
       try {
@@ -30,6 +32,18 @@ export class CoverProvider {
         if (cover) return cover;
       } catch (error) {
         ztoolkit.log("Failed to find EPUB cover", attachment.id, error);
+      }
+    }
+
+    for (const attachment of this.findPDFAttachments(item)) {
+      try {
+        const filePath = await attachment.getFilePathAsync();
+        if (!filePath) continue;
+
+        const cover = await findPDFCover(filePath);
+        if (cover) return cover;
+      } catch (error) {
+        ztoolkit.log("Failed to find PDF cover", attachment.id, error);
       }
     }
     return null;
@@ -44,8 +58,8 @@ export class CoverProvider {
   }
 
   private static findEPUBAttachments(item: Zotero.Item): Zotero.Item[] {
-    if (this.isEPUBAttachment(item)) {
-      return [item];
+    if (item.isFileAttachment()) {
+      return this.isEPUBAttachment(item) ? [item] : [];
     }
     if (!item.isRegularItem()) {
       return [];
@@ -60,6 +74,26 @@ export class CoverProvider {
       item.isFileAttachment() &&
       (item.attachmentContentType === "application/epub+zip" ||
         item.attachmentReaderType === "epub")
+    );
+  }
+
+  private static findPDFAttachments(item: Zotero.Item): Zotero.Item[] {
+    if (item.isFileAttachment()) {
+      return this.isPDFAttachment(item) ? [item] : [];
+    }
+    if (!item.isRegularItem()) {
+      return [];
+    }
+    return Zotero.Items.get(item.getAttachments()).filter((attachment) =>
+      this.isPDFAttachment(attachment),
+    );
+  }
+
+  private static isPDFAttachment(item: Zotero.Item): boolean {
+    return (
+      item.isFileAttachment() &&
+      (item.attachmentContentType === "application/pdf" ||
+        item.attachmentReaderType === "pdf")
     );
   }
 }
