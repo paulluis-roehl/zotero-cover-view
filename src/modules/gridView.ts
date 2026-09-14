@@ -14,10 +14,24 @@ type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
 };
 
+function registerStyleSheet(win: _ZoteroTypes.MainWindow): HTMLLinkElement {
+  const styles = ztoolkit.UI.createElement(win.document, "link", {
+    namespace: "html",
+    properties: {
+      type: "text/css",
+      rel: "stylesheet",
+      href: `chrome://${addon.data.config.addonRef}/content/coverView.css`,
+    },
+  });
+  win.document.documentElement?.appendChild(styles);
+  return styles;
+}
+
 export class GridView {
   private readonly itemsView: ItemsView;
   private readonly itemTree: StylableElement;
   private readonly gridHost: HTMLDivElement;
+  private readonly stylesheet: HTMLLinkElement;
   private readonly renderer: GridRenderer;
   private readonly itemTreeDisplay: string;
   private readonly removeListeners: Array<() => void> = [];
@@ -40,6 +54,8 @@ export class GridView {
     this.itemsView = itemsView;
     this.itemTree = itemTree;
     this.itemTreeDisplay = itemTree.style.display;
+    this.stylesheet = registerStyleSheet(win);
+
     this.gridHost = win.document.createElement("div");
     this.gridHost.id = "cover-view-grid";
     this.gridHost.hidden = true;
@@ -64,6 +80,7 @@ export class GridView {
     this.itemTree.style.display = this.itemTreeDisplay;
     this.renderer.destroy();
     this.gridHost.remove();
+    this.stylesheet.remove();
   }
 
   private listenForItemChanges(): void {
