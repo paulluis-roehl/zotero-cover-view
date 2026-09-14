@@ -7,7 +7,7 @@ import {
 } from "./modules/examples";
 import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
-import { CoverView } from "./modules/coverView";
+import { registerCoverColumn } from "./modules/coverColumn";
 import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup() {
@@ -29,7 +29,7 @@ async function onStartup() {
 
   await UIExampleFactory.registerExtraColumnWithCustomCell();
 
-  await CoverView.registerCoverColumn();
+  await registerCoverColumn();
 
   UIExampleFactory.registerItemPaneCustomInfoRow();
 
