@@ -1,16 +1,19 @@
+import { GridRenderer } from "./gridRenderer";
+
 const gridViews = new Map<Window, GridView>();
 
-type HideableElement = Element & { hidden: boolean };
+type StylableElement = Element & { style: CSSStyleDeclaration };
 
 export class GridView {
-  private readonly itemTree: HideableElement;
+  private readonly itemTree: StylableElement;
   private readonly gridHost: HTMLDivElement;
-  private readonly itemTreeWasHidden: boolean;
+  private readonly renderer: GridRenderer;
+  private readonly itemTreeDisplay: string;
 
   constructor(win: Window) {
     const itemTree = win.document.getElementById(
       "zotero-items-tree",
-    ) as HideableElement | null;
+    ) as StylableElement | null;
     if (!itemTree) {
       throw new Error(
         "Cannot attach grid view: #zotero-items-tree was not found",
@@ -18,20 +21,23 @@ export class GridView {
     }
 
     this.itemTree = itemTree;
-    this.itemTreeWasHidden = itemTree.hidden;
+    this.itemTreeDisplay = itemTree.style.display;
     this.gridHost = win.document.createElement("div");
     this.gridHost.id = "cover-view-grid";
     this.gridHost.hidden = true;
     itemTree.after(this.gridHost);
+    this.renderer = new GridRenderer(this.gridHost);
+    this.setEnabled(true);
   }
 
   setEnabled(enabled: boolean): void {
-    this.itemTree.hidden = enabled || this.itemTreeWasHidden;
+    this.itemTree.style.display = enabled ? "none" : this.itemTreeDisplay;
     this.gridHost.hidden = !enabled;
   }
 
   destroy(): void {
-    this.itemTree.hidden = this.itemTreeWasHidden;
+    this.itemTree.style.display = this.itemTreeDisplay;
+    this.renderer.destroy();
     this.gridHost.remove();
   }
 }
