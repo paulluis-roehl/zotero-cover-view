@@ -8,6 +8,11 @@ import {
 import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { registerCoverColumn } from "./modules/coverColumn";
+import {
+  attachGridView,
+  destroyGridViews,
+  detachGridView,
+} from "./modules/gridView";
 import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup() {
@@ -49,6 +54,7 @@ async function onStartup() {
 async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   // Create ztoolkit for every window
   addon.data.ztoolkit = createZToolkit();
+  attachGridView(win);
 
   win.MozXULElement.insertFTLIfNeeded(
     `${addon.data.config.addonRef}-mainWindow.ftl`,
@@ -91,11 +97,13 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
+  detachGridView(win);
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
 }
 
 function onShutdown(): void {
+  destroyGridViews();
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
   // Remove addon object
