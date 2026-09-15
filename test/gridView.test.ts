@@ -2,6 +2,51 @@ import { assert } from "chai";
 import { GridRenderer } from "../src/modules/gridRenderer";
 
 describe("grid view", function () {
+  it("restores visible native rows after scrolling the hidden list", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const items: Zotero.Item[] = [];
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+
+    try {
+      for (let index = 0; index < 8; index++) {
+        const item = new Zotero.Item("book");
+        item.setField("title", `Hidden list layout test ${index}`);
+        await item.saveTx();
+        items.push(item);
+      }
+      if (grid.hidden) toggle();
+      await pane.selectItems([items[0].id], true);
+      if (!pane.itemsView) throw new Error("Native item view is unavailable");
+      const list = pane.itemsView._treebox;
+
+      // Native selection can scroll this list while its ancestor is display:none.
+      // Reproduce the resulting mismatch between its cache and the DOM offset.
+      list.scrollTo(4 * list.itemHeight);
+      assert.isAbove(list.scrollOffset, list.targetElement.scrollTop);
+
+      toggle();
+      assert.isAbove(list.getWindowHeight(), 0);
+      assert.equal(list.scrollOffset, list.targetElement.scrollTop);
+      const first = list.getFirstVisibleRow();
+      const last = Math.min(
+        list.getLastVisibleRow(),
+        pane.itemsView.rowCount - 1,
+      );
+      for (let index = first; index <= last; index++) {
+        const row = list.getElementByIndex(index);
+        assert.exists(row, `Visible native row ${index} must be rendered`);
+        assert.isNotEmpty(row.textContent.trim());
+      }
+      assert.deepEqual(pane.getSelectedItems(true), [items[0].id]);
+    } finally {
+      if (grid.hidden) toggle();
+      for (const item of items) await item.eraseTx();
+    }
+  });
+
   it("displays native selection when switching from the tree to the grid", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;

@@ -5,6 +5,8 @@ type ListenerEvent = {
 type ItemsView = _ZoteroTypes.ItemTree & {
   getSortedItems(): Zotero.Item[];
   getSelectedItems(asIDs: true): number[];
+  _treebox?: { update(): void };
+  tree?: { invalidate(): void };
 };
 type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
@@ -29,6 +31,15 @@ export class ItemTreeBridge {
 
   getSelectedIDs(): number[] {
     return this.itemsView.getSelectedItems(true);
+  }
+
+  /** Call after showing the native tree, when DOM measurements are available. */
+  refreshLayout(): void {
+    // Hidden selection/scroll updates can leave the windowed list's cached
+    // scroll offset out of step with the DOM. update() reads the actual offset;
+    // invalidate() then rebuilds the visible rows and updates column widths.
+    this.itemsView._treebox?.update();
+    this.itemsView.tree?.invalidate();
   }
 
   onItemsChanged(callback: () => void): () => void {

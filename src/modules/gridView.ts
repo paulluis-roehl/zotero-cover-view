@@ -23,6 +23,7 @@ export class GridView {
     this.enabled = enabled;
     this.cancelSync();
     this.ui.setEnabled(enabled);
+    if (!enabled) this.tree.refreshLayout();
     this.syncItems();
   }
 
