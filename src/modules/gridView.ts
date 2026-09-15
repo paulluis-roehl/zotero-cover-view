@@ -1,4 +1,5 @@
 import { GridRenderer } from "./gridRenderer";
+import { getString } from "../utils/locale";
 
 const gridViews = new Map<Window, GridView>();
 
@@ -31,10 +32,12 @@ export class GridView {
   private readonly itemsView: ItemsView;
   private readonly itemTree: StylableElement;
   private readonly gridHost: HTMLDivElement;
+  private readonly toggleButton: XULToolBarButtonElement;
   private readonly stylesheet: HTMLLinkElement;
   private readonly renderer: GridRenderer;
   private readonly itemTreeDisplay: string;
   private readonly removeListeners: Array<() => void> = [];
+  private enabled = false;
   private syncTimer?: number;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
@@ -50,11 +53,35 @@ export class GridView {
     if (!itemsView) {
       throw new Error("Cannot attach grid view: itemsView is not available");
     }
+    const itemsToolbar = win.document.getElementById("zotero-items-toolbar");
+    if (!itemsToolbar) {
+      throw new Error(
+        "Cannot attach grid view: #zotero-items-toolbar was not found",
+      );
+    }
 
     this.itemsView = itemsView;
     this.itemTree = itemTree;
     this.itemTreeDisplay = itemTree.style.display;
     this.stylesheet = registerStyleSheet(win);
+
+    this.toggleButton = ztoolkit.UI.createElement(
+      win.document,
+      "toolbarbutton",
+      {
+        attributes: {
+          id: "cover-view-toggle",
+          class: "zotero-tb-button",
+          tabindex: "-1",
+          type: "checkbox",
+        },
+        listeners: [{ type: "command", listener: this.toggleEnabled }],
+      },
+    );
+    const itemPaneToggle = win.document.getElementById(
+      "zotero-tb-toggle-item-pane-stacked",
+    );
+    itemsToolbar.insertBefore(this.toggleButton, itemPaneToggle);
 
     this.gridHost = win.document.createElement("div");
     this.gridHost.id = "cover-view-grid";
@@ -66,10 +93,23 @@ export class GridView {
   }
 
   setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
     this.itemTree.style.display = enabled ? "none" : this.itemTreeDisplay;
     this.gridHost.hidden = !enabled;
+    this.toggleButton.toggleAttribute("checked", enabled);
+    this.toggleButton.setAttribute("aria-pressed", String(enabled));
+    this.toggleButton.setAttribute(
+      "tooltiptext",
+      getString(
+        enabled ? "cover-view-switch-to-list" : "cover-view-switch-to-grid",
+      ),
+    );
     if (enabled) this.syncItems();
   }
+
+  readonly toggleEnabled = (): void => {
+    this.setEnabled(!this.enabled);
+  };
 
   destroy(): void {
     if (this.syncTimer !== undefined) {
@@ -80,6 +120,7 @@ export class GridView {
     this.itemTree.style.display = this.itemTreeDisplay;
     this.renderer.destroy();
     this.gridHost.remove();
+    this.toggleButton.remove();
     this.stylesheet.remove();
   }
 

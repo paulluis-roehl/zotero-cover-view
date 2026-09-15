@@ -1,4 +1,6 @@
 startup-begin = 插件加载中
+cover-view-switch-to-grid = 切换到网格视图
+cover-view-switch-to-list = 切换到列表视图
 startup-finish = 插件已就绪
 menuitem-label = 插件模板: 帮助工具样例
 menupopup-label = 插件模板: 弹出菜单

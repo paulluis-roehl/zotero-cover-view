@@ -1,4 +1,6 @@
 startup-begin = Addon is loading
+cover-view-switch-to-grid = Switch to grid view
+cover-view-switch-to-list = Switch to list view
 startup-finish = Addon is ready
 menuitem-label = Addon Template: Helper Examples
 menupopup-label = Addon Template: Menupopup
