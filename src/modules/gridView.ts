@@ -21,8 +21,9 @@ export class GridView {
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+    this.cancelSync();
     this.ui.setEnabled(enabled);
-    if (enabled) this.syncItems();
+    this.syncItems();
   }
 
   readonly toggleEnabled = (): void => {
@@ -30,9 +31,8 @@ export class GridView {
   };
 
   destroy(): void {
-    if (this.syncTimer !== undefined) {
-      this.win.clearTimeout(this.syncTimer);
-    }
+    this.enabled = false;
+    this.cancelSync();
     this.tree.destroy();
 
     this.renderer.destroy();
@@ -40,16 +40,23 @@ export class GridView {
   }
 
   private readonly scheduleSync = (): void => {
-    if (this.syncTimer !== undefined) {
-      this.win.clearTimeout(this.syncTimer);
-    }
+    if (!this.enabled) return;
+    this.cancelSync();
     this.syncTimer = this.win.setTimeout(() => {
       this.syncTimer = undefined;
       this.syncItems();
     }, 60);
   };
 
+  private cancelSync(): void {
+    if (this.syncTimer !== undefined) {
+      this.win.clearTimeout(this.syncTimer);
+      this.syncTimer = undefined;
+    }
+  }
+
   private syncItems(): void {
+    if (!this.enabled) return;
     this.renderer.setItems(this.tree.getItems());
     this.renderer.setSelection(this.tree.getSelectedIDs());
   }
