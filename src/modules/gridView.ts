@@ -1,36 +1,21 @@
 import { GridRenderer } from "./gridRenderer";
 import { GridWindowUI } from "./gridWindowUI";
+import { ItemTreeBridge } from "./itemTreeBridge";
 
 const gridViews = new Map<Window, GridView>();
 
-type ListenerEvent = {
-  addListener(listener: () => void): void;
-  removeListener(listener: () => void): void;
-};
-type ItemsView = _ZoteroTypes.ItemTree & {
-  getSortedItems(): Zotero.Item[];
-};
-type CollectionsView = _ZoteroTypes.CollectionTree & {
-  onSelect?: ListenerEvent;
-};
-
 export class GridView {
-  private readonly itemsView: ItemsView;
+  private readonly tree: ItemTreeBridge;
   private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
-  private readonly removeListeners: Array<() => void> = [];
   private enabled = false;
   private syncTimer?: number;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
-    const itemsView = win.ZoteroPane.itemsView as ItemsView | false;
-    if (!itemsView) {
-      throw new Error("Cannot attach grid view: itemsView is not available");
-    }
-    this.itemsView = itemsView;
+    this.tree = new ItemTreeBridge(win);
     this.ui = new GridWindowUI(win, this.toggleEnabled);
     this.renderer = new GridRenderer(this.ui.host);
-    this.listenForItemChanges();
+    this.tree.onItemsChanged(this.scheduleSync);
     this.setEnabled(true);
   }
 
@@ -48,30 +33,10 @@ export class GridView {
     if (this.syncTimer !== undefined) {
       this.win.clearTimeout(this.syncTimer);
     }
-    for (const removeListener of this.removeListeners) removeListener();
+    this.tree.destroy();
 
     this.renderer.destroy();
     this.ui.destroy();
-  }
-
-  private listenForItemChanges(): void {
-    const rowUpdates = this.itemsView.rowProvider?.onUpdate;
-    if (rowUpdates) {
-      rowUpdates.addListener(this.scheduleSync);
-      this.removeListeners.push(() =>
-        rowUpdates.removeListener(this.scheduleSync),
-      );
-    }
-
-    const collectionsView = this.win.ZoteroPane.collectionsView as
-      CollectionsView | false;
-    const collectionSelect = collectionsView && collectionsView.onSelect;
-    if (collectionSelect) {
-      collectionSelect.addListener(this.scheduleSync);
-      this.removeListeners.push(() =>
-        collectionSelect.removeListener(this.scheduleSync),
-      );
-    }
   }
 
   private readonly scheduleSync = (): void => {
@@ -85,10 +50,7 @@ export class GridView {
   };
 
   private syncItems(): void {
-    const items = this.itemsView
-      .getSortedItems()
-      .filter((item) => !item.parentItemID);
-    this.renderer.setItems(items);
+    this.renderer.setItems(this.tree.getItems());
   }
 }
 
