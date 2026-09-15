@@ -1,9 +1,8 @@
 import { GridRenderer } from "./gridRenderer";
-import { getString } from "../utils/locale";
+import { GridWindowUI } from "./gridWindowUI";
 
 const gridViews = new Map<Window, GridView>();
 
-type StylableElement = Element & { style: CSSStyleDeclaration };
 type ListenerEvent = {
   addListener(listener: () => void): void;
   removeListener(listener: () => void): void;
@@ -15,95 +14,29 @@ type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
 };
 
-function registerStyleSheet(win: _ZoteroTypes.MainWindow): HTMLLinkElement {
-  const styles = ztoolkit.UI.createElement(win.document, "link", {
-    namespace: "html",
-    properties: {
-      type: "text/css",
-      rel: "stylesheet",
-      href: `chrome://${addon.data.config.addonRef}/content/coverView.css`,
-    },
-  });
-  win.document.documentElement?.appendChild(styles);
-  return styles;
-}
-
 export class GridView {
   private readonly itemsView: ItemsView;
-  private readonly itemTree: StylableElement;
-  private readonly gridHost: HTMLDivElement;
-  private readonly toggleButton: XULToolBarButtonElement;
-  private readonly stylesheet: HTMLLinkElement;
+  private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
-  private readonly itemTreeDisplay: string;
   private readonly removeListeners: Array<() => void> = [];
   private enabled = false;
   private syncTimer?: number;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
-    const itemTree = win.document.getElementById(
-      "zotero-items-tree",
-    ) as StylableElement | null;
-    if (!itemTree) {
-      throw new Error(
-        "Cannot attach grid view: #zotero-items-tree was not found",
-      );
-    }
     const itemsView = win.ZoteroPane.itemsView as ItemsView | false;
     if (!itemsView) {
       throw new Error("Cannot attach grid view: itemsView is not available");
     }
-    const itemsToolbar = win.document.getElementById("zotero-items-toolbar");
-    if (!itemsToolbar) {
-      throw new Error(
-        "Cannot attach grid view: #zotero-items-toolbar was not found",
-      );
-    }
-
     this.itemsView = itemsView;
-    this.itemTree = itemTree;
-    this.itemTreeDisplay = itemTree.style.display;
-    this.stylesheet = registerStyleSheet(win);
-
-    this.toggleButton = ztoolkit.UI.createElement(
-      win.document,
-      "toolbarbutton",
-      {
-        attributes: {
-          id: "cover-view-toggle",
-          class: "zotero-tb-button",
-          tabindex: "-1",
-          type: "checkbox",
-        },
-        listeners: [{ type: "command", listener: this.toggleEnabled }],
-      },
-    );
-    const itemPaneToggle = win.document.getElementById(
-      "zotero-tb-toggle-item-pane-stacked",
-    );
-    itemsToolbar.insertBefore(this.toggleButton, itemPaneToggle);
-
-    this.gridHost = win.document.createElement("div");
-    this.gridHost.id = "cover-view-grid";
-    this.gridHost.hidden = true;
-    itemTree.after(this.gridHost);
-    this.renderer = new GridRenderer(this.gridHost);
+    this.ui = new GridWindowUI(win, this.toggleEnabled);
+    this.renderer = new GridRenderer(this.ui.host);
     this.listenForItemChanges();
     this.setEnabled(true);
   }
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    this.itemTree.style.display = enabled ? "none" : this.itemTreeDisplay;
-    this.gridHost.hidden = !enabled;
-    this.toggleButton.toggleAttribute("checked", enabled);
-    this.toggleButton.setAttribute("aria-pressed", String(enabled));
-    this.toggleButton.setAttribute(
-      "tooltiptext",
-      getString(
-        enabled ? "cover-view-switch-to-list" : "cover-view-switch-to-grid",
-      ),
-    );
+    this.ui.setEnabled(enabled);
     if (enabled) this.syncItems();
   }
 
@@ -117,11 +50,8 @@ export class GridView {
     }
     for (const removeListener of this.removeListeners) removeListener();
 
-    this.itemTree.style.display = this.itemTreeDisplay;
     this.renderer.destroy();
-    this.gridHost.remove();
-    this.toggleButton.remove();
-    this.stylesheet.remove();
+    this.ui.destroy();
   }
 
   private listenForItemChanges(): void {
