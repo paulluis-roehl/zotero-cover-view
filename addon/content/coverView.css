@@ -27,7 +27,15 @@
 
 .grid-view-item {
   min-width: 0;
-  margin: 0;
+  /* Extend the selection background without shifting the cover or caption. */
+  margin: -3px;
+  padding: 3px;
+  border-radius: 9px;
+}
+
+.grid-view-item.selected {
+  background: Highlight;
+  color: HighlightText;
 }
 
 .grid-view-cover {

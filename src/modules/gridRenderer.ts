@@ -3,6 +3,8 @@ import { CoverProvider } from "./coverProvider";
 export class GridRenderer {
   private readonly doc: Document;
   private renderVersion = 0;
+  private readonly entries = new Map<number, HTMLElement>();
+  private selectedIDs = new Set<number>();
 
   constructor(private readonly host: HTMLElement) {
     const doc = host.ownerDocument;
@@ -13,11 +15,15 @@ export class GridRenderer {
   setItems(items: Zotero.Item[]): void {
     const renderVersion = ++this.renderVersion;
     const fragment = this.doc.createDocumentFragment();
+    this.entries.clear();
 
     for (const item of items) {
       const title = item.getDisplayTitle();
       const entry = this.doc.createElement("figure");
       entry.className = "grid-view-item";
+      entry.dataset.itemId = String(item.id);
+      entry.classList.toggle("selected", this.selectedIDs.has(item.id));
+      this.entries.set(item.id, entry);
 
       const coverFrame = this.doc.createElement("div");
       coverFrame.className = "grid-view-cover";
@@ -48,8 +54,18 @@ export class GridRenderer {
     this.host.replaceChildren(fragment);
   }
 
+  /** Update selection presentation without rebuilding tiles or reloading covers. */
+  setSelection(itemIDs: readonly number[]): void {
+    this.selectedIDs = new Set(itemIDs);
+    for (const [itemID, entry] of this.entries) {
+      entry.classList.toggle("selected", this.selectedIDs.has(itemID));
+    }
+  }
+
   destroy(): void {
     this.renderVersion++;
+    this.entries.clear();
+    this.selectedIDs.clear();
     this.host.replaceChildren();
   }
 }

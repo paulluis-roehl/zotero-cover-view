@@ -4,6 +4,7 @@ type ListenerEvent = {
 };
 type ItemsView = _ZoteroTypes.ItemTree & {
   getSortedItems(): Zotero.Item[];
+  getSelectedItems(asIDs: true): number[];
 };
 type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
@@ -24,6 +25,10 @@ export class ItemTreeBridge {
   /** Return top-level items in the native view's current sort order. */
   getItems(): Zotero.Item[] {
     return this.itemsView.getSortedItems().filter((item) => !item.parentItemID);
+  }
+
+  getSelectedIDs(): number[] {
+    return this.itemsView.getSelectedItems(true);
   }
 
   onItemsChanged(callback: () => void): () => void {

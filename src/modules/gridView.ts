@@ -51,6 +51,7 @@ export class GridView {
 
   private syncItems(): void {
     this.renderer.setItems(this.tree.getItems());
+    this.renderer.setSelection(this.tree.getSelectedIDs());
   }
 }
 
