@@ -1,0 +1,14 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="96"
+  height="96"
+  viewBox="0 0 96 96"
+>
+  <title>Colourful book cover grid</title>
+  <rect x="11" y="10" width="20" height="34" rx="3" fill="#E85D75" />
+  <rect x="38" y="10" width="20" height="34" rx="3" fill="#F2A541" />
+  <rect x="65" y="10" width="20" height="34" rx="3" fill="#38A889" />
+  <rect x="11" y="52" width="20" height="34" rx="3" fill="#4D8FDB" />
+  <rect x="38" y="52" width="20" height="34" rx="3" fill="#806CC9" />
+  <rect x="65" y="52" width="20" height="34" rx="3" fill="#D968A3" />
+</svg>

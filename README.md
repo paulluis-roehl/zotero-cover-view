@@ -358,8 +358,7 @@ This section shows the directory structure of a template.
 |   |-- bootstrap.js
 |   |-- content
 |   |   |-- icons
-|   |   |   |-- favicon.png
-|   |   |   `-- favicon@0.5x.png
+|   |   |   `-- favicon.svg
 |   |   |-- preferences.xhtml
 |   |   `-- zoteroPane.css
 |   |-- locale
