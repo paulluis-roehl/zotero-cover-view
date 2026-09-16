@@ -5,8 +5,6 @@ type ListenerEvent = {
 type ItemsView = _ZoteroTypes.ItemTree & {
   _treebox?: { update(): void };
   tree?: { invalidate(): void };
-  getRowIndexByID(itemID: number): number | false;
-  handleActivate(event: MouseEvent, indices: number[]): void;
 };
 type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
@@ -25,9 +23,9 @@ export class ItemTreeBridge {
   }
 
   getItems(): Zotero.Item[] {
-    return this.win.ZoteroPane.getSortedItems().filter(
-      (item) => !item.parentItemID,
-    );
+    return this.itemsView
+      .getSortedItems()
+      .filter((item: Zotero.Item) => !item.parentItemID);
   }
 
   getSelectedIDs(): number[] {
@@ -35,16 +33,17 @@ export class ItemTreeBridge {
   }
 
   async selectItem(itemID: number): Promise<void> {
-    await this.win.ZoteroPane.selectItems([itemID]);
+    await this.itemsView.selectItem(itemID);
   }
 
-  activateItem(itemID: number): void {
-    const rowIndex = this.itemsView.getRowIndexByID(itemID);
-    if (rowIndex === false) return;
-    this.itemsView.handleActivate(
-      new this.win.MouseEvent("dblclick", { bubbles: true }),
-      [rowIndex],
-    );
+  async activateItem(itemID: number): Promise<void> {
+    const item = await Zotero.Items.getAsync(itemID);
+    if (item) {
+      await this.win.ZoteroPane.viewItems(
+        [item],
+        new this.win.MouseEvent("dblclick"),
+      );
+    }
   }
 
   /** Call after showing the native tree, when DOM measurements are available. */

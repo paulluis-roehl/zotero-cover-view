@@ -110,11 +110,7 @@ describe("grid view", function () {
   it("updates selection without replacing tiles and ignores undisplayed IDs", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
-    const renderer = new GridRenderer(
-      host,
-      () => {},
-      () => {},
-    );
+    const renderer = new GridRenderer(host, () => {});
     const item = new Zotero.Item("book");
     item.setField("title", "Selection presentation");
     // A display-only item avoids database notifications during this renderer test.
@@ -142,13 +138,9 @@ describe("grid view", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
     let selectedID: number | undefined;
-    const renderer = new GridRenderer(
-      host,
-      (itemID) => {
-        selectedID = itemID;
-      },
-      () => {},
-    );
+    const renderer = new GridRenderer(host, (itemID) => {
+      selectedID = itemID;
+    });
     const displayItem = {
       id: -1,
       getDisplayTitle: () => "Clicked item",
@@ -199,11 +191,7 @@ describe("grid view", function () {
   it("renders the title and authors on separate caption lines", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
-    const renderer = new GridRenderer(
-      host,
-      () => {},
-      () => {},
-    );
+    const renderer = new GridRenderer(host, () => {});
     const displayItem = {
       id: -1,
       firstCreator: "Ada Lovelace and Charles Babbage",
@@ -314,6 +302,46 @@ describe("grid view", function () {
     } finally {
       if (grid.hidden) toggle();
       if (item.id) await item.eraseTx();
+    }
+  });
+
+  it("keeps all collection items when refreshed from a reader tab", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const items = [new Zotero.Item("book"), new Zotero.Item("book")];
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    let readerTabID: string | undefined;
+
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Reader tab refresh test ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await pane.selectItems([items[0].id], true);
+      readerTabID = win.Zotero_Tabs.add({
+        type: "reader",
+        title: "Reader tab refresh test",
+        data: { itemID: items[0].id },
+        select: true,
+      }).id;
+
+      toggle();
+      toggle();
+      win.Zotero_Tabs.select("zotero-pane");
+
+      for (const item of items) {
+        assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
+      }
+    } finally {
+      win.Zotero_Tabs.select("zotero-pane");
+      if (readerTabID) win.Zotero_Tabs.close(readerTabID);
+      if (grid.hidden) toggle();
+      for (const item of items) {
+        if (item.id) await item.eraseTx();
+      }
     }
   });
 
