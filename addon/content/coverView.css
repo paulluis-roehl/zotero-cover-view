@@ -1,5 +1,11 @@
 #cover-view-toggle {
   list-style-image: url("chrome://coverview/content/icons/grid-view.svg");
+  fill: currentColor;
+  -moz-context-properties: fill, fill-opacity;
+}
+
+#cover-view-toggle[checked] {
+  list-style-image: url("chrome://coverview/content/icons/list-view.svg");
 }
 
 #cover-view-grid {

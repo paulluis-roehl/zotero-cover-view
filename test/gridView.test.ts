@@ -380,10 +380,14 @@ describe("grid view", function () {
   it("toggles between the cover grid and native item list", function () {
     const win = Zotero.getMainWindow()!;
     const button = win.document.getElementById("cover-view-toggle")!;
+    const noteButton = win.document.getElementById("zotero-tb-note-add")!;
     const grid = win.document.getElementById("cover-view-grid")!;
     const itemTree = win.document.getElementById("zotero-items-tree")!;
+    const icon = () => win.getComputedStyle(button).listStyleImage;
 
+    assert.strictEqual(noteButton.nextElementSibling, button);
     assert.isTrue(button.hasAttribute("checked"));
+    assert.include(icon(), "list-view.svg");
     assert.isFalse(grid.hidden);
     assert.equal(win.getComputedStyle(grid).display, "grid");
     assert.equal(itemTree.style.display, "none");
@@ -392,6 +396,7 @@ describe("grid view", function () {
     button.dispatchEvent(new win.Event("command"));
 
     assert.isFalse(button.hasAttribute("checked"));
+    assert.include(icon(), "grid-view.svg");
     assert.isTrue(grid.hidden);
     assert.equal(win.getComputedStyle(grid).display, "none");
     assert.notEqual(itemTree.style.display, "none");
@@ -400,6 +405,7 @@ describe("grid view", function () {
     button.dispatchEvent(new win.Event("command"));
 
     assert.isTrue(button.hasAttribute("checked"));
+    assert.include(icon(), "list-view.svg");
     assert.isFalse(grid.hidden);
     assert.equal(win.getComputedStyle(grid).display, "grid");
     assert.equal(itemTree.style.display, "none");

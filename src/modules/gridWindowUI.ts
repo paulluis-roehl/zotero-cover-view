@@ -55,10 +55,8 @@ export class GridWindowUI {
         listeners: [{ type: "command", listener: this.onToggle }],
       },
     );
-    const itemPaneToggle = win.document.getElementById(
-      "zotero-tb-toggle-item-pane-stacked",
-    );
-    itemsToolbar.insertBefore(this.toggleButton, itemPaneToggle);
+    const noteButton = win.document.getElementById("zotero-tb-note-add");
+    itemsToolbar.insertBefore(this.toggleButton, noteButton?.nextSibling ?? null);
 
     this.host = win.document.createElement("div");
     this.host.id = "cover-view-grid";
