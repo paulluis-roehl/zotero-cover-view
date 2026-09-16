@@ -13,7 +13,6 @@ import {
   detachGridView,
 } from "./modules/gridView";
 import { registerPreferences } from "./modules/preferences";
-import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup() {
   await Promise.all([
@@ -52,8 +51,6 @@ async function onStartup() {
 }
 
 async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
-  // Create ztoolkit for every window
-  addon.data.ztoolkit = createZToolkit();
   attachGridView(win);
 
   win.MozXULElement.insertFTLIfNeeded(
@@ -98,7 +95,6 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   detachGridView(win);
-  ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
 }
 
