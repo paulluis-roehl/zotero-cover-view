@@ -56,7 +56,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 **UI/UX**
 - [x] button for switching between list and grid view
-  - [ ] improve svg icons
+  - [x] improve svg icons
 - [ ] hot key for switching between list and grid view
 - [ ] add cover section to item info view
 - [ ] improve graphics / effects while loading covers
