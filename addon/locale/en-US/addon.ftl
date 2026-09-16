@@ -1,12 +1,4 @@
-startup-begin = Addon is loading
 cover-view-switch-to-grid = Switch to grid view
 cover-view-switch-to-list = Switch to list view
 cover-view-image-alt = Cover for { $title }
-startup-finish = Addon is ready
-menuitem-label = Addon Template: Helper Examples
-menupopup-label = Addon Template: Menupopup
-menuitem-submenulabel = Addon Template
-menuitem-filemenulabel = Addon Template: File Menuitem
 prefs-title = Cover View
-tabpanel-lib-tab-label = Lib Tab
-tabpanel-reader-tab-label = Reader Tab
