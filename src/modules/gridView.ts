@@ -17,11 +17,19 @@ export class GridView {
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
     this.ui = new GridWindowUI(win, this.toggleEnabled);
-    this.renderer = new GridRenderer(this.ui.host, (itemID) => {
-      void this.selectItem(itemID).catch((error) => {
-        ztoolkit.log("Failed to select grid item", itemID, error);
-      });
-    });
+    this.renderer = new GridRenderer(
+      this.ui.host,
+      (itemID) => {
+        void this.selectItem(itemID).catch((error) => {
+          ztoolkit.log("Failed to select grid item", itemID, error);
+        });
+      },
+      (itemID) => {
+        void this.tree.activateItem(itemID).catch((error) => {
+          ztoolkit.log("Failed to activate grid item", itemID, error);
+        });
+      },
+    );
     this.tree.onItemsChanged(this.scheduleSync);
     this.setEnabled(true);
   }

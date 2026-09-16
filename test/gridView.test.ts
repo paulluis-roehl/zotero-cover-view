@@ -110,7 +110,11 @@ describe("grid view", function () {
   it("updates selection without replacing tiles and ignores undisplayed IDs", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
-    const renderer = new GridRenderer(host, () => {});
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      () => {},
+    );
     const item = new Zotero.Item("book");
     item.setField("title", "Selection presentation");
     // A display-only item avoids database notifications during this renderer test.
@@ -138,9 +142,13 @@ describe("grid view", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
     let selectedID: number | undefined;
-    const renderer = new GridRenderer(host, (itemID) => {
-      selectedID = itemID;
-    });
+    const renderer = new GridRenderer(
+      host,
+      (itemID) => {
+        selectedID = itemID;
+      },
+      () => {},
+    );
     const displayItem = {
       id: -1,
       getDisplayTitle: () => "Clicked item",
@@ -159,10 +167,43 @@ describe("grid view", function () {
     }
   });
 
+  it("passes a tile double-click to the renderer activation callback", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    let activatedID: number | undefined;
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      (itemID) => {
+        activatedID = itemID;
+      },
+    );
+    const displayItem = {
+      id: -1,
+      getDisplayTitle: () => "Activated item",
+      isFileAttachment: () => false,
+      isRegularItem: () => false,
+    } as unknown as Zotero.Item;
+
+    try {
+      renderer.setItems([displayItem], { showAuthors: true });
+      host
+        .querySelector(".grid-view-cover")!
+        .dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true }));
+      assert.equal(activatedID, displayItem.id);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
   it("renders the title and authors on separate caption lines", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
-    const renderer = new GridRenderer(host, () => {});
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      () => {},
+    );
     const displayItem = {
       id: -1,
       firstCreator: "Ada Lovelace and Charles Babbage",

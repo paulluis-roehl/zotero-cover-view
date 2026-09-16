@@ -14,11 +14,13 @@ export class GridRenderer {
   constructor(
     private readonly host: HTMLElement,
     private readonly onSelect: (itemID: number) => void,
+    private readonly onActivate?: (itemID: number) => void,
   ) {
     const doc = host.ownerDocument;
     if (!doc) throw new Error("Cannot create grid renderer without a document");
     this.doc = doc;
     this.host.addEventListener("click", this.handleClick);
+    this.host.addEventListener("dblclick", this.handleDoubleClick);
   }
 
   private readonly handleClick = (event: Event): void => {
@@ -29,6 +31,16 @@ export class GridRenderer {
 
     const itemID = Number(entry.dataset.itemId);
     if (Number.isSafeInteger(itemID)) this.onSelect(itemID);
+  };
+
+  private readonly handleDoubleClick = (event: Event): void => {
+    const entry = (event.target as Element | null)?.closest(
+      ".grid-view-item",
+    ) as HTMLElement | null;
+    if (!entry || !this.host.contains(entry)) return;
+
+    const itemID = Number(entry.dataset.itemId);
+    if (Number.isSafeInteger(itemID)) this.onActivate?.(itemID);
   };
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
@@ -96,6 +108,7 @@ export class GridRenderer {
   destroy(): void {
     this.renderVersion++;
     this.host.removeEventListener("click", this.handleClick);
+    this.host.removeEventListener("dblclick", this.handleDoubleClick);
     this.entries.clear();
     this.selectedIDs.clear();
     this.host.replaceChildren();

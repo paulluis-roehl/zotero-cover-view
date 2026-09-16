@@ -5,6 +5,8 @@ type ListenerEvent = {
 type ItemsView = _ZoteroTypes.ItemTree & {
   _treebox?: { update(): void };
   tree?: { invalidate(): void };
+  getRowIndexByID(itemID: number): number | false;
+  handleActivate(event: MouseEvent, indices: number[]): void;
 };
 type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
@@ -34,6 +36,15 @@ export class ItemTreeBridge {
 
   async selectItem(itemID: number): Promise<void> {
     await this.win.ZoteroPane.selectItems([itemID]);
+  }
+
+  activateItem(itemID: number): void {
+    const rowIndex = this.itemsView.getRowIndexByID(itemID);
+    if (rowIndex === false) return;
+    this.itemsView.handleActivate(
+      new this.win.MouseEvent("dblclick", { bubbles: true }),
+      [rowIndex],
+    );
   }
 
   /** Call after showing the native tree, when DOM measurements are available. */
