@@ -12,7 +12,7 @@ This makes it more visually appealing especially for books (as opposed to academ
   - uses the first page from an attached `.pdf` or `.epub` file as cover
 - **Grid view**
   - display items in a grid instead of a list
-  - adds a button on the right of the search bar to switch between grid view and list view
+  - adds a button to the main item bar to switch between grid view and list view
 - **List view**: provides 'Cover' column with thumbnail of cover
 
 ## Installation
@@ -60,6 +60,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] hot key for switching between list and grid view
 - [ ] add cover section to item info view
 - [ ] improve graphics / effects while loading covers
+- [ ] add cover flow pane
 
 **Implementation**
 - [ ] switch from `ZoteroToolkit` to custom (smaller) tool kit
