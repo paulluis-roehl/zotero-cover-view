@@ -62,14 +62,28 @@
 }
 
 .grid-view-item figcaption {
-  display: -webkit-box;
   margin-top: 9px;
+  min-width: 0;
+  text-align: center;
+}
+
+.grid-view-title,
+.grid-view-authors {
+  display: block;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grid-view-title {
   font-size: 13px;
   line-height: 1.35;
-  text-align: center;
-  text-overflow: ellipsis;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+}
+
+.grid-view-authors {
+  margin-top: 2px;
+  padding-bottom: 1px;
+  color: GrayText;
+  font-size: 11px;
+  line-height: 1.3;
 }

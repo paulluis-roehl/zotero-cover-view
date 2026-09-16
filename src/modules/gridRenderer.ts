@@ -33,6 +33,7 @@ export class GridRenderer {
 
     for (const item of items) {
       const title = item.getDisplayTitle();
+      const authors = item.firstCreator;
       const entry = this.doc.createElement("figure");
       entry.className = "grid-view-item";
       entry.dataset.itemId = String(item.id);
@@ -48,8 +49,19 @@ export class GridRenderer {
       coverFrame.appendChild(image);
 
       const caption = this.doc.createElement("figcaption");
-      caption.textContent = title;
-      caption.title = title;
+      const titleLine = this.doc.createElement("span");
+      titleLine.className = "grid-view-title";
+      titleLine.textContent = title;
+      titleLine.title = title;
+      caption.appendChild(titleLine);
+
+      if (authors) {
+        const authorLine = this.doc.createElement("span");
+        authorLine.className = "grid-view-authors";
+        authorLine.textContent = authors;
+        authorLine.title = authors;
+        caption.appendChild(authorLine);
+      }
 
       entry.append(coverFrame, caption);
       fragment.appendChild(entry);

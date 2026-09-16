@@ -147,6 +147,33 @@ describe("grid view", function () {
     }
   });
 
+  it("renders the title and authors on separate caption lines", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    const renderer = new GridRenderer(host, () => {});
+    const displayItem = {
+      id: -1,
+      firstCreator: "Ada Lovelace and Charles Babbage",
+      getDisplayTitle: () => "Analytical Engine Notes",
+      isFileAttachment: () => false,
+      isRegularItem: () => false,
+    } as unknown as Zotero.Item;
+
+    try {
+      renderer.setItems([displayItem]);
+      assert.equal(
+        host.querySelector(".grid-view-title")?.textContent,
+        "Analytical Engine Notes",
+      );
+      assert.equal(
+        host.querySelector(".grid-view-authors")?.textContent,
+        "Ada Lovelace and Charles Babbage",
+      );
+    } finally {
+      renderer.destroy();
+    }
+  });
+
   it("selects the native item when a grid tile is clicked", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
