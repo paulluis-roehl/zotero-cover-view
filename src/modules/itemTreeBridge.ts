@@ -3,8 +3,6 @@ type ListenerEvent = {
   removeListener(listener: () => void): void;
 };
 type ItemsView = _ZoteroTypes.ItemTree & {
-  getSortedItems(): Zotero.Item[];
-  getSelectedItems(asIDs: true): number[];
   _treebox?: { update(): void };
   tree?: { invalidate(): void };
 };
@@ -24,13 +22,14 @@ export class ItemTreeBridge {
     this.itemsView = itemsView;
   }
 
-  /** Return top-level items in the native view's current sort order. */
   getItems(): Zotero.Item[] {
-    return this.itemsView.getSortedItems().filter((item) => !item.parentItemID);
+    return this.win.ZoteroPane.getSortedItems().filter(
+      (item) => !item.parentItemID,
+    );
   }
 
   getSelectedIDs(): number[] {
-    return this.itemsView.getSelectedItems(true);
+    return this.win.ZoteroPane.getSelectedItems(true);
   }
 
   async selectItem(itemID: number): Promise<void> {
