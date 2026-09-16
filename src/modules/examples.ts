@@ -1,4 +1,4 @@
-import { getLocaleID, getString } from "../utils/locale";
+import { getLocaleID } from "../utils/locale";
 
 function example(
   target: any,
@@ -65,16 +65,6 @@ export class BasicExampleFactory {
   @example
   private static unregisterNotifier(notifierID: string) {
     Zotero.Notifier.unregisterObserver(notifierID);
-  }
-
-  @example
-  static registerPrefs() {
-    Zotero.PreferencePanes.register({
-      pluginID: addon.data.config.addonID,
-      src: rootURI + "content/preferences.xhtml",
-      label: getString("prefs-title"),
-      image: `chrome://${addon.data.config.addonRef}/content/icons/favicon.svg`,
-    });
   }
 }
 

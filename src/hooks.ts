@@ -12,6 +12,7 @@ import {
   destroyGridViews,
   detachGridView,
 } from "./modules/gridView";
+import { registerPreferences } from "./modules/preferences";
 import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup() {
@@ -23,7 +24,7 @@ async function onStartup() {
 
   initLocale();
 
-  BasicExampleFactory.registerPrefs();
+  registerPreferences();
 
   BasicExampleFactory.registerNotifier();
 
