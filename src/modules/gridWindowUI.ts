@@ -56,7 +56,10 @@ export class GridWindowUI {
       },
     );
     const noteButton = win.document.getElementById("zotero-tb-note-add");
-    itemsToolbar.insertBefore(this.toggleButton, noteButton?.nextSibling ?? null);
+    itemsToolbar.insertBefore(
+      this.toggleButton,
+      noteButton?.nextSibling ?? null,
+    );
 
     this.host = win.document.createElement("div");
     this.host.id = "cover-view-grid";

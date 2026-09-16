@@ -32,6 +32,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 ## Todo
 
 **Covers**
+
 - [x] support `.pdf`
 - [x] support `.epub`
 - [ ] support `.jpg` / `.png`
@@ -41,6 +42,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] implement precedence setting
 
 **Grid view**
+
 - [x] single click select
 - [x] double click open
 - [ ] multi-select (`shift + click` and `ctrl + click`)
@@ -48,6 +50,7 @@ This makes it more visually appealing especially for books (as opposed to academ
   - [ ] adjust arrow keys for grid navigation
 
 **Settings**
+
 - [ ] grid size
 - [ ] grid item aspect ratio
 - [ ] further display options for grid view (e.g. title, author, year, ...)
@@ -55,6 +58,7 @@ This makes it more visually appealing especially for books (as opposed to academ
   - [ ] option for separate choice in every collection
 
 **UI/UX**
+
 - [x] button for switching between list and grid view
   - [x] improve svg icons
 - [ ] hot key for switching between list and grid view
@@ -63,6 +67,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] add cover flow pane
 
 **Implementation**
+
 - [ ] switch from `ZoteroToolkit` to custom (smaller) tool kit
 - [ ] can / should I extract grid view into a `.xhtml` file?
 - [ ] move `DEFAULT_COVER_WIDTH` and `DEFAULT_PAGE_WIDTH` from `pdfCover.ts` into settings
