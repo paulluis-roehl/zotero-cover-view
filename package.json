@@ -1,7 +1,7 @@
 {
   "name": "zotero-cover-view",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Zotero Cover View",
   "config": {
     "addonName": "Zotero Cover View",
