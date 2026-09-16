@@ -11,6 +11,7 @@ export class GridView {
   private readonly tree: ItemTreeBridge;
   private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
+  private readonly tabObserverID: string;
   private enabled = false;
   private syncTimer?: number;
 
@@ -31,6 +32,17 @@ export class GridView {
       },
     );
     this.tree.onItemsChanged(this.scheduleSync);
+    this.tabObserverID = Zotero.Notifier.registerObserver(
+      {
+        notify: (event, _type, ids) => {
+          if (event === "select" && ids.some((id) => id === "zotero-pane")) {
+            this.renderer.refreshLayout();
+          }
+        },
+      },
+      ["tab"],
+      "cover-view-grid",
+    );
     this.setEnabled(true);
   }
 
@@ -50,13 +62,15 @@ export class GridView {
     this.enabled = false;
     this.cancelSync();
     this.tree.destroy();
+    Zotero.Notifier.unregisterObserver(this.tabObserverID);
 
     this.renderer.destroy();
     this.ui.destroy();
   }
 
   readonly scheduleSync = (): void => {
-    if (!this.enabled) return;
+    if (!this.enabled || this.win.Zotero_Tabs.selectedType !== "library")
+      return;
     this.cancelSync();
     this.syncTimer = this.win.setTimeout(() => {
       this.syncTimer = undefined;
@@ -79,7 +93,8 @@ export class GridView {
   }
 
   private syncItems(): void {
-    if (!this.enabled) return;
+    if (!this.enabled || this.win.Zotero_Tabs.selectedType !== "library")
+      return;
     this.renderer.setItems(this.tree.getItems(), {
       showAuthors: getPref("showAuthors"),
     });

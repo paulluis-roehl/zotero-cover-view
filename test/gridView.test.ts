@@ -129,6 +129,8 @@ describe("grid view", function () {
       renderer.setSelection([]);
       assert.strictEqual(host.firstElementChild, entry);
       assert.isFalse(entry.classList.contains("selected"));
+      renderer.setItems([displayItem], { showAuthors: true });
+      assert.strictEqual(host.firstElementChild, entry);
     } finally {
       renderer.destroy();
     }
@@ -305,13 +307,14 @@ describe("grid view", function () {
     }
   });
 
-  it("keeps all collection items when refreshed from a reader tab", async function () {
+  it("preserves grid state while a reader tab is active", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
     const button = win.document.getElementById("cover-view-toggle")!;
     const grid = win.document.getElementById("cover-view-grid")!;
     const items = [new Zotero.Item("book"), new Zotero.Item("book")];
     const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const gridStyle = grid.style.cssText;
     let readerTabID: string | undefined;
 
     try {
@@ -320,7 +323,14 @@ describe("grid view", function () {
         await item.saveTx();
       }
       if (grid.hidden) toggle();
+      grid.style.cssText += "; height: 120px; flex: 0 0 120px";
       await pane.selectItems([items[0].id], true);
+      await Zotero.Promise.delay(100);
+      const firstEntry = grid.querySelector(`[data-item-id="${items[0].id}"]`)!;
+      assert.exists(firstEntry);
+      assert.isAbove(grid.scrollHeight, grid.clientHeight);
+      grid.scrollTop = 50;
+      const scrollTop = grid.scrollTop;
       readerTabID = win.Zotero_Tabs.add({
         type: "reader",
         title: "Reader tab refresh test",
@@ -328,16 +338,38 @@ describe("grid view", function () {
         select: true,
       }).id;
 
-      toggle();
-      toggle();
+      items[0].setField("title", "Reader tab updated title");
+      await items[0].saveTx();
+      await Zotero.Promise.delay(100);
+      assert.strictEqual(
+        grid.querySelector(`[data-item-id="${items[0].id}"]`),
+        firstEntry,
+        "The grid should not render while its tab is hidden",
+      );
       win.Zotero_Tabs.select("zotero-pane");
+      await Zotero.Promise.delay(100);
 
       for (const item of items) {
         assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
       }
+      assert.strictEqual(
+        grid.querySelector(`[data-item-id="${items[0].id}"]`),
+        firstEntry,
+      );
+      assert.equal(grid.scrollTop, scrollTop);
+
+      toggle();
+      toggle();
+      assert.equal(grid.scrollTop, scrollTop);
+      assert.equal(
+        grid.querySelector(`[data-item-id="${items[0].id}"] .grid-view-title`)
+          ?.textContent,
+        "Reader tab updated title",
+      );
     } finally {
       win.Zotero_Tabs.select("zotero-pane");
       if (readerTabID) win.Zotero_Tabs.close(readerTabID);
+      grid.style.cssText = gridStyle;
       if (grid.hidden) toggle();
       for (const item of items) {
         if (item.id) await item.eraseTx();

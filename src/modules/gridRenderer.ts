@@ -8,6 +8,7 @@ export interface GridRenderOptions {
 export class GridRenderer {
   private readonly doc: Document;
   private renderVersion = 0;
+  private renderKey?: string;
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
 
@@ -44,13 +45,28 @@ export class GridRenderer {
   };
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
+    const scrollTop = this.host.scrollTop;
+    const renderItems = items.map((item) => ({
+      item,
+      title: item.getDisplayTitle(),
+      authors: item.firstCreator,
+    }));
+    const renderKey = JSON.stringify([
+      options.showAuthors,
+      renderItems.map(({ item, title, authors }) => [
+        item.id,
+        title,
+        options.showAuthors ? authors : "",
+      ]),
+    ]);
+    if (renderKey === this.renderKey) return;
+    this.renderKey = renderKey;
+
     const renderVersion = ++this.renderVersion;
     const fragment = this.doc.createDocumentFragment();
     this.entries.clear();
 
-    for (const item of items) {
-      const title = item.getDisplayTitle();
-      const authors = item.firstCreator;
+    for (const { item, title, authors } of renderItems) {
       const entry = this.doc.createElement("figure");
       entry.className = "grid-view-item";
       entry.dataset.itemId = String(item.id);
@@ -95,6 +111,7 @@ export class GridRenderer {
     }
 
     this.host.replaceChildren(fragment);
+    this.host.scrollTop = scrollTop;
   }
 
   /** Update selection presentation without rebuilding tiles or reloading covers. */
@@ -105,8 +122,16 @@ export class GridRenderer {
     }
   }
 
+  /** Refresh Gecko's scroll-frame layout after the grid becomes visible again. */
+  refreshLayout(): void {
+    const scrollTop = this.host.scrollTop;
+    this.host.scrollTop = scrollTop > 0 ? scrollTop - 1 : 1;
+    this.host.scrollTop = scrollTop;
+  }
+
   destroy(): void {
     this.renderVersion++;
+    this.renderKey = undefined;
     this.host.removeEventListener("click", this.handleClick);
     this.host.removeEventListener("dblclick", this.handleDoubleClick);
     this.entries.clear();
