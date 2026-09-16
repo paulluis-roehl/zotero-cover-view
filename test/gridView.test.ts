@@ -3,6 +3,17 @@ import { GridRenderer } from "../src/modules/gridRenderer";
 import { getPref, setPref } from "../src/utils/prefs";
 
 describe("grid view", function () {
+  before(function () {
+    Object.defineProperty(globalThis, "addon", {
+      value: Zotero.CoverView,
+      configurable: true,
+    });
+  });
+
+  after(function () {
+    Reflect.deleteProperty(globalThis, "addon");
+  });
+
   it("restores visible native rows after scrolling the hidden list", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
@@ -169,6 +180,10 @@ describe("grid view", function () {
       assert.equal(
         host.querySelector(".grid-view-authors")?.textContent,
         "Ada Lovelace and Charles Babbage",
+      );
+      assert.equal(
+        host.querySelector(".grid-view-cover img")?.alt,
+        "Cover for Analytical Engine Notes",
       );
 
       renderer.setItems([displayItem], { showAuthors: false });

@@ -3,6 +3,7 @@
 /* eslint-disable */
 // @ts-nocheck
 export type FluentMessageId =
+  | 'cover-view-image-alt'
   | 'cover-view-switch-to-grid'
   | 'cover-view-switch-to-list'
   | 'item-info-row-example-label'

@@ -1,4 +1,5 @@
 import { CoverProvider } from "./coverProvider";
+import { getString } from "../utils/locale";
 
 export interface GridRenderOptions {
   showAuthors: boolean;
@@ -48,7 +49,7 @@ export class GridRenderer {
       coverFrame.className = "grid-view-cover";
 
       const image = this.doc.createElement("img");
-      image.alt = `Cover for ${title}`;
+      image.alt = getString("cover-view-image-alt", { args: { title } });
       image.hidden = true;
       coverFrame.appendChild(image);
 
