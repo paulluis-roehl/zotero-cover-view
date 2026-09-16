@@ -6,7 +6,6 @@ import {
   UIExampleFactory,
 } from "./modules/examples";
 import { getString, initLocale } from "./utils/locale";
-import { registerPrefsScripts } from "./modules/preferenceScript";
 import { registerCoverColumn } from "./modules/coverColumn";
 import {
   attachGridView,
@@ -135,22 +134,6 @@ async function onNotify(
   }
 }
 
-/**
- * This function is just an example of dispatcher for Preference UI events.
- * Any operations should be placed in a function to keep this funcion clear.
- * @param type event type
- * @param data event data
- */
-async function onPrefsEvent(type: string, data: { [key: string]: any }) {
-  switch (type) {
-    case "load":
-      registerPrefsScripts(data.window);
-      break;
-    default:
-      return;
-  }
-}
-
 function onShortcuts(type: string) {
   switch (type) {
     case "larger":
@@ -196,7 +179,6 @@ export default {
   onMainWindowLoad,
   onMainWindowUnload,
   onNotify,
-  onPrefsEvent,
   onShortcuts,
   onDialogEvents,
 };
