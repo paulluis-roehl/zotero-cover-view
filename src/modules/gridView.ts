@@ -1,8 +1,11 @@
 import { GridRenderer } from "./gridRenderer";
 import { GridWindowUI } from "./gridWindowUI";
 import { ItemTreeBridge } from "./itemTreeBridge";
+import { getPref, observePrefs } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
+const GRID_RENDER_PREFS = ["showAuthors"] as const;
+let stopObservingPreferences: (() => void) | undefined;
 
 export class GridView {
   private readonly tree: ItemTreeBridge;
@@ -44,7 +47,7 @@ export class GridView {
     this.ui.destroy();
   }
 
-  private readonly scheduleSync = (): void => {
+  readonly scheduleSync = (): void => {
     if (!this.enabled) return;
     this.cancelSync();
     this.syncTimer = this.win.setTimeout(() => {
@@ -69,9 +72,23 @@ export class GridView {
 
   private syncItems(): void {
     if (!this.enabled) return;
-    this.renderer.setItems(this.tree.getItems());
+    this.renderer.setItems(this.tree.getItems(), {
+      showAuthors: getPref("showAuthors"),
+    });
     this.renderer.setSelection(this.tree.getSelectedIDs());
   }
+}
+
+function registerPreferenceObserver(): void {
+  if (stopObservingPreferences) return;
+  stopObservingPreferences = observePrefs(GRID_RENDER_PREFS, () => {
+    for (const gridView of gridViews.values()) gridView.scheduleSync();
+  });
+}
+
+function unregisterPreferenceObserver(): void {
+  stopObservingPreferences?.();
+  stopObservingPreferences = undefined;
 }
 
 export function attachGridView(win: _ZoteroTypes.MainWindow): GridView {
@@ -80,6 +97,7 @@ export function attachGridView(win: _ZoteroTypes.MainWindow): GridView {
 
   const gridView = new GridView(win);
   gridViews.set(win, gridView);
+  registerPreferenceObserver();
   return gridView;
 }
 
@@ -89,6 +107,7 @@ export function detachGridView(win: Window): void {
 
   gridView.destroy();
   gridViews.delete(win);
+  if (!gridViews.size) unregisterPreferenceObserver();
 }
 
 export function destroyGridViews(): void {
@@ -96,4 +115,5 @@ export function destroyGridViews(): void {
     gridView.destroy();
   }
   gridViews.clear();
+  unregisterPreferenceObserver();
 }

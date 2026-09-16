@@ -18,6 +18,7 @@ export type FluentMessageId =
   | 'pref-enable'
   | 'pref-help'
   | 'pref-input'
+  | 'pref-show-authors'
   | 'pref-title'
   | 'prefs-table-detail'
   | 'prefs-table-title'

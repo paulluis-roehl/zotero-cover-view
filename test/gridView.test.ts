@@ -1,5 +1,6 @@
 import { assert } from "chai";
 import { GridRenderer } from "../src/modules/gridRenderer";
+import { getPref, setPref } from "../src/utils/prefs";
 
 describe("grid view", function () {
   it("restores visible native rows after scrolling the hidden list", async function () {
@@ -109,7 +110,7 @@ describe("grid view", function () {
       isRegularItem: () => false,
     } as unknown as Zotero.Item;
     try {
-      renderer.setItems([displayItem]);
+      renderer.setItems([displayItem], { showAuthors: true });
       const entry = host.firstElementChild!;
       renderer.setSelection([-1, -2]);
       assert.strictEqual(host.firstElementChild, entry);
@@ -137,7 +138,7 @@ describe("grid view", function () {
     } as unknown as Zotero.Item;
 
     try {
-      renderer.setItems([displayItem]);
+      renderer.setItems([displayItem], { showAuthors: true });
       host
         .querySelector(".grid-view-cover")!
         .dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
@@ -160,7 +161,7 @@ describe("grid view", function () {
     } as unknown as Zotero.Item;
 
     try {
-      renderer.setItems([displayItem]);
+      renderer.setItems([displayItem], { showAuthors: true });
       assert.equal(
         host.querySelector(".grid-view-title")?.textContent,
         "Analytical Engine Notes",
@@ -169,8 +170,65 @@ describe("grid view", function () {
         host.querySelector(".grid-view-authors")?.textContent,
         "Ada Lovelace and Charles Babbage",
       );
+
+      renderer.setItems([displayItem], { showAuthors: false });
+      assert.notExists(host.querySelector(".grid-view-authors"));
     } finally {
       renderer.destroy();
+    }
+  });
+
+  it("refreshes automatically on preference changes and applies changes made in list mode", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const originalShowAuthors = getPref("showAuthors");
+    const originallyHidden = grid.hidden;
+    const item = new Zotero.Item("book");
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const authorLine = () =>
+      grid.querySelector(`[data-item-id="${item.id}"] .grid-view-authors`);
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 2000;
+      while (!condition() && Date.now() < deadline) {
+        await Zotero.Promise.delay(20);
+      }
+      assert.isTrue(condition(), "Grid should reflect the changed preference");
+    };
+
+    try {
+      item.setField("title", "Preference refresh test");
+      item.setCreators([
+        { firstName: "Ada", lastName: "Lovelace", creatorType: "author" },
+      ]);
+      await item.saveTx();
+      setPref("showAuthors", true);
+      if (grid.hidden) toggle();
+      await pane.selectItems([item.id], true);
+      await waitFor(() => !!authorLine());
+
+      setPref("showAuthors", false);
+      await waitFor(() => !authorLine());
+      assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
+      setPref("showAuthors", true);
+      await waitFor(() => !!authorLine());
+
+      toggle();
+      const previousTile = grid.querySelector(`[data-item-id="${item.id}"]`);
+      setPref("showAuthors", false);
+      await Zotero.Promise.delay(100);
+      assert.strictEqual(
+        grid.querySelector(`[data-item-id="${item.id}"]`),
+        previousTile,
+      );
+      toggle();
+      assert.notExists(authorLine());
+      assert.exists(grid.querySelector(`[data-item-id="${item.id}"].selected`));
+    } finally {
+      setPref("showAuthors", originalShowAuthors);
+      if (grid.hidden !== originallyHidden) toggle();
+      if (item.id) await item.eraseTx();
     }
   });
 

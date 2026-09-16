@@ -1,5 +1,9 @@
 import { CoverProvider } from "./coverProvider";
 
+export interface GridRenderOptions {
+  showAuthors: boolean;
+}
+
 export class GridRenderer {
   private readonly doc: Document;
   private renderVersion = 0;
@@ -26,7 +30,7 @@ export class GridRenderer {
     if (Number.isSafeInteger(itemID)) this.onSelect(itemID);
   };
 
-  setItems(items: Zotero.Item[]): void {
+  setItems(items: Zotero.Item[], options: GridRenderOptions): void {
     const renderVersion = ++this.renderVersion;
     const fragment = this.doc.createDocumentFragment();
     this.entries.clear();
@@ -55,7 +59,7 @@ export class GridRenderer {
       titleLine.title = title;
       caption.appendChild(titleLine);
 
-      if (authors) {
+      if (authors && options.showAuthors) {
         const authorLine = this.doc.createElement("span");
         authorLine.className = "grid-view-authors";
         authorLine.textContent = authors;

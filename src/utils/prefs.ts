@@ -4,6 +4,21 @@ type PluginPrefsMap = _ZoteroTypes.Prefs["PluginPrefsMap"];
 
 const PREFS_PREFIX = config.prefsPrefix;
 
+/** Observe stored preferences and return an idempotent cleanup function. */
+export function observePrefs(
+  keys: readonly (keyof PluginPrefsMap)[],
+  onChange: () => void,
+): () => void {
+  const observers = keys.map((key) =>
+    Zotero.Prefs.registerObserver(`${PREFS_PREFIX}.${key}`, onChange, true),
+  );
+  return () => {
+    for (const observer of observers.splice(0)) {
+      Zotero.Prefs.unregisterObserver(observer);
+    }
+  };
+}
+
 /**
  * Get preference value.
  * Wrapper of `Zotero.Prefs.get`.
