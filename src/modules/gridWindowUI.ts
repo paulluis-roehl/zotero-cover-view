@@ -32,6 +32,7 @@ export class GridWindowUI {
     this.itemTreeDisplay = itemTree.style.display;
     this.stylesheet = ztoolkit.UI.createElement(win.document, "link", {
       namespace: "html",
+      enableElementRecord: false,
       properties: {
         type: "text/css",
         rel: "stylesheet",
@@ -44,6 +45,7 @@ export class GridWindowUI {
       win.document,
       "toolbarbutton",
       {
+        enableElementRecord: false,
         attributes: {
           id: "cover-view-toggle",
           class: "zotero-tb-button",
