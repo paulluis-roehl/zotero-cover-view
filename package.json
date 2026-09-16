@@ -2,9 +2,9 @@
   "name": "zotero-cover-view",
   "type": "module",
   "version": "0.2.1",
-  "description": "Zotero Cover View",
+  "description": "View covers of books and documents directly in Zotero.",
   "config": {
-    "addonName": "Zotero Cover View",
+    "addonName": "Cover View for Zotero",
     "addonID": "coverview@insature.net",
     "addonRef": "coverview",
     "addonInstance": "CoverView",
@@ -14,7 +14,7 @@
     "type": "git",
     "url": "git+https://github.com/paulluis-roehl/zotero-cover-view.git"
   },
-  "author": "PL Roehl",
+  "author": "Paul Luis Röhl",
   "bugs": {
     "url": "https://github.com/paulluis-roehl/zotero-cover-view/issues"
   },
