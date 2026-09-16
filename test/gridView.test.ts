@@ -98,7 +98,7 @@ describe("grid view", function () {
   it("updates selection without replacing tiles and ignores undisplayed IDs", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
-    const renderer = new GridRenderer(host);
+    const renderer = new GridRenderer(host, () => {});
     const item = new Zotero.Item("book");
     item.setField("title", "Selection presentation");
     // A display-only item avoids database notifications during this renderer test.
@@ -119,6 +119,60 @@ describe("grid view", function () {
       assert.isFalse(entry.classList.contains("selected"));
     } finally {
       renderer.destroy();
+    }
+  });
+
+  it("passes a tile click to the renderer selection callback", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    let selectedID: number | undefined;
+    const renderer = new GridRenderer(host, (itemID) => {
+      selectedID = itemID;
+    });
+    const displayItem = {
+      id: -1,
+      getDisplayTitle: () => "Clicked item",
+      isFileAttachment: () => false,
+      isRegularItem: () => false,
+    } as unknown as Zotero.Item;
+
+    try {
+      renderer.setItems([displayItem]);
+      host
+        .querySelector(".grid-view-cover")!
+        .dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      assert.equal(selectedID, displayItem.id);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("selects the native item when a grid tile is clicked", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const item = new Zotero.Item("book");
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+
+    try {
+      item.setField("title", "Grid click selection test");
+      await item.saveTx();
+      if (!grid.hidden) toggle();
+      toggle();
+
+      const entry = grid.querySelector<HTMLElement>(
+        `[data-item-id="${item.id}"]`,
+      )!;
+      assert.exists(entry);
+      entry.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => win.setTimeout(resolve, 100));
+
+      assert.deepEqual(pane.getSelectedItems(true), [item.id]);
+      assert.isTrue(entry.classList.contains("selected"));
+    } finally {
+      if (grid.hidden) toggle();
+      if (item.id) await item.eraseTx();
     }
   });
 

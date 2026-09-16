@@ -6,11 +6,25 @@ export class GridRenderer {
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
 
-  constructor(private readonly host: HTMLElement) {
+  constructor(
+    private readonly host: HTMLElement,
+    private readonly onSelect: (itemID: number) => void,
+  ) {
     const doc = host.ownerDocument;
     if (!doc) throw new Error("Cannot create grid renderer without a document");
     this.doc = doc;
+    this.host.addEventListener("click", this.handleClick);
   }
+
+  private readonly handleClick = (event: Event): void => {
+    const entry = (event.target as Element | null)?.closest(
+      ".grid-view-item",
+    ) as HTMLElement | null;
+    if (!entry || !this.host.contains(entry)) return;
+
+    const itemID = Number(entry.dataset.itemId);
+    if (Number.isSafeInteger(itemID)) this.onSelect(itemID);
+  };
 
   setItems(items: Zotero.Item[]): void {
     const renderVersion = ++this.renderVersion;
@@ -64,6 +78,7 @@ export class GridRenderer {
 
   destroy(): void {
     this.renderVersion++;
+    this.host.removeEventListener("click", this.handleClick);
     this.entries.clear();
     this.selectedIDs.clear();
     this.host.replaceChildren();

@@ -14,7 +14,11 @@ export class GridView {
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
     this.ui = new GridWindowUI(win, this.toggleEnabled);
-    this.renderer = new GridRenderer(this.ui.host);
+    this.renderer = new GridRenderer(this.ui.host, (itemID) => {
+      void this.selectItem(itemID).catch((error) => {
+        ztoolkit.log("Failed to select grid item", itemID, error);
+      });
+    });
     this.tree.onItemsChanged(this.scheduleSync);
     this.setEnabled(true);
   }
@@ -53,6 +57,13 @@ export class GridView {
     if (this.syncTimer !== undefined) {
       this.win.clearTimeout(this.syncTimer);
       this.syncTimer = undefined;
+    }
+  }
+
+  private async selectItem(itemID: number): Promise<void> {
+    await this.tree.selectItem(itemID);
+    if (this.enabled) {
+      this.renderer.setSelection(this.tree.getSelectedIDs());
     }
   }
 

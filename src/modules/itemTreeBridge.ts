@@ -33,6 +33,10 @@ export class ItemTreeBridge {
     return this.itemsView.getSelectedItems(true);
   }
 
+  async selectItem(itemID: number): Promise<void> {
+    await this.win.ZoteroPane.selectItems([itemID]);
+  }
+
   /** Call after showing the native tree, when DOM measurements are available. */
   refreshLayout(): void {
     // Hidden selection/scroll updates can leave the windowed list's cached
