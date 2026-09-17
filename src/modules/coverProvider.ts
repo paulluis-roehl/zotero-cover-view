@@ -1,4 +1,5 @@
 import { findEPUBCoverURI } from "./epubCover";
+import { createPlaceholderCoverURI } from "./placeholderCover";
 import {
   cachePDFCover,
   deleteCachedPDFCover,
@@ -78,11 +79,7 @@ export class CoverProvider {
         ztoolkit.log("Failed to find PDF cover", attachment.id, error);
       }
     }
-    return null;
-  }
-
-  static async createThumbnail(_source: string): Promise<string | null> {
-    return null;
+    return createPlaceholderCoverURI(item);
   }
 
   static clearCache(): void {

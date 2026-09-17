@@ -259,7 +259,7 @@ describe("EPUB cover discovery", function () {
     const first = CoverProvider.getCover(item.id);
     CoverProvider.cacheCover(item);
     assert.strictEqual(CoverProvider.getCover(item.id), first);
-    assert.isNull(await first);
+    assert.match(await first, /^data:image\/svg\+xml;charset=utf-8,/);
     assert.equal(lookups, 1);
   });
 
@@ -274,13 +274,14 @@ describe("EPUB cover discovery", function () {
     assert.equal(itemLoads, 0);
   });
 
-  it("returns null when an attachment lookup fails", async function () {
-    assert.isNull(
+  it("returns a placeholder when an attachment lookup fails", async function () {
+    assert.match(
       await CoverProvider.findCover(
         attachment(1, async () => {
           throw new Error("File lookup failed");
         }),
       ),
+      /^data:image\/svg\+xml;charset=utf-8,/,
     );
   });
 });

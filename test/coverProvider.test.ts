@@ -101,6 +101,39 @@ describe("Cover provider", function () {
     );
   });
 
+  it("creates a stable visual placeholder when no attachment has a cover", async function () {
+    Zotero.Items.get = (() => []) as typeof originalGet;
+    const item = {
+      id: 41,
+      firstCreator: "Ada Lovelace",
+      getDisplayTitle: () => "Analytical Engine Notes and Observations",
+      getField: (field: string) => (field === "date" ? "1843-01-01" : ""),
+      isFileAttachment: () => false,
+      isRegularItem: () => true,
+      getAttachments: () => [],
+    } as unknown as Zotero.Item;
+
+    const first = await CoverProvider.findCover(item);
+    const second = await CoverProvider.findCover(item);
+
+    assert.equal(first, second);
+    assert.match(first!, /^data:image\/svg\+xml;charset=utf-8,/);
+    const svg = decodeURIComponent(first!.split(",")[1]);
+    assert.include(svg, 'viewBox="0 0 420 594"');
+    assert.include(svg, 'y="225">Analytical Engine</tspan>');
+    assert.include(svg, ">Notes and</tspan>");
+    assert.include(svg, ">Observations</tspan>");
+    assert.include(svg, 'y="490"');
+    assert.include(svg, ">Ada Lovelace</text>");
+    assert.include(
+      svg,
+      'x="382" y="38" text-anchor="end" dominant-baseline="hanging"',
+    );
+    assert.include(svg, 'font-size="19" font-weight="500">1843</text>');
+    assert.notInclude(svg, "&#65;");
+    assert.include(svg, 'clip-path="url(#content)"');
+  });
+
   it("does not publish a cover from an invalidated lookup", async function () {
     const originalFindCover = CoverProvider.findCover;
     let resolveFirst!: (cover: string | null) => void;
