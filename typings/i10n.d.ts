@@ -6,6 +6,7 @@ export type FluentMessageId =
   | 'cover-view-image-alt'
   | 'cover-view-switch-to-grid'
   | 'cover-view-switch-to-list'
+  | 'pref-enable-grid-view'
   | 'pref-help'
   | 'pref-show-authors'
   | 'pref-title'

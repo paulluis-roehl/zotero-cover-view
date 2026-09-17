@@ -1,7 +1,7 @@
 import { GridRenderer } from "./gridRenderer";
 import { GridWindowUI } from "./gridWindowUI";
 import { ItemTreeBridge } from "./itemTreeBridge";
-import { getPref, observePrefs } from "../utils/prefs";
+import { getPref, observePrefs, setPref } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
 const GRID_RENDER_PREFS = ["showAuthors"] as const;
@@ -12,7 +12,6 @@ export class GridView {
   private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
   private readonly tabObserverID: string;
-  private enabled = false;
   private syncTimer?: number;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
@@ -43,11 +42,11 @@ export class GridView {
       ["tab"],
       "cover-view-grid",
     );
-    this.setEnabled(true);
+    this.applyEnabledPreference();
   }
 
-  setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
+  applyEnabledPreference(): void {
+    const enabled = getPref("enableGridView");
     this.cancelSync();
     this.ui.setEnabled(enabled);
     if (!enabled) this.tree.refreshLayout();
@@ -55,11 +54,10 @@ export class GridView {
   }
 
   readonly toggleEnabled = (): void => {
-    this.setEnabled(!this.enabled);
+    setPref("enableGridView", !getPref("enableGridView"));
   };
 
   destroy(): void {
-    this.enabled = false;
     this.cancelSync();
     this.tree.destroy();
     Zotero.Notifier.unregisterObserver(this.tabObserverID);
@@ -69,8 +67,8 @@ export class GridView {
   }
 
   readonly scheduleSync = (): void => {
-    if (!this.enabled || this.win.Zotero_Tabs.selectedType !== "library")
-      return;
+    if (!getPref("enableGridView")) return;
+    if (this.win.Zotero_Tabs.selectedType !== "library") return;
     this.cancelSync();
     this.syncTimer = this.win.setTimeout(() => {
       this.syncTimer = undefined;
@@ -87,14 +85,14 @@ export class GridView {
 
   private async selectItem(itemID: number): Promise<void> {
     await this.tree.selectItem(itemID);
-    if (this.enabled) {
+    if (getPref("enableGridView")) {
       this.renderer.setSelection(this.tree.getSelectedIDs());
     }
   }
 
   private syncItems(): void {
-    if (!this.enabled || this.win.Zotero_Tabs.selectedType !== "library")
-      return;
+    if (!getPref("enableGridView")) return;
+    if (this.win.Zotero_Tabs.selectedType !== "library") return;
     this.renderer.setItems(this.tree.getItems(), {
       showAuthors: getPref("showAuthors"),
     });
@@ -104,9 +102,18 @@ export class GridView {
 
 function registerPreferenceObserver(): void {
   if (stopObservingPreferences) return;
-  stopObservingPreferences = observePrefs(GRID_RENDER_PREFS, () => {
+  const stopEnabledObserver = observePrefs(["enableGridView"], () => {
+    for (const gridView of gridViews.values()) {
+      gridView.applyEnabledPreference();
+    }
+  });
+  const stopRenderObserver = observePrefs(GRID_RENDER_PREFS, () => {
     for (const gridView of gridViews.values()) gridView.scheduleSync();
   });
+  stopObservingPreferences = () => {
+    stopEnabledObserver();
+    stopRenderObserver();
+  };
 }
 
 function unregisterPreferenceObserver(): void {

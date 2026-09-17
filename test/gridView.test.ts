@@ -507,6 +507,30 @@ describe("grid view", function () {
     }
   });
 
+  it("applies the enableGridView preference and updates it from the toolbar", async function () {
+    const win = Zotero.getMainWindow()!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const itemTree = win.document.getElementById("zotero-items-tree")!;
+    const originalEnableGridView = getPref("enableGridView");
+
+    try {
+      setPref("enableGridView", false);
+      await Zotero.Promise.delay(20);
+      assert.isTrue(grid.hidden);
+      assert.notEqual(win.getComputedStyle(itemTree).display, "none");
+
+      button.dispatchEvent(new win.Event("command"));
+      await Zotero.Promise.delay(20);
+      assert.isTrue(getPref("enableGridView"));
+      assert.isFalse(grid.hidden);
+      assert.equal(win.getComputedStyle(itemTree).display, "none");
+    } finally {
+      setPref("enableGridView", originalEnableGridView);
+      await Zotero.Promise.delay(20);
+    }
+  });
+
   it("toggles between the cover grid and native item list", function () {
     const win = Zotero.getMainWindow()!;
     const button = win.document.getElementById("cover-view-toggle")!;
