@@ -78,12 +78,19 @@ export class GridRenderer {
   }
 
   private renderChunk(): void {
+    this.host.querySelector(".grid-view-sentinel")?.remove();
+
     const renderVersion = this.renderVersion;
     const fragment = this.doc.createDocumentFragment();
 
     for (const renderItem of this.renderItems) {
       fragment.appendChild(this.buildTile(renderItem, renderVersion));
     }
+
+    const sentinel = this.doc.createElement("div");
+    sentinel.className = "grid-view-sentinel";
+    sentinel.setAttribute("aria-hidden", "true");
+    fragment.appendChild(sentinel);
 
     this.host.appendChild(fragment);
   }

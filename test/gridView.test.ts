@@ -136,6 +136,31 @@ describe("grid view", function () {
     }
   });
 
+  it("keeps one sentinel after rebuilding tiles", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    const renderer = new GridRenderer(host, () => {});
+    const displayItem = {
+      id: -1,
+      firstCreator: "Ada Lovelace",
+      getDisplayTitle: () => "Sentinel test",
+      isFileAttachment: () => false,
+      isRegularItem: () => false,
+    } as unknown as Zotero.Item;
+
+    try {
+      renderer.setItems([displayItem], { showAuthors: true });
+      renderer.setItems([displayItem], { showAuthors: false });
+
+      assert.lengthOf(host.querySelectorAll(".grid-view-sentinel"), 1);
+      assert.isTrue(
+        host.lastElementChild?.classList.contains("grid-view-sentinel"),
+      );
+    } finally {
+      renderer.destroy();
+    }
+  });
+
   it("passes a tile click to the renderer selection callback", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
