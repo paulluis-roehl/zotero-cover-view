@@ -81,51 +81,59 @@ export class GridRenderer {
     const renderVersion = this.renderVersion;
     const fragment = this.doc.createDocumentFragment();
 
-    for (const { item, title, authors } of this.renderItems) {
-      const entry = this.doc.createElement("figure");
-      entry.className = "grid-view-item";
-      entry.dataset.itemId = String(item.id);
-      entry.classList.toggle("selected", this.selectedIDs.has(item.id));
-      this.entries.set(item.id, entry);
-
-      const coverFrame = this.doc.createElement("div");
-      coverFrame.className = "grid-view-cover";
-
-      const image = this.doc.createElement("img");
-      image.alt = getString("cover-view-image-alt", { args: { title } });
-      image.hidden = true;
-      coverFrame.appendChild(image);
-
-      const caption = this.doc.createElement("figcaption");
-      const titleLine = this.doc.createElement("span");
-      titleLine.className = "grid-view-title";
-      titleLine.textContent = title;
-      titleLine.title = title;
-      caption.appendChild(titleLine);
-
-      if (authors) {
-        const authorLine = this.doc.createElement("span");
-        authorLine.className = "grid-view-authors";
-        authorLine.textContent = authors;
-        authorLine.title = authors;
-        caption.appendChild(authorLine);
-      }
-
-      entry.append(coverFrame, caption);
-      fragment.appendChild(entry);
-
-      CoverProvider.cacheCover(item);
-      void CoverProvider.getCover(item.id).then((cover) => {
-        if (!cover || renderVersion !== this.renderVersion) return;
-
-        image.addEventListener("load", () => (image.hidden = false), {
-          once: true,
-        });
-        image.src = cover;
-      });
+    for (const renderItem of this.renderItems) {
+      fragment.appendChild(this.buildTile(renderItem, renderVersion));
     }
 
     this.host.appendChild(fragment);
+  }
+
+  private buildTile(
+    { item, title, authors }: GridRenderItem,
+    renderVersion: number,
+  ): HTMLElement {
+    const entry = this.doc.createElement("figure");
+    entry.className = "grid-view-item";
+    entry.dataset.itemId = String(item.id);
+    entry.classList.toggle("selected", this.selectedIDs.has(item.id));
+    this.entries.set(item.id, entry);
+
+    const coverFrame = this.doc.createElement("div");
+    coverFrame.className = "grid-view-cover";
+
+    const image = this.doc.createElement("img");
+    image.alt = getString("cover-view-image-alt", { args: { title } });
+    image.hidden = true;
+    coverFrame.appendChild(image);
+
+    const caption = this.doc.createElement("figcaption");
+    const titleLine = this.doc.createElement("span");
+    titleLine.className = "grid-view-title";
+    titleLine.textContent = title;
+    titleLine.title = title;
+    caption.appendChild(titleLine);
+
+    if (authors) {
+      const authorLine = this.doc.createElement("span");
+      authorLine.className = "grid-view-authors";
+      authorLine.textContent = authors;
+      authorLine.title = authors;
+      caption.appendChild(authorLine);
+    }
+
+    entry.append(coverFrame, caption);
+
+    CoverProvider.cacheCover(item);
+    void CoverProvider.getCover(item.id).then((cover) => {
+      if (!cover || renderVersion !== this.renderVersion) return;
+
+      image.addEventListener("load", () => (image.hidden = false), {
+        once: true,
+      });
+      image.src = cover;
+    });
+
+    return entry;
   }
 
   /** Update selection presentation without rebuilding tiles or reloading covers. */
