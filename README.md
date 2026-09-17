@@ -82,6 +82,8 @@ See setup and debug details there.
 
 - Based on the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) by [@windingwind](https://github.com/windingwind).
 - Inspired by [this](https://forums.zotero.org/discussion/121736/feature-request-cover-flow-or-book-jacket-image-display-view) discussion on the Zotero forum.
+- Implementation also inspired by [zotero-lib-view](https://github.com/reiherj/zotero-lib-view)
+
 
 ## Disclaimer
 

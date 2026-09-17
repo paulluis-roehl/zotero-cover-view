@@ -6,6 +6,7 @@ import {
   detachGridView,
 } from "./modules/gridView";
 import { registerPreferences } from "./modules/preferences";
+import { CoverProvider } from "./modules/coverProvider";
 
 async function onStartup() {
   await Promise.all([
@@ -17,6 +18,7 @@ async function onStartup() {
   initLocale();
 
   registerPreferences();
+  CoverProvider.registerNotifier();
 
   await registerCoverColumn();
 
@@ -37,6 +39,8 @@ function onMainWindowUnload(win: Window): void {
 
 function onShutdown(): void {
   destroyGridViews();
+  CoverProvider.unregisterNotifier();
+  CoverProvider.clearCache();
   ztoolkit.unregisterAll();
   // Remove addon object
   addon.data.alive = false;

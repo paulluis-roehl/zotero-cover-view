@@ -1,5 +1,10 @@
 import { assert } from "chai";
-import { findPDFCoverURI } from "../src/modules/pdfCover";
+import {
+  cachePDFCover,
+  deleteCachedPDFCover,
+  findPDFCoverURI,
+  getCachedPDFCover,
+} from "../src/modules/pdfCover";
 
 describe("PDF cover rendering", function () {
   it("renders a real PDF with Zotero's document worker", async function () {
@@ -60,5 +65,30 @@ describe("PDF cover rendering", function () {
       error = caught;
     }
     assert.match(String(error), /positive number/);
+  });
+
+  it("hits, misses, and removes the persistent PDF cache", async function () {
+    const itemID = Math.floor(Math.random() * 1_000_000_000);
+    const cover = "data:image/png;base64,iVBORw0KGgo=";
+    const imagePath = PathUtils.join(
+      Zotero.DataDirectory.dir,
+      "coverview",
+      "covers",
+      `${itemID}.png`,
+    );
+    try {
+      assert.isNull(await getCachedPDFCover(itemID, "v1"));
+      await cachePDFCover(itemID, "v1", cover);
+      assert.equal(await getCachedPDFCover(itemID, "v1"), cover);
+      assert.deepEqual(
+        Array.from(await IOUtils.read(imagePath)),
+        [137, 80, 78, 71, 13, 10, 26, 10],
+      );
+      assert.isNull(await getCachedPDFCover(itemID, "v2"));
+      await deleteCachedPDFCover(itemID);
+      assert.isNull(await getCachedPDFCover(itemID, "v1"));
+    } finally {
+      await deleteCachedPDFCover(itemID);
+    }
   });
 });
