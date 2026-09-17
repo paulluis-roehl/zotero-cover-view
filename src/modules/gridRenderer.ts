@@ -1,6 +1,8 @@
 import { CoverProvider } from "./coverProvider";
 import { getString } from "../utils/locale";
 
+const CHUNK_SIZE = 120;
+
 export interface GridRenderOptions {
   showAuthors: boolean;
 }
@@ -16,6 +18,8 @@ export class GridRenderer {
   private renderVersion = 0;
   private renderKey?: string;
   private renderItems: GridRenderItem[] = [];
+  private renderedCount = 0;
+  private readonly chunkObserver: IntersectionObserver;
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
 
@@ -29,6 +33,20 @@ export class GridRenderer {
     this.doc = doc;
     this.host.addEventListener("click", this.handleClick);
     this.host.addEventListener("dblclick", this.handleDoubleClick);
+    this.chunkObserver = new doc.defaultView!.IntersectionObserver(
+      (entries: IntersectionObserverEntry[]) => {
+        const sentinel = this.host.querySelector(".grid-view-sentinel");
+        if (
+          sentinel &&
+          entries.some(
+            (entry) => entry.isIntersecting && entry.target === sentinel,
+          )
+        ) {
+          this.renderChunk();
+        }
+      },
+      { root: this.host, rootMargin: "400px" },
+    );
   }
 
   private readonly handleClick = (event: Event): void => {
@@ -70,7 +88,9 @@ export class GridRenderer {
     this.renderKey = renderKey;
 
     this.renderItems = renderItems;
+    this.renderedCount = 0;
     ++this.renderVersion;
+    this.chunkObserver.disconnect();
     this.entries.clear();
     this.host.replaceChildren();
     this.renderChunk();
@@ -78,21 +98,36 @@ export class GridRenderer {
   }
 
   private renderChunk(): void {
-    this.host.querySelector(".grid-view-sentinel")?.remove();
-
-    const renderVersion = this.renderVersion;
-    const fragment = this.doc.createDocumentFragment();
-
-    for (const renderItem of this.renderItems) {
-      fragment.appendChild(this.buildTile(renderItem, renderVersion));
+    const previousSentinel = this.host.querySelector(".grid-view-sentinel");
+    if (previousSentinel) {
+      this.chunkObserver.unobserve(previousSentinel);
+      previousSentinel.remove();
     }
 
-    const sentinel = this.doc.createElement("div");
-    sentinel.className = "grid-view-sentinel";
-    sentinel.setAttribute("aria-hidden", "true");
-    fragment.appendChild(sentinel);
+    const renderVersion = this.renderVersion;
+    const end = Math.min(
+      this.renderedCount + CHUNK_SIZE,
+      this.renderItems.length,
+    );
+    const fragment = this.doc.createDocumentFragment();
+
+    for (let index = this.renderedCount; index < end; index++) {
+      fragment.appendChild(
+        this.buildTile(this.renderItems[index], renderVersion),
+      );
+    }
+    this.renderedCount = end;
+
+    let sentinel: HTMLElement | undefined;
+    if (this.renderedCount < this.renderItems.length) {
+      sentinel = this.doc.createElement("div");
+      sentinel.className = "grid-view-sentinel";
+      sentinel.setAttribute("aria-hidden", "true");
+      fragment.appendChild(sentinel);
+    }
 
     this.host.appendChild(fragment);
+    if (sentinel) this.chunkObserver.observe(sentinel);
   }
 
   private buildTile(
@@ -163,7 +198,9 @@ export class GridRenderer {
     this.renderKey = undefined;
     this.host.removeEventListener("click", this.handleClick);
     this.host.removeEventListener("dblclick", this.handleDoubleClick);
+    this.chunkObserver.disconnect();
     this.renderItems = [];
+    this.renderedCount = 0;
     this.entries.clear();
     this.selectedIDs.clear();
     this.host.replaceChildren();

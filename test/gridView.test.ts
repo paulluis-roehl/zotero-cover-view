@@ -136,28 +136,55 @@ describe("grid view", function () {
     }
   });
 
-  it("keeps one sentinel after rebuilding tiles", function () {
+  it("renders tiles in finite chunks and appends the next chunk at the sentinel", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
+    const OriginalIntersectionObserver = win.IntersectionObserver;
+    let notify: IntersectionObserverCallback | undefined;
+    class FakeIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback) {
+        notify = callback;
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    win.IntersectionObserver =
+      FakeIntersectionObserver as unknown as typeof IntersectionObserver;
+
+    const items = Array.from(
+      { length: 121 },
+      (_, index) =>
+        ({
+          id: -(index + 1),
+          firstCreator: "",
+          getDisplayTitle: () => `Chunk item ${index}`,
+          isFileAttachment: () => false,
+          isRegularItem: () => false,
+        }) as unknown as Zotero.Item,
+    );
     const renderer = new GridRenderer(host, () => {});
-    const displayItem = {
-      id: -1,
-      firstCreator: "Ada Lovelace",
-      getDisplayTitle: () => "Sentinel test",
-      isFileAttachment: () => false,
-      isRegularItem: () => false,
-    } as unknown as Zotero.Item;
 
     try {
-      renderer.setItems([displayItem], { showAuthors: true });
-      renderer.setItems([displayItem], { showAuthors: false });
+      renderer.setItems(items, { showAuthors: true });
 
+      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
       assert.lengthOf(host.querySelectorAll(".grid-view-sentinel"), 1);
-      assert.isTrue(
-        host.lastElementChild?.classList.contains("grid-view-sentinel"),
+      const sentinel = host.querySelector(".grid-view-sentinel")!;
+      notify?.(
+        [
+          {
+            isIntersecting: true,
+            target: sentinel,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
       );
+      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 121);
+      assert.lengthOf(host.querySelectorAll(".grid-view-sentinel"), 0);
     } finally {
       renderer.destroy();
+      win.IntersectionObserver = OriginalIntersectionObserver;
     }
   });
 

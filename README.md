@@ -71,6 +71,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] switch from `ZoteroToolkit` to custom (smaller) tool kit
 - [ ] can / should I extract grid view into a `.xhtml` file?
 - [ ] move `DEFAULT_COVER_WIDTH` and `DEFAULT_PAGE_WIDTH` from `pdfCover.ts` into settings
+- [ ] move `CHUNK_SIZE` from `gridRenderer.ts` into (advanced) settings
 - [ ] fix bug where pdf cover renders incorrectly in some cases (with "old" / scanned text)
 
 <br/>
