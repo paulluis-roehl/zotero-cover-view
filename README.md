@@ -21,7 +21,7 @@ This makes it more visually appealing especially for books (as opposed to academ
   - [Latest Stable](https://github.com/paulluis-roehl/zotero-cover-view/releases/latest)
   - [All Releases](https://github.com/paulluis-roehl/zotero-cover-view/releases)
 
-  _Note_: If you're using Firefox as your browser, right click the `.xpi` and select "Save As.."
+  _Note_: If you're using Firefox as your browser, right click the `.xpi` and select `Save Link As...`.
 
 - In Zotero click `Tools` in the top menu bar and then click `Plugins`
 - Click the gear icon in the top right of the Plugins Manager.
@@ -85,7 +85,7 @@ See setup and debug details there.
 
 - Based on the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) by [@windingwind](https://github.com/windingwind).
 - Inspired by [this](https://forums.zotero.org/discussion/121736/feature-request-cover-flow-or-book-jacket-image-display-view) discussion on the Zotero forum.
-- Implementation also inspired by [zotero-lib-view](https://github.com/reiherj/zotero-lib-view)
+- Implementation also inspired by [zotero-lib-view](https://github.com/reiherj/zotero-lib-view).
 
 
 ## Disclaimer
