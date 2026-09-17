@@ -18,7 +18,6 @@ export class GridRenderer {
   private renderVersion = 0;
   private renderKey?: string;
   private renderItems: GridRenderItem[] = [];
-  private renderItemsByID = new Map<number, GridRenderItem>();
   private renderedCount = 0;
   private readonly chunkObserver: IntersectionObserver;
   private readonly coverObserver: IntersectionObserver;
@@ -101,9 +100,6 @@ export class GridRenderer {
     this.renderKey = renderKey;
 
     this.renderItems = renderItems;
-    this.renderItemsByID = new Map(
-      renderItems.map((renderItem) => [renderItem.item.id, renderItem]),
-    );
     this.renderedCount = 0;
     ++this.renderVersion;
     this.chunkObserver.disconnect();
@@ -128,7 +124,7 @@ export class GridRenderer {
     const fragment = this.doc.createDocumentFragment();
 
     for (let index = this.renderedCount; index < end; index++) {
-      fragment.appendChild(this.buildTile(this.renderItems[index]));
+      fragment.appendChild(this.buildTile(this.renderItems[index], index));
     }
     this.renderedCount = end;
 
@@ -144,10 +140,14 @@ export class GridRenderer {
     if (sentinel) this.chunkObserver.observe(sentinel);
   }
 
-  private buildTile({ item, title, authors }: GridRenderItem): HTMLElement {
+  private buildTile(
+    { item, title, authors }: GridRenderItem,
+    renderIndex: number,
+  ): HTMLElement {
     const entry = this.doc.createElement("figure");
     entry.className = "grid-view-item";
     entry.dataset.itemId = String(item.id);
+    entry.dataset.renderIndex = String(renderIndex);
     entry.classList.toggle("selected", this.selectedIDs.has(item.id));
     this.entries.set(item.id, entry);
 
@@ -181,8 +181,10 @@ export class GridRenderer {
   }
 
   private async loadCover(entry: HTMLElement): Promise<void> {
-    const itemID = Number(entry.dataset.itemId);
-    const item = this.renderItemsByID.get(itemID)?.item;
+    const renderIndex = Number(entry.dataset.renderIndex);
+    const item = Number.isSafeInteger(renderIndex)
+      ? this.renderItems[renderIndex]?.item
+      : undefined;
     if (!item) return;
 
     const renderVersion = this.renderVersion;
@@ -233,7 +235,6 @@ export class GridRenderer {
     this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
     this.renderItems = [];
-    this.renderItemsByID.clear();
     this.renderedCount = 0;
     this.entries.clear();
     this.selectedIDs.clear();

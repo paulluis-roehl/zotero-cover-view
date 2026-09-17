@@ -172,7 +172,10 @@ describe("grid view", function () {
     try {
       renderer.setItems(items, { showAuthors: true });
 
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
+      const firstChunk = host.querySelectorAll<HTMLElement>(".grid-view-item");
+      assert.lengthOf(firstChunk, 120);
+      assert.equal(firstChunk[0].dataset.renderIndex, "0");
+      assert.equal(firstChunk[119].dataset.renderIndex, "119");
       assert.lengthOf(host.querySelectorAll(".grid-view-sentinel"), 1);
       const sentinel = host.querySelector(".grid-view-sentinel")!;
       notify?.(
@@ -185,6 +188,11 @@ describe("grid view", function () {
         {} as IntersectionObserver,
       );
       assert.lengthOf(host.querySelectorAll(".grid-view-item"), 121);
+      assert.equal(
+        host.querySelectorAll<HTMLElement>(".grid-view-item")[120].dataset
+          .renderIndex,
+        "120",
+      );
       assert.lengthOf(host.querySelectorAll(".grid-view-sentinel"), 0);
     } finally {
       renderer.destroy();
