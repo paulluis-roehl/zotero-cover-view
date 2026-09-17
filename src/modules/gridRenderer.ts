@@ -5,10 +5,17 @@ export interface GridRenderOptions {
   showAuthors: boolean;
 }
 
+interface GridRenderItem {
+  item: Zotero.Item;
+  title: string;
+  authors: string;
+}
+
 export class GridRenderer {
   private readonly doc: Document;
   private renderVersion = 0;
   private renderKey?: string;
+  private renderItems: GridRenderItem[] = [];
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
 
@@ -49,7 +56,7 @@ export class GridRenderer {
     const renderItems = items.map((item) => ({
       item,
       title: item.getDisplayTitle(),
-      authors: item.firstCreator,
+      authors: options.showAuthors ? item.firstCreator : "",
     }));
     const renderKey = JSON.stringify([
       options.showAuthors,
@@ -62,11 +69,19 @@ export class GridRenderer {
     if (renderKey === this.renderKey) return;
     this.renderKey = renderKey;
 
-    const renderVersion = ++this.renderVersion;
-    const fragment = this.doc.createDocumentFragment();
+    this.renderItems = renderItems;
+    ++this.renderVersion;
     this.entries.clear();
+    this.host.replaceChildren();
+    this.renderChunk();
+    this.host.scrollTop = scrollTop;
+  }
 
-    for (const { item, title, authors } of renderItems) {
+  private renderChunk(): void {
+    const renderVersion = this.renderVersion;
+    const fragment = this.doc.createDocumentFragment();
+
+    for (const { item, title, authors } of this.renderItems) {
       const entry = this.doc.createElement("figure");
       entry.className = "grid-view-item";
       entry.dataset.itemId = String(item.id);
@@ -88,7 +103,7 @@ export class GridRenderer {
       titleLine.title = title;
       caption.appendChild(titleLine);
 
-      if (authors && options.showAuthors) {
+      if (authors) {
         const authorLine = this.doc.createElement("span");
         authorLine.className = "grid-view-authors";
         authorLine.textContent = authors;
@@ -110,8 +125,7 @@ export class GridRenderer {
       });
     }
 
-    this.host.replaceChildren(fragment);
-    this.host.scrollTop = scrollTop;
+    this.host.appendChild(fragment);
   }
 
   /** Update selection presentation without rebuilding tiles or reloading covers. */
@@ -134,6 +148,7 @@ export class GridRenderer {
     this.renderKey = undefined;
     this.host.removeEventListener("click", this.handleClick);
     this.host.removeEventListener("dblclick", this.handleDoubleClick);
+    this.renderItems = [];
     this.entries.clear();
     this.selectedIDs.clear();
     this.host.replaceChildren();
