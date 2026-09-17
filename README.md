@@ -37,7 +37,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] support `.epub`
 - [ ] support `.jpg` / `.png`
 - [ ] support `.djvu`
-- [ ] auto-generate default cover based on title
+- [x] auto-generate default cover based on title
 - [ ] try to fetch cover from internet
 - [ ] implement precedence setting
 
@@ -48,13 +48,15 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] multi-select (`shift + click` and `ctrl + click`)
 - [ ] general keyboard input and shortcuts
   - [ ] adjust arrow keys for grid navigation
+- [ ] drag and drop files into grid view
 
 **Settings**
 
 - [ ] grid size
 - [ ] grid item aspect ratio
+  - update in `coverView.css` and also `placeholderCover.ts` default cover svg 
 - [ ] further display options for grid view (e.g. title, author, year, ...)
-- [ ] remember previous choice of list vs grid view
+- [x] remember previous choice of list vs grid view
   - [ ] option for separate choice in every collection
 
 **UI/UX**
@@ -67,12 +69,12 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] add cover flow pane
 
 **Implementation**
-
 - [ ] switch from `ZoteroToolkit` to custom (smaller) tool kit
 - [ ] can / should I extract grid view into a `.xhtml` file?
 - [ ] move `DEFAULT_COVER_WIDTH` and `DEFAULT_PAGE_WIDTH` from `pdfCover.ts` into settings
 - [ ] move `CHUNK_SIZE` from `gridRenderer.ts` into (advanced) settings
 - [ ] fix bug where pdf cover renders incorrectly in some cases (with "old" / scanned text)
+- [ ] add `peekCover()` function for immediate display of already cached covers
 
 <br/>
 
