@@ -18,8 +18,10 @@ export class GridRenderer {
   private renderVersion = 0;
   private renderKey?: string;
   private renderItems: GridRenderItem[] = [];
+  private renderItemsByID = new Map<number, GridRenderItem>();
   private renderedCount = 0;
   private readonly chunkObserver: IntersectionObserver;
+  private readonly coverObserver: IntersectionObserver;
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
 
@@ -46,6 +48,17 @@ export class GridRenderer {
         }
       },
       { root: this.host, rootMargin: "400px" },
+    );
+    this.coverObserver = new doc.defaultView!.IntersectionObserver(
+      (entries: IntersectionObserverEntry[]) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting || !this.host.contains(entry.target))
+            continue;
+          this.coverObserver.unobserve(entry.target);
+          void this.loadCover(entry.target as HTMLElement);
+        }
+      },
+      { root: this.host, rootMargin: "200px" },
     );
   }
 
@@ -88,9 +101,13 @@ export class GridRenderer {
     this.renderKey = renderKey;
 
     this.renderItems = renderItems;
+    this.renderItemsByID = new Map(
+      renderItems.map((renderItem) => [renderItem.item.id, renderItem]),
+    );
     this.renderedCount = 0;
     ++this.renderVersion;
     this.chunkObserver.disconnect();
+    this.coverObserver.disconnect();
     this.entries.clear();
     this.host.replaceChildren();
     this.renderChunk();
@@ -104,7 +121,6 @@ export class GridRenderer {
       previousSentinel.remove();
     }
 
-    const renderVersion = this.renderVersion;
     const end = Math.min(
       this.renderedCount + CHUNK_SIZE,
       this.renderItems.length,
@@ -112,9 +128,7 @@ export class GridRenderer {
     const fragment = this.doc.createDocumentFragment();
 
     for (let index = this.renderedCount; index < end; index++) {
-      fragment.appendChild(
-        this.buildTile(this.renderItems[index], renderVersion),
-      );
+      fragment.appendChild(this.buildTile(this.renderItems[index]));
     }
     this.renderedCount = end;
 
@@ -130,10 +144,7 @@ export class GridRenderer {
     if (sentinel) this.chunkObserver.observe(sentinel);
   }
 
-  private buildTile(
-    { item, title, authors }: GridRenderItem,
-    renderVersion: number,
-  ): HTMLElement {
+  private buildTile({ item, title, authors }: GridRenderItem): HTMLElement {
     const entry = this.doc.createElement("figure");
     entry.className = "grid-view-item";
     entry.dataset.itemId = String(item.id);
@@ -164,18 +175,39 @@ export class GridRenderer {
     }
 
     entry.append(coverFrame, caption);
-
-    CoverProvider.cacheCover(item);
-    void CoverProvider.getCover(item.id).then((cover) => {
-      if (!cover || renderVersion !== this.renderVersion) return;
-
-      image.addEventListener("load", () => (image.hidden = false), {
-        once: true,
-      });
-      image.src = cover;
-    });
+    this.coverObserver.observe(entry);
 
     return entry;
+  }
+
+  private async loadCover(entry: HTMLElement): Promise<void> {
+    const itemID = Number(entry.dataset.itemId);
+    const item = this.renderItemsByID.get(itemID)?.item;
+    if (!item) return;
+
+    const renderVersion = this.renderVersion;
+    CoverProvider.cacheCover(item);
+    const cover = await CoverProvider.getCover(item.id);
+    if (
+      !cover ||
+      renderVersion !== this.renderVersion ||
+      !this.host.contains(entry)
+    ) {
+      return;
+    }
+
+    const image = entry.querySelector("img");
+    if (!image) return;
+    image.addEventListener(
+      "load",
+      () => {
+        if (renderVersion === this.renderVersion && this.host.contains(entry)) {
+          image.hidden = false;
+        }
+      },
+      { once: true },
+    );
+    image.src = cover;
   }
 
   /** Update selection presentation without rebuilding tiles or reloading covers. */
@@ -199,7 +231,9 @@ export class GridRenderer {
     this.host.removeEventListener("click", this.handleClick);
     this.host.removeEventListener("dblclick", this.handleDoubleClick);
     this.chunkObserver.disconnect();
+    this.coverObserver.disconnect();
     this.renderItems = [];
+    this.renderItemsByID.clear();
     this.renderedCount = 0;
     this.entries.clear();
     this.selectedIDs.clear();

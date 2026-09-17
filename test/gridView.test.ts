@@ -1,4 +1,5 @@
 import { assert } from "chai";
+import { CoverProvider } from "../src/modules/coverProvider";
 import { GridRenderer } from "../src/modules/gridRenderer";
 import { getPref, setPref } from "../src/utils/prefs";
 
@@ -142,8 +143,11 @@ describe("grid view", function () {
     const OriginalIntersectionObserver = win.IntersectionObserver;
     let notify: IntersectionObserverCallback | undefined;
     class FakeIntersectionObserver {
-      constructor(callback: IntersectionObserverCallback) {
-        notify = callback;
+      constructor(
+        callback: IntersectionObserverCallback,
+        options?: IntersectionObserverInit,
+      ) {
+        if (options?.rootMargin === "400px") notify = callback;
       }
       observe(): void {}
       unobserve(): void {}
@@ -185,6 +189,72 @@ describe("grid view", function () {
     } finally {
       renderer.destroy();
       win.IntersectionObserver = OriginalIntersectionObserver;
+    }
+  });
+
+  it("starts cover loading only when a tile approaches the viewport", async function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    const originalIntersectionObserver = win.IntersectionObserver;
+    const originalCacheCover = CoverProvider.cacheCover;
+    const originalGetCover = CoverProvider.getCover;
+    let notify: IntersectionObserverCallback | undefined;
+    const cachedItemIDs: number[] = [];
+    const requestedItemIDs: number[] = [];
+
+    class FakeIntersectionObserver {
+      constructor(
+        callback: IntersectionObserverCallback,
+        options?: IntersectionObserverInit,
+      ) {
+        if (options?.rootMargin === "200px") notify = callback;
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+
+    win.IntersectionObserver =
+      FakeIntersectionObserver as unknown as typeof IntersectionObserver;
+    CoverProvider.cacheCover = (item) => cachedItemIDs.push(item.id);
+    CoverProvider.getCover = (itemID) => {
+      requestedItemIDs.push(itemID);
+      return Promise.resolve(null);
+    };
+
+    const displayItem = {
+      id: -1,
+      firstCreator: "",
+      getDisplayTitle: () => "Lazy cover",
+      isFileAttachment: () => false,
+      isRegularItem: () => false,
+    } as unknown as Zotero.Item;
+    const renderer = new GridRenderer(host, () => {});
+
+    try {
+      renderer.setItems([displayItem], { showAuthors: true });
+      assert.isEmpty(cachedItemIDs);
+      assert.isEmpty(requestedItemIDs);
+
+      const tile = host.querySelector(".grid-view-item")!;
+      notify?.(
+        [
+          {
+            isIntersecting: true,
+            target: tile,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
+      );
+      await Promise.resolve();
+
+      assert.deepEqual(cachedItemIDs, [displayItem.id]);
+      assert.deepEqual(requestedItemIDs, [displayItem.id]);
+    } finally {
+      renderer.destroy();
+      CoverProvider.cacheCover = originalCacheCover;
+      CoverProvider.getCover = originalGetCover;
+      win.IntersectionObserver = originalIntersectionObserver;
     }
   });
 
