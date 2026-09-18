@@ -331,6 +331,28 @@ describe("Cover provider", function () {
     }
   });
 
+  it("refreshes a cached cover when ISBN fetching changes", async function () {
+    const originalFindCover = CoverProvider.findCover;
+    let calls = 0;
+    CoverProvider.findCover = (async () => {
+      calls++;
+      return getPref("fetchISBNCover") ? "isbn-cover" : "placeholder";
+    }) as typeof CoverProvider.findCover;
+    const item = { id: 102 } as Zotero.Item;
+
+    try {
+      CoverProvider.cacheCover(item);
+      assert.equal(await CoverProvider.getCover(item.id), "placeholder");
+
+      setPref("fetchISBNCover", true);
+      CoverProvider.cacheCover(item);
+      assert.equal(await CoverProvider.getCover(item.id), "isbn-cover");
+      assert.equal(calls, 2);
+    } finally {
+      CoverProvider.findCover = originalFindCover;
+    }
+  });
+
   it("invalidates a cached regular parent for an attachment notification", async function () {
     let observer: _ZoteroTypes.Notifier.Notify | undefined;
     Zotero.Notifier.registerObserver = ((ref) => {

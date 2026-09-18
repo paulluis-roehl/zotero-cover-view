@@ -15,14 +15,23 @@ import {
 export class CoverProvider {
   private static cache = new Map<
     number,
-    { generation: number; promise: Promise<string | null> }
+    {
+      generation: number;
+      fetchISBNCover: boolean;
+      promise: Promise<string | null>;
+    }
   >();
   private static generations = new Map<number, number>();
   private static attachmentParents = new Map<number, number>();
   private static notifierID: string | undefined;
 
   static cacheCover(item: Zotero.Item): void {
-    if (!this.cache.has(item.id)) {
+    const fetchISBNCover = this.shouldFetchISBNCover();
+    const cached = this.cache.get(item.id);
+    if (cached?.fetchISBNCover !== fetchISBNCover) {
+      if (cached) {
+        this.generations.set(item.id, this.currentGeneration(item.id) + 1);
+      }
       const generation = this.currentGeneration(item.id);
       const cover = this.findCover(
         item,
@@ -31,6 +40,7 @@ export class CoverProvider {
         undefined,
         undefined,
         generation,
+        fetchISBNCover,
       )
         .catch((error) => {
           ztoolkit.log("Failed to resolve cover", item.id, error);
@@ -39,7 +49,7 @@ export class CoverProvider {
         .then((value) =>
           this.currentGeneration(item.id) === generation ? value : null,
         );
-      this.cache.set(item.id, { generation, promise: cover });
+      this.cache.set(item.id, { generation, fetchISBNCover, promise: cover });
     }
   }
 
@@ -58,6 +68,7 @@ export class CoverProvider {
     findImgCover: typeof findImgCoverURI = findImgCoverURI,
     findISBNCover: typeof findISBNCoverURI = findISBNCoverURI,
     generation = this.currentGeneration(item.id),
+    fetchISBNCover = this.shouldFetchISBNCover(),
   ): Promise<string | null> {
     for (const attachment of this.findAttachments(item, isImgAttachment)) {
       this.rememberParent(attachment, item);
@@ -111,7 +122,7 @@ export class CoverProvider {
       }
     }
 
-    if (item.isRegularItem?.() && getPref("fetchISBNCover")) {
+    if (item.isRegularItem?.() && fetchISBNCover) {
       for (const isbn of extractISBNs(item.getField("ISBN"))) {
         try {
           const cover = await findISBNCover(isbn);
