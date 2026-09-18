@@ -1,6 +1,7 @@
 const MAX_CONCURRENT_REQUESTS = 4;
 const MAX_REQUESTS_PER_WINDOW = 90;
 const REQUEST_WINDOW_MS = 5 * 60 * 1000;
+const MAX_RATE_LIMIT_RETRIES = 1;
 
 export interface OpenLibraryResponse {
   status: number;
@@ -11,6 +12,7 @@ interface RequestJob {
   url: string;
   resolve: (response: OpenLibraryResponse) => void;
   reject: (error: unknown) => void;
+  rateLimitRetries: number;
 }
 
 const schedulerState = {
@@ -71,7 +73,7 @@ export function scheduleOpenLibraryRequest(
   url: string,
 ): Promise<OpenLibraryResponse> {
   return new Promise<OpenLibraryResponse>((resolve, reject) => {
-    requestQueue.push({ url, resolve, reject });
+    requestQueue.push({ url, resolve, reject, rateLimitRetries: 0 });
     pump();
   });
 }
@@ -80,7 +82,20 @@ async function runJob(job: RequestJob): Promise<void> {
   try {
     const response = await requestOpenLibraryCover(job.url);
     if (response.status === 403 || response.status === 429) {
-      schedulerState.blockedUntil = Date.now() + REQUEST_WINDOW_MS;
+      if (job.rateLimitRetries >= MAX_RATE_LIMIT_RETRIES) {
+        job.reject(
+          new Error(
+            `Open Library rate limit persisted after retry (${response.status})`,
+          ),
+        );
+        return;
+      }
+
+      job.rateLimitRetries++;
+      schedulerState.blockedUntil = Math.max(
+        schedulerState.blockedUntil,
+        Date.now() + REQUEST_WINDOW_MS,
+      );
       requestQueue.push(job);
       return;
     }
