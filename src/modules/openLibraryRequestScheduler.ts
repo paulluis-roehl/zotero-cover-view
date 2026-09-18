@@ -15,94 +15,124 @@ interface RequestJob {
   rateLimitRetries: number;
 }
 
-const schedulerState = {
-  activeRequests: 0,
-  blockedUntil: 0,
-};
-const requestStarts: number[] = [];
-const requestQueue: RequestJob[] = [];
-let wakeTimer: ReturnType<typeof setTimeout> | undefined;
-
-function scheduleWakeUp(delay: number): void {
-  if (wakeTimer !== undefined) return;
-
-  wakeTimer = setTimeout(() => {
-    wakeTimer = undefined;
-    pump();
-  }, delay);
+export interface OpenLibraryRequestSchedulerOptions {
+  maxConcurrentRequests?: number;
+  maxRequestsPerWindow?: number;
+  requestWindowMs?: number;
+  maxRateLimitRetries?: number;
+  request?: (url: string) => Promise<OpenLibraryResponse>;
 }
 
-function pump(): void {
-  const now = Date.now();
-  while (
-    requestStarts.length > 0 &&
-    requestStarts[0] <= now - REQUEST_WINDOW_MS
-  ) {
-    requestStarts.shift();
+export class OpenLibraryRequestScheduler {
+  private activeRequests = 0;
+  private blockedUntil = 0;
+  private readonly requestStarts: number[] = [];
+  private readonly requestQueue: RequestJob[] = [];
+  private wakeTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly maxConcurrentRequests: number;
+  private readonly maxRequestsPerWindow: number;
+  private readonly requestWindowMs: number;
+  private readonly maxRateLimitRetries: number;
+  private readonly request: (url: string) => Promise<OpenLibraryResponse>;
+
+  constructor(options: OpenLibraryRequestSchedulerOptions = {}) {
+    this.maxConcurrentRequests =
+      options.maxConcurrentRequests ?? MAX_CONCURRENT_REQUESTS;
+    this.maxRequestsPerWindow =
+      options.maxRequestsPerWindow ?? MAX_REQUESTS_PER_WINDOW;
+    this.requestWindowMs = options.requestWindowMs ?? REQUEST_WINDOW_MS;
+    this.maxRateLimitRetries =
+      options.maxRateLimitRetries ?? MAX_RATE_LIMIT_RETRIES;
+    this.request = options.request ?? requestOpenLibraryCover;
   }
 
-  if (requestQueue.length === 0) return;
-
-  const quotaAvailableAt =
-    requestStarts.length >= MAX_REQUESTS_PER_WINDOW
-      ? requestStarts[0] + REQUEST_WINDOW_MS
-      : now;
-  const nextStartAt = Math.max(schedulerState.blockedUntil, quotaAvailableAt);
-  if (nextStartAt > now) {
-    scheduleWakeUp(nextStartAt - now);
-    return;
-  }
-
-  while (
-    requestQueue.length > 0 &&
-    schedulerState.activeRequests < MAX_CONCURRENT_REQUESTS &&
-    requestStarts.length < MAX_REQUESTS_PER_WINDOW
-  ) {
-    const job = requestQueue.shift()!;
-    schedulerState.activeRequests++;
-    requestStarts.push(Date.now());
-
-    void runJob(job).finally(() => {
-      schedulerState.activeRequests--;
-      pump();
+  schedule(url: string): Promise<OpenLibraryResponse> {
+    return new Promise<OpenLibraryResponse>((resolve, reject) => {
+      this.requestQueue.push({ url, resolve, reject, rateLimitRetries: 0 });
+      this.pump();
     });
   }
+
+  private scheduleWakeUp(delay: number): void {
+    if (this.wakeTimer !== undefined) return;
+
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = undefined;
+      this.pump();
+    }, delay);
+  }
+
+  private pump(): void {
+    const now = Date.now();
+    while (
+      this.requestStarts.length > 0 &&
+      this.requestStarts[0] <= now - this.requestWindowMs
+    ) {
+      this.requestStarts.shift();
+    }
+
+    if (this.requestQueue.length === 0) return;
+
+    const quotaAvailableAt =
+      this.requestStarts.length >= this.maxRequestsPerWindow
+        ? this.requestStarts[0] + this.requestWindowMs
+        : now;
+    const nextStartAt = Math.max(this.blockedUntil, quotaAvailableAt);
+    if (nextStartAt > now) {
+      this.scheduleWakeUp(nextStartAt - now);
+      return;
+    }
+
+    while (
+      this.requestQueue.length > 0 &&
+      this.activeRequests < this.maxConcurrentRequests &&
+      this.requestStarts.length < this.maxRequestsPerWindow
+    ) {
+      const job = this.requestQueue.shift()!;
+      this.activeRequests++;
+      this.requestStarts.push(Date.now());
+
+      void this.runJob(job).finally(() => {
+        this.activeRequests--;
+        this.pump();
+      });
+    }
+  }
+
+  private async runJob(job: RequestJob): Promise<void> {
+    try {
+      const response = await this.request(job.url);
+      if (response.status === 403 || response.status === 429) {
+        if (job.rateLimitRetries >= this.maxRateLimitRetries) {
+          job.reject(
+            new Error(
+              `Open Library rate limit persisted after retry (${response.status})`,
+            ),
+          );
+          return;
+        }
+
+        job.rateLimitRetries++;
+        this.blockedUntil = Math.max(
+          this.blockedUntil,
+          Date.now() + this.requestWindowMs,
+        );
+        this.requestQueue.push(job);
+        return;
+      }
+      job.resolve(response);
+    } catch (error) {
+      job.reject(error);
+    }
+  }
 }
+
+const scheduler = new OpenLibraryRequestScheduler();
 
 export function scheduleOpenLibraryRequest(
   url: string,
 ): Promise<OpenLibraryResponse> {
-  return new Promise<OpenLibraryResponse>((resolve, reject) => {
-    requestQueue.push({ url, resolve, reject, rateLimitRetries: 0 });
-    pump();
-  });
-}
-
-async function runJob(job: RequestJob): Promise<void> {
-  try {
-    const response = await requestOpenLibraryCover(job.url);
-    if (response.status === 403 || response.status === 429) {
-      if (job.rateLimitRetries >= MAX_RATE_LIMIT_RETRIES) {
-        job.reject(
-          new Error(
-            `Open Library rate limit persisted after retry (${response.status})`,
-          ),
-        );
-        return;
-      }
-
-      job.rateLimitRetries++;
-      schedulerState.blockedUntil = Math.max(
-        schedulerState.blockedUntil,
-        Date.now() + REQUEST_WINDOW_MS,
-      );
-      requestQueue.push(job);
-      return;
-    }
-    job.resolve(response);
-  } catch (error) {
-    job.reject(error);
-  }
+  return scheduler.schedule(url);
 }
 
 async function requestOpenLibraryCover(
