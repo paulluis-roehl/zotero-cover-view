@@ -4,7 +4,7 @@ import { ItemTreeBridge } from "./itemTreeBridge";
 import { getPref, observePrefs, setPref } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
-const GRID_RENDER_PREFS = ["showAuthors"] as const;
+const GRID_RENDER_PREFS = ["showAuthors", "fetchISBNCover"] as const;
 let stopObservingPreferences: (() => void) | undefined;
 
 export class GridView {

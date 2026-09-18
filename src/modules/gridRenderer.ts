@@ -1,5 +1,6 @@
 import { CoverProvider } from "./coverProvider";
 import { getString } from "../utils/locale";
+import { getPref } from "../utils/prefs";
 
 const CHUNK_SIZE = 120;
 
@@ -90,6 +91,7 @@ export class GridRenderer {
     }));
     const renderKey = JSON.stringify([
       options.showAuthors,
+      getPref("fetchISBNCover"),
       renderItems.map(({ item, title, authors }) => [
         item.id,
         title,
