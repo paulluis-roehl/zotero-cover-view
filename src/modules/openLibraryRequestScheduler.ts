@@ -64,16 +64,32 @@ function pump(): void {
 }
 
 export function scheduleOpenLibraryRequest(
-  request: () => Promise<OpenLibraryResponse>,
+  url: string,
 ): Promise<OpenLibraryResponse> {
   return new Promise<OpenLibraryResponse>((resolve, reject) => {
     requestQueue.push(async () => {
       try {
-        resolve(await request());
+        resolve(await requestOpenLibraryCover(url));
       } catch (error) {
         reject(error);
       }
     });
     pump();
   });
+}
+
+async function requestOpenLibraryCover(
+  url: string,
+): Promise<OpenLibraryResponse> {
+  const response = await Zotero.HTTP.request("GET", url, {
+    headers: { Accept: "image/jpeg" },
+    responseType: "arraybuffer",
+    successCodes: [200, 404],
+    timeout: 15_000,
+    errorDelayMax: 0,
+  });
+  return {
+    status: response.status,
+    bytes: new Uint8Array(response.response as ArrayBuffer),
+  };
 }

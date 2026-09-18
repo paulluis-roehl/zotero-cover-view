@@ -1,12 +1,9 @@
+import { scheduleOpenLibraryRequest } from "../openLibraryRequestScheduler";
+
 const OPEN_LIBRARY_COVERS_URL = "https://covers.openlibrary.org/b/isbn";
 const CACHE_MISS_TTL = 7 * 24 * 60 * 60 * 1000;
 
-interface CoverResponse {
-  status: number;
-  bytes: Uint8Array;
-}
-
-type RequestCover = (url: string) => Promise<CoverResponse>;
+type RequestCover = typeof scheduleOpenLibraryRequest;
 
 const inFlight = new Map<string, Promise<string | null>>();
 
@@ -44,7 +41,7 @@ export function extractISBNs(value: string): string[] {
  */
 export function findISBNCoverURI(
   isbn: string,
-  requestCover: RequestCover = requestOpenLibraryCover,
+  requestCover: RequestCover = scheduleOpenLibraryRequest,
 ): Promise<string | null> {
   const normalizedISBN = normalizeISBN(isbn);
   if (!normalizedISBN) return Promise.resolve(null);
@@ -82,20 +79,6 @@ async function findAndCacheCover(
   await IOUtils.write(path, response.bytes, { tmpPath: `${path}.tmp` });
   await IOUtils.remove(missingPath(isbn), { ignoreAbsent: true });
   return Zotero.File.pathToFileURI(path);
-}
-
-async function requestOpenLibraryCover(url: string): Promise<CoverResponse> {
-  const response = await Zotero.HTTP.request("GET", url, {
-    headers: { Accept: "image/jpeg" },
-    responseType: "arraybuffer",
-    successCodes: [200, 404],
-    timeout: 15_000,
-    errorDelayMax: 0,
-  });
-  return {
-    status: response.status,
-    bytes: new Uint8Array(response.response as ArrayBuffer),
-  };
 }
 
 async function readCachedCover(isbn: string): Promise<string | null> {
