@@ -69,6 +69,8 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] add cover section to item info view
 - [ ] improve graphics / effects while loading covers
 - [ ] add cover flow pane
+- [ ] visually distinguish fetched missing covers from actual attachments (+ settings option)
+  - e.g. decrease opacity
 
 **Implementation**
 
