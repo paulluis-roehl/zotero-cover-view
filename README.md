@@ -37,10 +37,10 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 - [x] support `.pdf`
 - [x] support `.epub`
-- [x] support `.jpg` / `.png` (_beta only_)
+- [x] support `.jpg` / `.png`
 - [ ] support `.djvu`
 - [x] auto-generate default cover based on title
-- [x] try to fetch cover from internet (_beta only_)
+- [x] try to fetch cover from internet
 - [ ] implement precedence setting
 
 **Grid view**
@@ -85,7 +85,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] make ISBN cover toggle refresh the grid renderer
   - [ ] only target items that actually need refreshing
   - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
-- [x] add Open Library request scheduler that: (_beta only_)
+- [x] add Open Library request scheduler that:
   - Limits concurrent network requests, likely to 2-3.
   - Enforces the documented 100 requests per 5-minute window.
   - Prioritizes or only starts lookups for near-viewport tiles.
