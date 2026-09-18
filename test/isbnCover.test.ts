@@ -1,5 +1,5 @@
 import { assert } from "chai";
-import { findISBNCoverURI } from "../src/modules/isbnCover";
+import { extractISBNs, findISBNCoverURI } from "../src/modules/isbnCover";
 
 describe("ISBN cover discovery", function () {
   function cacheDirectory(): string {
@@ -25,6 +25,13 @@ describe("ISBN cover discovery", function () {
       ),
     );
   }
+
+  it("extracts normalized ISBNs in field order without duplicates", function () {
+    assert.deepEqual(
+      extractISBNs("978-3-570-40293-1 978-3-570-16711-3 9783570402931"),
+      ["9783570402931", "9783570167113"],
+    );
+  });
 
   it("downloads, caches, and reuses a cover for a normalized ISBN", async function () {
     const isbn = "9780385533225";

@@ -24,6 +24,21 @@ const imagePath = (isbn: string): string =>
 const missingPath = (isbn: string): string =>
   PathUtils.join(cacheDirectory(), `${isbn}.missing`);
 
+export function extractISBNs(value: string): string[] {
+  const isbns: string[] = [];
+  const seen = new Set<string>();
+  for (const identifier of Zotero.Utilities.extractIdentifiers(value)) {
+    if (!("ISBN" in identifier)) continue;
+
+    const isbn = normalizeISBN(identifier.ISBN);
+    if (isbn && !seen.has(isbn)) {
+      seen.add(isbn);
+      isbns.push(isbn);
+    }
+  }
+  return isbns;
+}
+
 /**
  * Find an Open Library cover by ISBN and cache it in the Zotero data directory.
  */
