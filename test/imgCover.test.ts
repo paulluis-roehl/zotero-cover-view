@@ -1,5 +1,8 @@
 import { assert } from "chai";
-import { findImgCoverURI, isImgAttachment } from "../src/modules/imgCover";
+import {
+  findImgCoverURI,
+  isImgAttachment,
+} from "../src/modules/covers/imgCover";
 
 describe("Image cover discovery", function () {
   function attachment(

@@ -1,7 +1,8 @@
 import { assert } from "chai";
+import { CoverProvider } from "../src/modules/coverProvider";
 import { getPref, observePrefs, setPref } from "../src/utils/prefs";
 
-describe("preference observers", function () {
+describe("preferences", function () {
   it("observes a key and stops notifying after cleanup", function () {
     const originalShowAuthors = getPref("showAuthors");
     let calls = 0;

@@ -1,9 +1,13 @@
 import { assert } from "chai";
+import { BasicTool } from "zotero-plugin-toolkit";
 import { CoverProvider } from "../src/modules/coverProvider";
+import { getPref, setPref } from "../src/utils/prefs";
 
 describe("Cover provider", function () {
   let originalGet: typeof Zotero.Items.get;
   let originalRegister: typeof Zotero.Notifier.registerObserver;
+  let originalFetchISBNCover: boolean;
+  let toolkitDescriptor: PropertyDescriptor | undefined;
 
   function attachment(
     id: number,
@@ -20,23 +24,40 @@ describe("Cover provider", function () {
     } as unknown as Zotero.Item;
   }
 
-  function parent(attachments: Zotero.Item[]): Zotero.Item {
+  function parent(attachments: Zotero.Item[], isbn = ""): Zotero.Item {
     Zotero.Items.get = (() => attachments) as typeof originalGet;
     return {
+      id: 42,
+      firstCreator: "Test Author",
       isFileAttachment: () => false,
       isRegularItem: () => true,
       getAttachments: () => attachments.map(({ id }) => id),
+      getDisplayTitle: () => "Test Book",
+      getField: (field: string) => (field === "ISBN" ? isbn : ""),
     } as unknown as Zotero.Item;
   }
 
   beforeEach(function () {
     originalGet = Zotero.Items.get;
     originalRegister = Zotero.Notifier.registerObserver;
+    originalFetchISBNCover = getPref("fetchISBNCover");
+    toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
+    Object.defineProperty(globalThis, "ztoolkit", {
+      configurable: true,
+      value: new BasicTool(),
+    });
+    setPref("fetchISBNCover", false);
   });
 
   afterEach(function () {
     Zotero.Items.get = originalGet;
     Zotero.Notifier.registerObserver = originalRegister;
+    setPref("fetchISBNCover", originalFetchISBNCover);
+    if (toolkitDescriptor) {
+      Object.defineProperty(globalThis, "ztoolkit", toolkitDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "ztoolkit");
+    }
     CoverProvider.clearCache();
   });
 
@@ -159,6 +180,71 @@ describe("Cover provider", function () {
       ),
       "cover:cover.webp",
     );
+  });
+
+  it("uses an ISBN cover after local attachments have no cover", async function () {
+    const item = parent([], "978-3-570-40293-1 978-3-570-16711-3");
+    const lookups: string[] = [];
+    setPref("fetchISBNCover", true);
+
+    assert.equal(
+      await CoverProvider.findCover(
+        item,
+        async () => null,
+        async () => null,
+        async () => null,
+        async (isbn) => {
+          lookups.push(isbn);
+          if (isbn === "9783570402931") throw new Error("lookup failed");
+          return `cover:${isbn}`;
+        },
+      ),
+      "cover:9783570167113",
+    );
+    assert.deepEqual(lookups, ["9783570402931", "9783570167113"]);
+  });
+
+  it("does not use ISBN lookup when the preference is disabled", async function () {
+    const item = parent([], "978-3-570-40293-1");
+    let lookups = 0;
+
+    const cover = await CoverProvider.findCover(
+      item,
+      async () => null,
+      async () => null,
+      async () => null,
+      async () => {
+        lookups++;
+        return "isbn-cover";
+      },
+    );
+
+    assert.equal(lookups, 0);
+    assert.match(cover!, /^data:image\/svg\+xml;charset=utf-8,/);
+  });
+
+  it("prefers a local attachment over an ISBN cover", async function () {
+    const item = parent(
+      [attachment(1, "application/pdf", "book.pdf")],
+      "978-3-570-40293-1",
+    );
+    let isbnLookups = 0;
+    setPref("fetchISBNCover", true);
+
+    assert.equal(
+      await CoverProvider.findCover(
+        item,
+        async () => null,
+        async () => "pdf-cover",
+        async () => null,
+        async () => {
+          isbnLookups++;
+          return "isbn-cover";
+        },
+      ),
+      "pdf-cover",
+    );
+    assert.equal(isbnLookups, 0);
   });
 
   it("creates a stable visual placeholder when no attachment has a cover", async function () {

@@ -1,13 +1,16 @@
-import { findEPUBCoverURI, isEPUBAttachment } from "./epubCover";
-import { findImgCoverURI, isImgAttachment } from "./imgCover";
-import { createPlaceholderCoverURI } from "./placeholderCover";
+import { getPref } from "../utils/prefs";
+import { findEPUBCoverURI, isEPUBAttachment } from "./covers/epubCover";
+import { findImgCoverURI, isImgAttachment } from "./covers/imgCover";
+import { extractISBNs, findISBNCoverURI } from "./covers/isbnCover";
+import { createPlaceholderCoverURI } from "./covers/placeholderCover";
 import {
   cachePDFCover,
+  createPDFCacheSignature,
   deleteCachedPDFCover,
   findPDFCoverURI,
   getCachedPDFCover,
   isPDFAttachment,
-} from "./pdfCover";
+} from "./covers/pdfCover";
 
 export class CoverProvider {
   private static cache = new Map<
@@ -23,6 +26,7 @@ export class CoverProvider {
       const generation = this.currentGeneration(item.id);
       const cover = this.findCover(
         item,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -43,11 +47,16 @@ export class CoverProvider {
     return this.cache.get(itemID)?.promise ?? Promise.resolve(null);
   }
 
+  static shouldFetchISBNCover(): boolean {
+    return getPref("fetchISBNCover");
+  }
+
   static async findCover(
     item: Zotero.Item,
     findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
     findPDFCover: typeof findPDFCoverURI = findPDFCoverURI,
     findImgCover: typeof findImgCoverURI = findImgCoverURI,
+    findISBNCover: typeof findISBNCoverURI = findISBNCoverURI,
     generation = this.currentGeneration(item.id),
   ): Promise<string | null> {
     for (const attachment of this.findAttachments(item, isImgAttachment)) {
@@ -82,7 +91,7 @@ export class CoverProvider {
         const filePath = await attachment.getFilePathAsync();
         if (!filePath) continue;
 
-        const signature = this.pdfSignature(attachment, filePath);
+        const signature = createPDFCacheSignature(attachment, filePath);
         const cached =
           findPDFCover === findPDFCoverURI
             ? await getCachedPDFCover(item.id, signature)
@@ -101,6 +110,18 @@ export class CoverProvider {
         ztoolkit.log("Failed to find PDF cover", attachment.id, error);
       }
     }
+
+    if (item.isRegularItem?.() && getPref("fetchISBNCover")) {
+      for (const isbn of extractISBNs(item.getField("ISBN"))) {
+        try {
+          const cover = await findISBNCover(isbn);
+          if (cover) return cover;
+        } catch (error) {
+          ztoolkit.log("Failed to find ISBN cover", isbn, error);
+        }
+      }
+    }
+
     return createPlaceholderCoverURI(item);
   }
 
@@ -176,13 +197,6 @@ export class CoverProvider {
     return (
       isImgAttachment(item) || isEPUBAttachment(item) || isPDFAttachment(item)
     );
-  }
-
-  private static pdfSignature(
-    attachment: Zotero.Item,
-    filePath: string,
-  ): string {
-    return `${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
   }
 
   private static findAttachments(

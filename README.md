@@ -8,8 +8,10 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 ## Features
 
-- **Cover extraction**
-  - uses an attached image or the first page of an attached `.epub` or `.pdf` file as cover
+- **Cover extraction options**
+  - image attachment
+  - first page of `.epub` or `.pdf` attachment
+  - settings option: fetch missing covers through ISBN
 - **Grid view**
   - display items in a grid instead of a list
   - adds a button to the main item bar to switch between grid view and list view
@@ -38,7 +40,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] support `.jpg` / `.png`
 - [ ] support `.djvu`
 - [x] auto-generate default cover based on title
-- [ ] try to fetch cover from internet
+- [x] try to fetch cover from internet
 - [ ] implement precedence setting
 
 **Grid view**
@@ -59,6 +61,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] further display options for grid view (e.g. title, author, year, ...)
 - [x] remember previous choice of list vs grid view
   - [ ] option for separate choice in every collection
+- [ ] save fetched cover(s) as attachment (maybe also in right click menu) (warning: in large libraries, this may create a lot of attachments)
 
 **UI/UX**
 
@@ -69,6 +72,8 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] improve graphics / effects while loading covers
 - [ ] make cover column small and with icon, just like the Attachments column
 - [ ] add cover flow pane
+- [ ] visually distinguish fetched missing covers from actual attachments (+ settings option)
+  - e.g. decrease opacity
 
 **Implementation**
 
@@ -77,6 +82,16 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] move `DEFAULT_COVER_WIDTH` and `DEFAULT_PAGE_WIDTH` from `pdfCover.ts` into settings
 - [ ] move `CHUNK_SIZE` from `gridRenderer.ts` into (advanced) settings
 - [ ] add `peekCover()` function for immediate display of already cached covers
+- [ ] make ISBN cover toggle refresh the grid renderer (but only target items that actually need refreshing)
+  - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
+- [x] add Open Library request scheduler that:
+  - Limits concurrent network requests, likely to 2-3.
+  - Enforces the documented 100 requests per 5-minute window.
+  - Prioritizes or only starts lookups for near-viewport tiles.
+  - Continues using positive and negative disk caches.
+  - Handles 403/429 responses with backoff rather than treating them as missing covers.
+- Open Library request scheduler:
+  - [ ] provide placeholder while searching
 
 **Bugs**
 
@@ -99,6 +114,7 @@ See setup and debug details there.
 - Based on the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) by [@windingwind](https://github.com/windingwind).
 - Inspired by [this](https://forums.zotero.org/discussion/121736/feature-request-cover-flow-or-book-jacket-image-display-view) discussion on the Zotero forum.
 - Implementation also inspired by [zotero-lib-view](https://github.com/reiherj/zotero-lib-view).
+- ISBN-based cover images are provided by [Open Library](https://openlibrary.org/) through its [Covers API](https://openlibrary.org/dev/docs/api/covers).
 
 ## Disclaimer
 
