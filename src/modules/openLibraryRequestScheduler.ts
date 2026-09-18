@@ -2,11 +2,15 @@ const MAX_CONCURRENT_REQUESTS = 4;
 const MAX_REQUESTS_PER_WINDOW = 90;
 const REQUEST_WINDOW_MS = 5 * 60 * 1000;
 
-type RequestJob = () => Promise<void>;
-
 export interface OpenLibraryResponse {
   status: number;
   bytes: Uint8Array;
+}
+
+interface RequestJob {
+  url: string;
+  resolve: (response: OpenLibraryResponse) => void;
+  reject: (error: unknown) => void;
 }
 
 const schedulerState = {
@@ -56,7 +60,7 @@ function pump(): void {
     schedulerState.activeRequests++;
     requestStarts.push(Date.now());
 
-    void job().finally(() => {
+    void runJob(job).finally(() => {
       schedulerState.activeRequests--;
       pump();
     });
@@ -67,15 +71,23 @@ export function scheduleOpenLibraryRequest(
   url: string,
 ): Promise<OpenLibraryResponse> {
   return new Promise<OpenLibraryResponse>((resolve, reject) => {
-    requestQueue.push(async () => {
-      try {
-        resolve(await requestOpenLibraryCover(url));
-      } catch (error) {
-        reject(error);
-      }
-    });
+    requestQueue.push({ url, resolve, reject });
     pump();
   });
+}
+
+async function runJob(job: RequestJob): Promise<void> {
+  try {
+    const response = await requestOpenLibraryCover(job.url);
+    if (response.status === 403 || response.status === 429) {
+      schedulerState.blockedUntil = Date.now() + REQUEST_WINDOW_MS;
+      requestQueue.push(job);
+      return;
+    }
+    job.resolve(response);
+  } catch (error) {
+    job.reject(error);
+  }
 }
 
 async function requestOpenLibraryCover(
@@ -84,7 +96,7 @@ async function requestOpenLibraryCover(
   const response = await Zotero.HTTP.request("GET", url, {
     headers: { Accept: "image/jpeg" },
     responseType: "arraybuffer",
-    successCodes: [200, 404],
+    successCodes: [200, 403, 404, 429],
     timeout: 15_000,
     errorDelayMax: 0,
   });
