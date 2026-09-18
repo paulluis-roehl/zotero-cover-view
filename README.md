@@ -83,12 +83,14 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] add `peekCover()` function for immediate display of already cached covers
 - [ ] make ISBN cover toggle refresh the grid renderer (but only target items that actually need refreshing)
   - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
-- [ ] add Open Library request scheduler that:
+- [x] add Open Library request scheduler that:
   - Limits concurrent network requests, likely to 2-3.
   - Enforces the documented 100 requests per 5-minute window.
   - Prioritizes or only starts lookups for near-viewport tiles.
   - Continues using positive and negative disk caches.
   - Handles 403/429 responses with backoff rather than treating them as missing covers.
+- Open Library request scheduler:
+  - [ ] provide placeholder while searching
 
 **Bugs**
 
