@@ -38,7 +38,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] support `.jpg` / `.png`
 - [ ] support `.djvu`
 - [x] auto-generate default cover based on title
-- [ ] try to fetch cover from internet
+- [x] try to fetch cover from internet
 - [ ] implement precedence setting
 
 **Grid view**
@@ -59,6 +59,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] further display options for grid view (e.g. title, author, year, ...)
 - [x] remember previous choice of list vs grid view
   - [ ] option for separate choice in every collection
+- [ ] save fetched cover(s) as attachment (maybe also in right click menu) (warning: in large libraries, this may create a lot of attachments)
 
 **UI/UX**
 
@@ -76,6 +77,14 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] move `DEFAULT_COVER_WIDTH` and `DEFAULT_PAGE_WIDTH` from `pdfCover.ts` into settings
 - [ ] move `CHUNK_SIZE` from `gridRenderer.ts` into (advanced) settings
 - [ ] add `peekCover()` function for immediate display of already cached covers
+- [ ] make ISBN cover toggle refresh the grid renderer (but only target items that actually need refreshing)
+  - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
+- [ ] add Open Library request scheduler that:
+  - Limits concurrent network requests, likely to 2-3.
+  - Enforces the documented 100 requests per 5-minute window.
+  - Prioritizes or only starts lookups for near-viewport tiles.
+  - Continues using positive and negative disk caches.
+  - Handles 403/429 responses with backoff rather than treating them as missing covers.
 
 **Bugs**
 
