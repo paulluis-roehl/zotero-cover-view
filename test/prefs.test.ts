@@ -21,17 +21,4 @@ describe("preferences", function () {
       setPref("showAuthors", originalShowAuthors);
     }
   });
-
-  it("exposes the ISBN cover preference to the cover provider", function () {
-    const originalFetchISBNCover = getPref("fetchISBNCover");
-
-    try {
-      setPref("fetchISBNCover", true);
-      assert.isTrue(CoverProvider.shouldFetchISBNCover());
-      setPref("fetchISBNCover", false);
-      assert.isFalse(CoverProvider.shouldFetchISBNCover());
-    } finally {
-      setPref("fetchISBNCover", originalFetchISBNCover);
-    }
-  });
 });

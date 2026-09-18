@@ -1,6 +1,7 @@
 import { getPref } from "../utils/prefs";
 import { findEPUBCoverURI, isEPUBAttachment } from "./epubCover";
 import { findImgCoverURI, isImgAttachment } from "./imgCover";
+import { extractISBNs, findISBNCoverURI } from "./isbnCover";
 import { createPlaceholderCoverURI } from "./placeholderCover";
 import {
   cachePDFCover,
@@ -24,6 +25,7 @@ export class CoverProvider {
       const generation = this.currentGeneration(item.id);
       const cover = this.findCover(
         item,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -53,6 +55,7 @@ export class CoverProvider {
     findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
     findPDFCover: typeof findPDFCoverURI = findPDFCoverURI,
     findImgCover: typeof findImgCoverURI = findImgCoverURI,
+    findISBNCover: typeof findISBNCoverURI = findISBNCoverURI,
     generation = this.currentGeneration(item.id),
   ): Promise<string | null> {
     for (const attachment of this.findAttachments(item, isImgAttachment)) {
@@ -106,6 +109,18 @@ export class CoverProvider {
         ztoolkit.log("Failed to find PDF cover", attachment.id, error);
       }
     }
+
+    if (item.isRegularItem?.() && getPref("fetchISBNCover")) {
+      for (const isbn of extractISBNs(item.getField("ISBN"))) {
+        try {
+          const cover = await findISBNCover(isbn);
+          if (cover) return cover;
+        } catch (error) {
+          ztoolkit.log("Failed to find ISBN cover", isbn, error);
+        }
+      }
+    }
+
     return createPlaceholderCoverURI(item);
   }
 

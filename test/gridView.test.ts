@@ -122,7 +122,10 @@ describe("grid view", function () {
       isRegularItem: () => false,
     } as unknown as Zotero.Item;
     try {
-      renderer.setItems([displayItem], { showAuthors: true });
+      renderer.setItems([displayItem], {
+        showAuthors: true,
+        fetchISBNCover: false,
+      });
       const entry = host.firstElementChild!;
       renderer.setSelection([-1, -2]);
       assert.strictEqual(host.firstElementChild, entry);
@@ -130,7 +133,10 @@ describe("grid view", function () {
       renderer.setSelection([]);
       assert.strictEqual(host.firstElementChild, entry);
       assert.isFalse(entry.classList.contains("selected"));
-      renderer.setItems([displayItem], { showAuthors: true });
+      renderer.setItems([displayItem], {
+        showAuthors: true,
+        fetchISBNCover: false,
+      });
       assert.strictEqual(host.firstElementChild, entry);
     } finally {
       renderer.destroy();
@@ -170,7 +176,10 @@ describe("grid view", function () {
     const renderer = new GridRenderer(host, () => {});
 
     try {
-      renderer.setItems(items, { showAuthors: true });
+      renderer.setItems(items, {
+        showAuthors: true,
+        fetchISBNCover: false,
+      });
 
       const firstChunk = host.querySelectorAll<HTMLElement>(".grid-view-item");
       assert.lengthOf(firstChunk, 120);
@@ -240,7 +249,10 @@ describe("grid view", function () {
     const renderer = new GridRenderer(host, () => {});
 
     try {
-      renderer.setItems([displayItem], { showAuthors: true });
+      renderer.setItems([displayItem], {
+        showAuthors: true,
+        fetchISBNCover: false,
+      });
       assert.isEmpty(cachedItemIDs);
       assert.isEmpty(requestedItemIDs);
 
@@ -281,7 +293,10 @@ describe("grid view", function () {
     } as unknown as Zotero.Item;
 
     try {
-      renderer.setItems([displayItem], { showAuthors: true });
+      renderer.setItems([displayItem], {
+        showAuthors: true,
+        fetchISBNCover: false,
+      });
       host
         .querySelector(".grid-view-cover")!
         .dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
@@ -310,7 +325,10 @@ describe("grid view", function () {
     } as unknown as Zotero.Item;
 
     try {
-      renderer.setItems([displayItem], { showAuthors: true });
+      renderer.setItems([displayItem], {
+        showAuthors: true,
+        fetchISBNCover: false,
+      });
       host
         .querySelector(".grid-view-cover")!
         .dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true }));
@@ -333,7 +351,10 @@ describe("grid view", function () {
     } as unknown as Zotero.Item;
 
     try {
-      renderer.setItems([displayItem], { showAuthors: true });
+      renderer.setItems([displayItem], {
+        showAuthors: true,
+        fetchISBNCover: false,
+      });
       assert.equal(
         host.querySelector(".grid-view-title")?.textContent,
         "Analytical Engine Notes",
@@ -347,7 +368,10 @@ describe("grid view", function () {
         "Cover for Analytical Engine Notes",
       );
 
-      renderer.setItems([displayItem], { showAuthors: false });
+      renderer.setItems([displayItem], {
+        showAuthors: false,
+        fetchISBNCover: false,
+      });
       assert.notExists(host.querySelector(".grid-view-authors"));
     } finally {
       renderer.destroy();
