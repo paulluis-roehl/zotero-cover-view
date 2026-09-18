@@ -2,6 +2,14 @@ const CONTAINER_NS = "urn:oasis:names:tc:opendocument:xmlns:container";
 const PACKAGE_NS = "http://www.idpf.org/2007/opf";
 const PARSER_ERROR_NS = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
 
+export function isEPUBAttachment(item: Zotero.Item): boolean {
+  return (
+    item.isFileAttachment() &&
+    (item.attachmentContentType === "application/epub+zip" ||
+      item.attachmentReaderType === "epub")
+  );
+}
+
 /**
  * Discover the declared EPUB 2/3 cover as a jar: URI, without extracting it.
  * Returns null when no cover is declared; malformed XML, invalid paths and

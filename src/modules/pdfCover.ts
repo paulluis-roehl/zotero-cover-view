@@ -16,6 +16,14 @@ interface ZoteroPDFWorker {
 
 const PNG_DATA_PREFIX = "data:image/png;base64,";
 
+export function isPDFAttachment(item: Zotero.Item): boolean {
+  return (
+    item.isFileAttachment() &&
+    (item.attachmentContentType === "application/pdf" ||
+      item.attachmentReaderType === "pdf")
+  );
+}
+
 const diskCacheDirectory = (): string =>
   PathUtils.join(Zotero.DataDirectory.dir, "coverview", "covers");
 

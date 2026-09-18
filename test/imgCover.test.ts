@@ -1,5 +1,5 @@
 import { assert } from "chai";
-import { ImgCover } from "../src/modules/imgCover";
+import { findImgCoverURI, isImgAttachment } from "../src/modules/imgCover";
 
 describe("Image cover discovery", function () {
   function attachment(
@@ -22,7 +22,7 @@ describe("Image cover discovery", function () {
     "image/tiff",
   ]) {
     it(`supports ${contentType} attachments`, function () {
-      assert.isTrue(ImgCover.isSupportedAttachment(attachment(contentType)));
+      assert.isTrue(isImgAttachment(attachment(contentType)));
     });
   }
 
@@ -30,15 +30,18 @@ describe("Image cover discovery", function () {
     const filePath = "/tmp/cover image.png";
 
     assert.equal(
-      await ImgCover.findCoverURI(attachment("image/png", filePath)),
+      await findImgCoverURI(filePath),
       Zotero.File.pathToFileURI(filePath),
     );
   });
 
-  it("returns null for missing and unsupported files", async function () {
-    assert.isNull(await ImgCover.findCoverURI(attachment("image/jpeg", false)));
-    assert.isNull(
-      await ImgCover.findCoverURI(attachment("image/svg+xml", "cover.svg")),
+  it("rejects unsupported and non-file attachments", function () {
+    assert.isFalse(isImgAttachment(attachment("image/svg+xml", "cover.svg")));
+    assert.isFalse(
+      isImgAttachment({
+        attachmentContentType: "image/png",
+        isFileAttachment: () => false,
+      } as unknown as Zotero.Item),
     );
   });
 });

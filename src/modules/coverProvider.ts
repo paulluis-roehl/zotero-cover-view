@@ -1,11 +1,12 @@
-import { findEPUBCoverURI } from "./epubCover";
-import { ImgCover } from "./imgCover";
+import { findEPUBCoverURI, isEPUBAttachment } from "./epubCover";
+import { findImgCoverURI, isImgAttachment } from "./imgCover";
 import { createPlaceholderCoverURI } from "./placeholderCover";
 import {
   cachePDFCover,
   deleteCachedPDFCover,
   findPDFCoverURI,
   getCachedPDFCover,
+  isPDFAttachment,
 } from "./pdfCover";
 
 export class CoverProvider {
@@ -46,20 +47,23 @@ export class CoverProvider {
     item: Zotero.Item,
     findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
     findPDFCover: typeof findPDFCoverURI = findPDFCoverURI,
-    findImgCover: typeof ImgCover.findCoverURI = ImgCover.findCoverURI,
+    findImgCover: typeof findImgCoverURI = findImgCoverURI,
     generation = this.currentGeneration(item.id),
   ): Promise<string | null> {
-    for (const attachment of this.findImgAttachments(item)) {
+    for (const attachment of this.findAttachments(item, isImgAttachment)) {
       this.rememberParent(attachment, item);
       try {
-        const cover = await findImgCover(attachment);
+        const filePath = await attachment.getFilePathAsync();
+        if (!filePath) continue;
+
+        const cover = await findImgCover(filePath);
         if (cover) return cover;
       } catch (error) {
         ztoolkit.log("Failed to find image cover", attachment.id, error);
       }
     }
 
-    for (const attachment of this.findEPUBAttachments(item)) {
+    for (const attachment of this.findAttachments(item, isEPUBAttachment)) {
       this.rememberParent(attachment, item);
       try {
         const filePath = await attachment.getFilePathAsync();
@@ -72,7 +76,7 @@ export class CoverProvider {
       }
     }
 
-    for (const attachment of this.findPDFAttachments(item)) {
+    for (const attachment of this.findAttachments(item, isPDFAttachment)) {
       this.rememberParent(attachment, item);
       try {
         const filePath = await attachment.getFilePathAsync();
@@ -170,9 +174,7 @@ export class CoverProvider {
 
   private static isSupportedAttachment(item: Zotero.Item): boolean {
     return (
-      ImgCover.isSupportedAttachment(item) ||
-      this.isEPUBAttachment(item) ||
-      this.isPDFAttachment(item)
+      isImgAttachment(item) || isEPUBAttachment(item) || isPDFAttachment(item)
     );
   }
 
@@ -183,55 +185,16 @@ export class CoverProvider {
     return `${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
   }
 
-  private static findImgAttachments(item: Zotero.Item): Zotero.Item[] {
+  private static findAttachments(
+    item: Zotero.Item,
+    isSupported: (attachment: Zotero.Item) => boolean,
+  ): Zotero.Item[] {
     if (item.isFileAttachment()) {
-      return ImgCover.isSupportedAttachment(item) ? [item] : [];
+      return isSupported(item) ? [item] : [];
     }
     if (!item.isRegularItem()) {
       return [];
     }
-    return Zotero.Items.get(item.getAttachments()).filter((attachment) =>
-      ImgCover.isSupportedAttachment(attachment),
-    );
-  }
-
-  private static findEPUBAttachments(item: Zotero.Item): Zotero.Item[] {
-    if (item.isFileAttachment()) {
-      return this.isEPUBAttachment(item) ? [item] : [];
-    }
-    if (!item.isRegularItem()) {
-      return [];
-    }
-    return Zotero.Items.get(item.getAttachments()).filter((attachment) =>
-      this.isEPUBAttachment(attachment),
-    );
-  }
-
-  private static isEPUBAttachment(item: Zotero.Item): boolean {
-    return (
-      item.isFileAttachment() &&
-      (item.attachmentContentType === "application/epub+zip" ||
-        item.attachmentReaderType === "epub")
-    );
-  }
-
-  private static findPDFAttachments(item: Zotero.Item): Zotero.Item[] {
-    if (item.isFileAttachment()) {
-      return this.isPDFAttachment(item) ? [item] : [];
-    }
-    if (!item.isRegularItem()) {
-      return [];
-    }
-    return Zotero.Items.get(item.getAttachments()).filter((attachment) =>
-      this.isPDFAttachment(attachment),
-    );
-  }
-
-  private static isPDFAttachment(item: Zotero.Item): boolean {
-    return (
-      item.isFileAttachment() &&
-      (item.attachmentContentType === "application/pdf" ||
-        item.attachmentReaderType === "pdf")
-    );
+    return Zotero.Items.get(item.getAttachments()).filter(isSupported);
   }
 }

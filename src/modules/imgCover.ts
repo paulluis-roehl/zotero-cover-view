@@ -7,18 +7,13 @@ const IMAGE_CONTENT_TYPES = new Set([
   "image/tiff",
 ]);
 
-export class ImgCover {
-  static isSupportedAttachment(item: Zotero.Item): boolean {
-    return (
-      item.isFileAttachment() &&
-      IMAGE_CONTENT_TYPES.has(item.attachmentContentType)
-    );
-  }
+export function isImgAttachment(item: Zotero.Item): boolean {
+  return (
+    item.isFileAttachment() &&
+    IMAGE_CONTENT_TYPES.has(item.attachmentContentType)
+  );
+}
 
-  static async findCoverURI(attachment: Zotero.Item): Promise<string | null> {
-    if (!ImgCover.isSupportedAttachment(attachment)) return null;
-
-    const filePath = await attachment.getFilePathAsync();
-    return filePath ? Zotero.File.pathToFileURI(filePath) : null;
-  }
+export function findImgCoverURI(filePath: string): Promise<string> {
+  return Promise.resolve(Zotero.File.pathToFileURI(filePath));
 }

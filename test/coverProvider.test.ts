@@ -74,7 +74,7 @@ describe("Cover provider", function () {
           pdfLookups++;
           return "cover:book.pdf";
         },
-        async (attachment) => `cover:${await attachment.getFilePathAsync()}`,
+        async (filePath) => `cover:${filePath}`,
       ),
       "cover:cover.png",
     );
@@ -155,7 +155,7 @@ describe("Cover provider", function () {
         image,
         async () => null,
         async () => null,
-        async (attachment) => `cover:${await attachment.getFilePathAsync()}`,
+        async (filePath) => `cover:${filePath}`,
       ),
       "cover:cover.webp",
     );
