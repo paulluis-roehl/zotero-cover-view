@@ -1,3 +1,4 @@
+import { getPref } from "../utils/prefs";
 import { findEPUBCoverURI, isEPUBAttachment } from "./epubCover";
 import { findImgCoverURI, isImgAttachment } from "./imgCover";
 import { createPlaceholderCoverURI } from "./placeholderCover";
@@ -41,6 +42,10 @@ export class CoverProvider {
 
   static getCover(itemID: number): Promise<string | null> {
     return this.cache.get(itemID)?.promise ?? Promise.resolve(null);
+  }
+
+  static shouldFetchISBNCover(): boolean {
+    return getPref("fetchISBNCover");
   }
 
   static async findCover(

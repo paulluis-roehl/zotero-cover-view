@@ -9,6 +9,7 @@ declare namespace _ZoteroTypes {
     PluginPrefsMap: {
       "enableGridView": boolean;
       "showAuthors": boolean;
+      "fetchISBNCover": boolean;
     };
   }
 }
