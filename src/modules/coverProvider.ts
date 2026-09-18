@@ -5,6 +5,7 @@ import { extractISBNs, findISBNCoverURI } from "./isbnCover";
 import { createPlaceholderCoverURI } from "./placeholderCover";
 import {
   cachePDFCover,
+  createPDFCacheSignature,
   deleteCachedPDFCover,
   findPDFCoverURI,
   getCachedPDFCover,
@@ -90,7 +91,7 @@ export class CoverProvider {
         const filePath = await attachment.getFilePathAsync();
         if (!filePath) continue;
 
-        const signature = this.pdfSignature(attachment, filePath);
+        const signature = createPDFCacheSignature(attachment, filePath);
         const cached =
           findPDFCover === findPDFCoverURI
             ? await getCachedPDFCover(item.id, signature)
@@ -196,13 +197,6 @@ export class CoverProvider {
     return (
       isImgAttachment(item) || isEPUBAttachment(item) || isPDFAttachment(item)
     );
-  }
-
-  private static pdfSignature(
-    attachment: Zotero.Item,
-    filePath: string,
-  ): string {
-    return `${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
   }
 
   private static findAttachments(
