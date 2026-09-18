@@ -1,8 +1,8 @@
 import { getPref } from "../utils/prefs";
-import { findEPUBCoverURI, isEPUBAttachment } from "./epubCover";
-import { findImgCoverURI, isImgAttachment } from "./imgCover";
-import { extractISBNs, findISBNCoverURI } from "./isbnCover";
-import { createPlaceholderCoverURI } from "./placeholderCover";
+import { findEPUBCoverURI, isEPUBAttachment } from "./covers/epubCover";
+import { findImgCoverURI, isImgAttachment } from "./covers/imgCover";
+import { extractISBNs, findISBNCoverURI } from "./covers/isbnCover";
+import { createPlaceholderCoverURI } from "./covers/placeholderCover";
 import {
   cachePDFCover,
   createPDFCacheSignature,
@@ -10,7 +10,7 @@ import {
   findPDFCoverURI,
   getCachedPDFCover,
   isPDFAttachment,
-} from "./pdfCover";
+} from "./covers/pdfCover";
 
 export class CoverProvider {
   private static cache = new Map<

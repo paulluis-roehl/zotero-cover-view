@@ -1,5 +1,8 @@
 import { assert } from "chai";
-import { extractISBNs, findISBNCoverURI } from "../src/modules/isbnCover";
+import {
+  extractISBNs,
+  findISBNCoverURI,
+} from "../src/modules/covers/isbnCover";
 
 describe("ISBN cover discovery", function () {
   function cacheDirectory(): string {

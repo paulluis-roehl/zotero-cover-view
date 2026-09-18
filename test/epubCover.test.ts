@@ -3,7 +3,7 @@ import { BasicTool } from "zotero-plugin-toolkit";
 import {
   findEPUBCoverURI as findEPUBCoverURIImpl,
   readURIText,
-} from "../src/modules/epubCover";
+} from "../src/modules/covers/epubCover";
 import { CoverProvider } from "../src/modules/coverProvider";
 
 describe("EPUB cover discovery", function () {

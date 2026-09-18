@@ -4,7 +4,7 @@ import {
   deleteCachedPDFCover,
   findPDFCoverURI,
   getCachedPDFCover,
-} from "../src/modules/pdfCover";
+} from "../src/modules/covers/pdfCover";
 
 describe("PDF cover rendering", function () {
   it("renders a real PDF with Zotero's document worker", async function () {
