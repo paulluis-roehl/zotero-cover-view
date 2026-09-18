@@ -1,4 +1,5 @@
 import { findEPUBCoverURI } from "./epubCover";
+import { ImgCover } from "./imgCover";
 import { createPlaceholderCoverURI } from "./placeholderCover";
 import {
   cachePDFCover,
@@ -19,7 +20,13 @@ export class CoverProvider {
   static cacheCover(item: Zotero.Item): void {
     if (!this.cache.has(item.id)) {
       const generation = this.currentGeneration(item.id);
-      const cover = this.findCover(item, undefined, undefined, generation)
+      const cover = this.findCover(
+        item,
+        undefined,
+        undefined,
+        undefined,
+        generation,
+      )
         .catch((error) => {
           ztoolkit.log("Failed to resolve cover", item.id, error);
           return null;
@@ -39,8 +46,19 @@ export class CoverProvider {
     item: Zotero.Item,
     findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
     findPDFCover: typeof findPDFCoverURI = findPDFCoverURI,
+    findImgCover: typeof ImgCover.findCoverURI = ImgCover.findCoverURI,
     generation = this.currentGeneration(item.id),
   ): Promise<string | null> {
+    for (const attachment of this.findImgAttachments(item)) {
+      this.rememberParent(attachment, item);
+      try {
+        const cover = await findImgCover(attachment);
+        if (cover) return cover;
+      } catch (error) {
+        ztoolkit.log("Failed to find image cover", attachment.id, error);
+      }
+    }
+
     for (const attachment of this.findEPUBAttachments(item)) {
       this.rememberParent(attachment, item);
       try {
@@ -151,7 +169,11 @@ export class CoverProvider {
   }
 
   private static isSupportedAttachment(item: Zotero.Item): boolean {
-    return this.isEPUBAttachment(item) || this.isPDFAttachment(item);
+    return (
+      ImgCover.isSupportedAttachment(item) ||
+      this.isEPUBAttachment(item) ||
+      this.isPDFAttachment(item)
+    );
   }
 
   private static pdfSignature(
@@ -159,6 +181,18 @@ export class CoverProvider {
     filePath: string,
   ): string {
     return `${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
+  }
+
+  private static findImgAttachments(item: Zotero.Item): Zotero.Item[] {
+    if (item.isFileAttachment()) {
+      return ImgCover.isSupportedAttachment(item) ? [item] : [];
+    }
+    if (!item.isRegularItem()) {
+      return [];
+    }
+    return Zotero.Items.get(item.getAttachments()).filter((attachment) =>
+      ImgCover.isSupportedAttachment(attachment),
+    );
   }
 
   private static findEPUBAttachments(item: Zotero.Item): Zotero.Item[] {

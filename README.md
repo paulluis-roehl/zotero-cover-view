@@ -9,7 +9,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 ## Features
 
 - **Cover extraction**
-  - uses the first page from an attached `.pdf` or `.epub` file as cover
+  - uses an attached image or the first page of an attached `.epub` or `.pdf` file as cover
 - **Grid view**
   - display items in a grid instead of a list
   - adds a button to the main item bar to switch between grid view and list view
@@ -35,7 +35,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 - [x] support `.pdf`
 - [x] support `.epub`
-- [ ] support `.jpg` / `.png`
+- [x] support `.jpg` / `.png`
 - [ ] support `.djvu`
 - [x] auto-generate default cover based on title
 - [ ] try to fetch cover from internet

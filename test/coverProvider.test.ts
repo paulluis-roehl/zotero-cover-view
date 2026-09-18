@@ -53,6 +53,52 @@ describe("Cover provider", function () {
     );
   });
 
+  it("prefers an image cover over EPUB and PDF covers", async function () {
+    const image = attachment(1, "image/png", "cover.png");
+    const item = parent([
+      image,
+      attachment(2, "application/epub+zip", "book.epub"),
+      attachment(3, "application/pdf", "book.pdf"),
+    ]);
+    let epubLookups = 0;
+    let pdfLookups = 0;
+
+    assert.equal(
+      await CoverProvider.findCover(
+        item,
+        async () => {
+          epubLookups++;
+          return "cover:book.epub";
+        },
+        async () => {
+          pdfLookups++;
+          return "cover:book.pdf";
+        },
+        async (attachment) => `cover:${await attachment.getFilePathAsync()}`,
+      ),
+      "cover:cover.png",
+    );
+    assert.equal(epubLookups, 0);
+    assert.equal(pdfLookups, 0);
+  });
+
+  it("uses an EPUB when image attachments have no cover", async function () {
+    const item = parent([
+      attachment(1, "image/jpeg", "missing.jpg"),
+      attachment(2, "application/epub+zip", "book.epub"),
+    ]);
+
+    assert.equal(
+      await CoverProvider.findCover(
+        item,
+        async () => "cover:book.epub",
+        async () => null,
+        async () => null,
+      ),
+      "cover:book.epub",
+    );
+  });
+
   it("prefers an EPUB cover over a PDF cover", async function () {
     const item = parent([
       attachment(1, "application/epub+zip", "book.epub"),
@@ -98,6 +144,20 @@ describe("Cover provider", function () {
         async (filePath) => `cover:${filePath}`,
       ),
       "cover:book.pdf",
+    );
+  });
+
+  it("accepts an image attachment directly", async function () {
+    const image = attachment(1, "image/webp", "cover.webp");
+
+    assert.equal(
+      await CoverProvider.findCover(
+        image,
+        async () => null,
+        async () => null,
+        async (attachment) => `cover:${await attachment.getFilePathAsync()}`,
+      ),
+      "cover:cover.webp",
     );
   });
 
