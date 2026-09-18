@@ -8,8 +8,10 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 ## Features
 
-- **Cover extraction**
-  - uses an attached image or the first page of an attached `.epub` or `.pdf` file as cover
+- **Cover extraction options**
+  - image attachment
+  - first page of `.epub` or `.pdf` attachment
+  - settings option: fetch missing covers through ISBN
 - **Grid view**
   - display items in a grid instead of a list
   - adds a button to the main item bar to switch between grid view and list view
