@@ -6,6 +6,9 @@ export async function registerCoverColumn(): Promise<void> {
     pluginID: addon.data.config.addonID,
     dataKey: field,
     label: "Cover",
+    iconPath: `chrome://${addon.data.config.addonRef}/content/icons/cover-column.svg`,
+    width: "32",
+    fixedWidth: true,
     dataProvider: (item: Zotero.Item, _dataKey: string) => {
       CoverProvider.cacheCover(item);
       return String(item.id);
@@ -13,6 +16,9 @@ export async function registerCoverColumn(): Promise<void> {
     renderCell(index, data, column, isFirstColumn, doc) {
       const span = doc.createElement("span");
       span.className = `cell ${column.className}`;
+      span.style.display = "flex";
+      span.style.alignItems = "center";
+      span.style.justifyContent = "center";
       void CoverProvider.getCover(Number(data)).then((cover) => {
         if (!cover) return;
         const image = doc.createElement("img");

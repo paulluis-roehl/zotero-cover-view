@@ -70,7 +70,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] hot key for switching between list and grid view
 - [ ] add cover section to item info view
 - [ ] improve graphics / effects while loading covers
-- [ ] make cover column small and with icon, just like the Attachments column
+- [x] make cover column small and with icon, just like the Attachments column
 - [ ] add cover flow pane
 - [ ] visually distinguish fetched missing covers from actual attachments (+ settings option)
   - e.g. decrease opacity
