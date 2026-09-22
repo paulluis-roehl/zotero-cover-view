@@ -1,7 +1,7 @@
 {
   "name": "zotero-cover-view",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "View covers of books and documents directly in Zotero.",
   "config": {
     "addonName": "Cover View for Zotero",
