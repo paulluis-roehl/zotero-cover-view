@@ -4,6 +4,9 @@ import { getPref } from "../utils/prefs";
 
 const CHUNK_SIZE = 120;
 
+export type GridNavigationCommand =
+  "left" | "right" | "up" | "down" | "home" | "end";
+
 export interface GridRenderOptions {
   showAuthors: boolean;
 }
@@ -30,7 +33,7 @@ export class GridRenderer {
     private readonly host: HTMLElement,
     private readonly onSelect: (itemID: number) => void,
     private readonly onActivate?: (itemID: number) => void,
-    private readonly onNavigate?: (direction: -1 | 1) => void,
+    private readonly onNavigate?: (command: GridNavigationCommand) => void,
     private readonly onFocus?: () => void,
   ) {
     const doc = host.ownerDocument;
@@ -97,10 +100,18 @@ export class GridRenderer {
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
       return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const command = {
+      ArrowLeft: "left",
+      ArrowRight: "right",
+      ArrowUp: "up",
+      ArrowDown: "down",
+      Home: "home",
+      End: "end",
+    }[event.key] as GridNavigationCommand | undefined;
+    if (!command) return;
 
     event.preventDefault();
-    this.onNavigate?.(event.key === "ArrowLeft" ? -1 : 1);
+    this.onNavigate?.(command);
   };
 
   private readonly handleFocus = (): void => {
@@ -272,6 +283,51 @@ export class GridRenderer {
         .get(itemID)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
+  }
+
+  /** Find the item in the corresponding column of an adjacent rendered row. */
+  getVerticalDestination(
+    itemID: number,
+    direction: -1 | 1,
+  ): number | undefined {
+    const current = this.entries.get(itemID);
+    if (!current) return undefined;
+
+    let rows = this.getRenderedRows();
+    let rowIndex = rows.findIndex((row) => row.includes(current));
+    const columnIndex = rows[rowIndex].indexOf(current);
+
+    if (direction === 1 && this.renderedCount < this.renderItems.length) {
+      let destinationRow = rows[rowIndex + direction];
+      while (!destinationRow || columnIndex >= destinationRow.length) {
+        this.renderChunk();
+        rows = this.getRenderedRows();
+        rowIndex = rows.findIndex((row) => row.includes(current));
+        destinationRow = rows[rowIndex + direction];
+        if (this.renderedCount >= this.renderItems.length) break;
+      }
+    }
+
+    const destinationRow = rows[rowIndex + direction];
+    if (!destinationRow) return undefined;
+
+    const destination =
+      destinationRow[Math.min(columnIndex, destinationRow.length - 1)];
+    const destinationID = Number(destination.dataset.itemId);
+    return Number.isSafeInteger(destinationID) ? destinationID : undefined;
+  }
+
+  private getRenderedRows(): HTMLElement[][] {
+    const rows: HTMLElement[][] = [];
+    for (const entry of this.entries.values()) {
+      const row = rows.at(-1);
+      if (!row || row[0].offsetTop !== entry.offsetTop) {
+        rows.push([entry]);
+      } else {
+        row.push(entry);
+      }
+    }
+    return rows;
   }
 
   private renderThroughItem(itemID: number): void {

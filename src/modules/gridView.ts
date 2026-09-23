@@ -1,4 +1,4 @@
-import { GridRenderer } from "./gridRenderer";
+import { GridNavigationCommand, GridRenderer } from "./gridRenderer";
 import { GridWindowUI } from "./gridWindowUI";
 import { ItemTreeBridge } from "./itemTreeBridge";
 import { getPref, observePrefs, setPref } from "../utils/prefs";
@@ -28,7 +28,7 @@ export class GridView {
           ztoolkit.log("Failed to activate grid item", itemID, error);
         });
       },
-      this.navigateHorizontally,
+      this.navigate,
       this.ensureGridFocus,
     );
     this.tree.onItemsChanged(this.scheduleSync);
@@ -116,15 +116,36 @@ export class GridView {
     this.renderer.setFocusedItem(this.focusedItemID);
   };
 
-  private readonly navigateHorizontally = (direction: -1 | 1): void => {
+  private readonly navigate = (command: GridNavigationCommand): void => {
     this.ensureGridFocus();
     if (this.focusedItemID === undefined) return;
 
     const currentIndex = this.itemIDs.indexOf(this.focusedItemID);
-    const destinationIndex = currentIndex + direction;
-    if (destinationIndex < 0 || destinationIndex >= this.itemIDs.length) return;
+    let destinationID: number | undefined;
+    switch (command) {
+      case "left":
+        destinationID = this.itemIDs[currentIndex - 1];
+        break;
+      case "right":
+        destinationID = this.itemIDs[currentIndex + 1];
+        break;
+      case "up":
+      case "down":
+        destinationID = this.renderer.getVerticalDestination(
+          this.focusedItemID,
+          command === "up" ? -1 : 1,
+        );
+        break;
+      case "home":
+        destinationID = this.itemIDs[0];
+        break;
+      case "end":
+        destinationID = this.itemIDs.at(-1);
+        break;
+    }
+    if (destinationID === undefined || destinationID === this.focusedItemID)
+      return;
 
-    const destinationID = this.itemIDs[destinationIndex];
     this.focusedItemID = destinationID;
     this.selectionAnchorID = destinationID;
     this.renderer.setFocusedItem(destinationID, true);
