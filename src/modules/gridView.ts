@@ -22,11 +22,7 @@ export class GridView {
     this.ui = new GridWindowUI(win, this.toggleEnabled);
     this.renderer = new GridRenderer(
       this.ui.host,
-      (itemID) => {
-        void this.selectItem(itemID).catch((error) => {
-          ztoolkit.log("Failed to select grid item", itemID, error);
-        });
-      },
+      this.selectClickedItem,
       (itemID) => {
         void this.tree.activateItem(itemID).catch((error) => {
           ztoolkit.log("Failed to activate grid item", itemID, error);
@@ -95,9 +91,19 @@ export class GridView {
     }
   }
 
+  private readonly selectClickedItem = (itemID: number): void => {
+    this.focusedItemID = itemID;
+    this.selectionAnchorID = itemID;
+    this.renderer.setFocusedItem(itemID);
+    void this.selectItem(itemID).catch((error) => {
+      ztoolkit.log("Failed to select grid item", itemID, error);
+    });
+  };
+
   private readonly ensureGridFocus = (): void => {
     if (!this.itemIDs.length) {
       this.focusedItemID = undefined;
+      this.selectionAnchorID = undefined;
       this.renderer.setFocusedItem(undefined);
       return;
     }
@@ -139,7 +145,11 @@ export class GridView {
       showAuthors: getPref("showAuthors"),
     });
     this.renderer.setSelection(this.tree.getSelectedIDs());
-    if (this.ui.host === this.win.document.activeElement) {
+    if (!this.itemIDs.length) {
+      this.focusedItemID = undefined;
+      this.selectionAnchorID = undefined;
+      this.renderer.setFocusedItem(undefined);
+    } else if (this.ui.host === this.win.document.activeElement) {
       this.ensureGridFocus();
     } else if (this.focusedItemID !== undefined) {
       this.renderer.setFocusedItem(this.focusedItemID);

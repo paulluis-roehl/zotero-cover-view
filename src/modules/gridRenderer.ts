@@ -78,7 +78,10 @@ export class GridRenderer {
     if (!entry || !this.host.contains(entry)) return;
 
     const itemID = Number(entry.dataset.itemId);
-    if (Number.isSafeInteger(itemID)) this.onSelect(itemID);
+    if (Number.isSafeInteger(itemID)) {
+      this.host.focus();
+      this.onSelect(itemID);
+    }
   };
 
   private readonly handleDoubleClick = (event: Event): void => {
