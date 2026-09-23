@@ -24,17 +24,26 @@ export class GridRenderer {
   private readonly coverObserver: IntersectionObserver;
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
+  private focusedItemID?: number;
 
   constructor(
     private readonly host: HTMLElement,
     private readonly onSelect: (itemID: number) => void,
     private readonly onActivate?: (itemID: number) => void,
+    private readonly onNavigate?: (direction: -1 | 1) => void,
+    private readonly onFocus?: () => void,
   ) {
     const doc = host.ownerDocument;
     if (!doc) throw new Error("Cannot create grid renderer without a document");
     this.doc = doc;
+    this.host.tabIndex = 0;
+    this.host.setAttribute("role", "listbox");
+    this.host.setAttribute("aria-multiselectable", "true");
     this.host.addEventListener("click", this.handleClick);
     this.host.addEventListener("dblclick", this.handleDoubleClick);
+    this.host.addEventListener("keydown", this.handleKeyDown);
+    this.host.addEventListener("focus", this.handleFocus);
+    this.host.addEventListener("blur", this.handleBlur);
     this.chunkObserver = new doc.defaultView!.IntersectionObserver(
       (entries: IntersectionObserverEntry[]) => {
         const sentinel = this.host.querySelector(".grid-view-sentinel");
@@ -82,6 +91,24 @@ export class GridRenderer {
     if (Number.isSafeInteger(itemID)) this.onActivate?.(itemID);
   };
 
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+      return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+
+    event.preventDefault();
+    this.onNavigate?.(event.key === "ArrowLeft" ? -1 : 1);
+  };
+
+  private readonly handleFocus = (): void => {
+    this.host.classList.add("owns-focus");
+    this.onFocus?.();
+  };
+
+  private readonly handleBlur = (): void => {
+    this.host.classList.remove("owns-focus");
+  };
+
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
     const scrollTop = this.host.scrollTop;
     const renderItems = items.map((item) => ({
@@ -109,6 +136,7 @@ export class GridRenderer {
     this.entries.clear();
     this.host.replaceChildren();
     this.renderChunk();
+    this.updateActiveDescendant();
     this.host.scrollTop = scrollTop;
   }
 
@@ -151,6 +179,10 @@ export class GridRenderer {
     entry.dataset.itemId = String(item.id);
     entry.dataset.renderIndex = String(renderIndex);
     entry.classList.toggle("selected", this.selectedIDs.has(item.id));
+    entry.classList.toggle("focused", this.focusedItemID === item.id);
+    entry.id = `${this.host.id || "cover-view-grid"}-item-${item.id}`;
+    entry.setAttribute("role", "option");
+    entry.setAttribute("aria-selected", String(this.selectedIDs.has(item.id)));
     this.entries.set(item.id, entry);
 
     const coverFrame = this.doc.createElement("div");
@@ -218,7 +250,43 @@ export class GridRenderer {
   setSelection(itemIDs: readonly number[]): void {
     this.selectedIDs = new Set(itemIDs);
     for (const [itemID, entry] of this.entries) {
-      entry.classList.toggle("selected", this.selectedIDs.has(itemID));
+      const selected = this.selectedIDs.has(itemID);
+      entry.classList.toggle("selected", selected);
+      entry.setAttribute("aria-selected", String(selected));
+    }
+  }
+
+  /** Present grid-owned focus independently from Zotero's selected items. */
+  setFocusedItem(itemID: number | undefined, scroll = false): void {
+    this.focusedItemID = itemID;
+    if (itemID !== undefined) this.renderThroughItem(itemID);
+    for (const [entryItemID, entry] of this.entries) {
+      entry.classList.toggle("focused", entryItemID === itemID);
+    }
+    this.updateActiveDescendant();
+    if (scroll && itemID !== undefined) {
+      this.entries
+        .get(itemID)
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }
+
+  private renderThroughItem(itemID: number): void {
+    const itemIndex = this.renderItems.findIndex(
+      ({ item }) => item.id === itemID,
+    );
+    while (itemIndex >= this.renderedCount) this.renderChunk();
+  }
+
+  private updateActiveDescendant(): void {
+    const entry =
+      this.focusedItemID === undefined
+        ? undefined
+        : this.entries.get(this.focusedItemID);
+    if (entry) {
+      this.host.setAttribute("aria-activedescendant", entry.id);
+    } else {
+      this.host.removeAttribute("aria-activedescendant");
     }
   }
 
@@ -234,12 +302,16 @@ export class GridRenderer {
     this.renderKey = undefined;
     this.host.removeEventListener("click", this.handleClick);
     this.host.removeEventListener("dblclick", this.handleDoubleClick);
+    this.host.removeEventListener("keydown", this.handleKeyDown);
+    this.host.removeEventListener("focus", this.handleFocus);
+    this.host.removeEventListener("blur", this.handleBlur);
     this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
     this.renderItems = [];
     this.renderedCount = 0;
     this.entries.clear();
     this.selectedIDs.clear();
+    this.focusedItemID = undefined;
     this.host.replaceChildren();
   }
 }

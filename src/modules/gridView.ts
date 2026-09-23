@@ -13,6 +13,9 @@ export class GridView {
   private readonly renderer: GridRenderer;
   private readonly tabObserverID: string;
   private syncTimer?: number;
+  private itemIDs: number[] = [];
+  private focusedItemID?: number;
+  private selectionAnchorID?: number;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -29,6 +32,8 @@ export class GridView {
           ztoolkit.log("Failed to activate grid item", itemID, error);
         });
       },
+      this.navigateHorizontally,
+      this.ensureGridFocus,
     );
     this.tree.onItemsChanged(this.scheduleSync);
     this.tabObserverID = Zotero.Notifier.registerObserver(
@@ -90,13 +95,55 @@ export class GridView {
     }
   }
 
+  private readonly ensureGridFocus = (): void => {
+    if (!this.itemIDs.length) {
+      this.focusedItemID = undefined;
+      this.renderer.setFocusedItem(undefined);
+      return;
+    }
+    if (!this.itemIDs.includes(this.focusedItemID ?? NaN)) {
+      const selectedIDs = new Set(this.tree.getSelectedIDs());
+      this.focusedItemID =
+        this.itemIDs.findLast((itemID) => selectedIDs.has(itemID)) ??
+        this.itemIDs[0];
+    }
+    this.renderer.setFocusedItem(this.focusedItemID);
+  };
+
+  private readonly navigateHorizontally = (direction: -1 | 1): void => {
+    this.ensureGridFocus();
+    if (this.focusedItemID === undefined) return;
+
+    const currentIndex = this.itemIDs.indexOf(this.focusedItemID);
+    const destinationIndex = currentIndex + direction;
+    if (destinationIndex < 0 || destinationIndex >= this.itemIDs.length) return;
+
+    const destinationID = this.itemIDs[destinationIndex];
+    this.focusedItemID = destinationID;
+    this.selectionAnchorID = destinationID;
+    this.renderer.setFocusedItem(destinationID, true);
+    void this.selectItem(destinationID).catch((error) => {
+      ztoolkit.log("Failed to navigate to grid item", destinationID, error);
+      if (getPref("enableGridView")) {
+        this.renderer.setSelection(this.tree.getSelectedIDs());
+      }
+    });
+  };
+
   private syncItems(): void {
     if (!getPref("enableGridView")) return;
     if (this.win.Zotero_Tabs.selectedType !== "library") return;
-    this.renderer.setItems(this.tree.getItems(), {
+    const items = this.tree.getItems();
+    this.itemIDs = items.map((item) => item.id);
+    this.renderer.setItems(items, {
       showAuthors: getPref("showAuthors"),
     });
     this.renderer.setSelection(this.tree.getSelectedIDs());
+    if (this.ui.host === this.win.document.activeElement) {
+      this.ensureGridFocus();
+    } else if (this.focusedItemID !== undefined) {
+      this.renderer.setFocusedItem(this.focusedItemID);
+    }
   }
 }
 

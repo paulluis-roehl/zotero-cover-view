@@ -143,6 +143,94 @@ describe("grid view", function () {
     }
   });
 
+  it("exposes one focusable listbox with independently focused options", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    const renderer = new GridRenderer(host, () => {});
+    const items = [-1, -2].map(
+      (id) =>
+        ({
+          id,
+          firstCreator: "",
+          getDisplayTitle: () => `Accessible item ${id}`,
+          isFileAttachment: () => false,
+          isRegularItem: () => false,
+        }) as unknown as Zotero.Item,
+    );
+
+    try {
+      renderer.setItems(items, { showAuthors: true });
+      renderer.setSelection([-1]);
+      renderer.setFocusedItem(-2);
+
+      const [selected, focused] = Array.from(
+        host.querySelectorAll<HTMLElement>(".grid-view-item"),
+      );
+      assert.equal(host.tabIndex, 0);
+      assert.equal(host.getAttribute("role"), "listbox");
+      assert.equal(host.getAttribute("aria-multiselectable"), "true");
+      assert.notExists(selected.getAttribute("tabindex"));
+      assert.notExists(focused.getAttribute("tabindex"));
+      assert.equal(selected.getAttribute("role"), "option");
+      assert.equal(selected.getAttribute("aria-selected"), "true");
+      assert.equal(focused.getAttribute("aria-selected"), "false");
+      assert.equal(host.getAttribute("aria-activedescendant"), focused.id);
+      assert.isTrue(focused.classList.contains("focused"));
+      assert.isFalse(selected.classList.contains("focused"));
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("handles only unmodified horizontal navigation keys", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    const directions: number[] = [];
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      undefined,
+      (direction) => directions.push(direction),
+    );
+
+    try {
+      const left = new win.KeyboardEvent("keydown", {
+        key: "ArrowLeft",
+        bubbles: true,
+        cancelable: true,
+      });
+      const right = new win.KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        bubbles: true,
+        cancelable: true,
+      });
+      const modified = new win.KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      const unrelated = new win.KeyboardEvent("keydown", {
+        key: "r",
+        bubbles: true,
+        cancelable: true,
+      });
+
+      host.dispatchEvent(left);
+      host.dispatchEvent(right);
+      host.dispatchEvent(modified);
+      host.dispatchEvent(unrelated);
+
+      assert.deepEqual(directions, [-1, 1]);
+      assert.isTrue(left.defaultPrevented);
+      assert.isTrue(right.defaultPrevented);
+      assert.isFalse(modified.defaultPrevented);
+      assert.isFalse(unrelated.defaultPrevented);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
   it("renders tiles in finite chunks and appends the next chunk at the sentinel", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
@@ -459,6 +547,191 @@ describe("grid view", function () {
       if (grid.hidden) toggle();
       if (item.id) await item.eraseTx();
     }
+  });
+
+  it("navigates displayed items horizontally through the focused grid host", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const items = [new Zotero.Item("book"), new Zotero.Item("book")];
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const gridStyle = grid.style.cssText;
+    const waitFor = async (condition: () => boolean, message: string) => {
+      const deadline = Date.now() + 2000;
+      while (!condition() && Date.now() < deadline) {
+        await Zotero.Promise.delay(20);
+      }
+      assert.isTrue(condition(), message);
+    };
+
+    try {
+      const titlePrefix = `Keyboard navigation ${Date.now()}`;
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `${titlePrefix} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      grid.style.gridTemplateColumns = "150px";
+      await waitFor(
+        () =>
+          items.every(
+            (item) => !!grid.querySelector(`[data-item-id="${item.id}"]`),
+          ),
+        "New items should be rendered in the grid",
+      );
+
+      const entries = Array.from(
+        grid.querySelectorAll<HTMLElement>(".grid-view-item"),
+      );
+      assert.isAtLeast(entries.length, 2);
+      const sourceIndex = entries.length - 2;
+      const source = entries[sourceIndex];
+      const destination = entries[sourceIndex + 1];
+      assert.notEqual(
+        source.offsetTop,
+        destination.offsetTop,
+        "The adjacent items should cross a visual row boundary",
+      );
+      const destinationID = Number(destination.dataset.itemId);
+      let scrollOptions: ScrollIntoViewOptions | undefined;
+      const originalScrollIntoView = destination.scrollIntoView;
+      destination.scrollIntoView = (
+        options?: boolean | ScrollIntoViewOptions,
+      ) => {
+        if (typeof options === "object") scrollOptions = options;
+      };
+
+      await pane.selectItems([Number(source.dataset.itemId)], true);
+      grid.blur();
+      grid.focus();
+      grid.dispatchEvent(new win.FocusEvent("focus"));
+      assert.strictEqual(win.document.activeElement, grid);
+      assert.equal(grid.getAttribute("role"), "listbox");
+      assert.equal(grid.getAttribute("aria-multiselectable"), "true");
+      assert.equal(grid.getAttribute("aria-activedescendant"), source.id);
+
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitFor(
+        () => pane.getSelectedItems(true)[0] === destinationID,
+        "Right Arrow should update Zotero's selection",
+      );
+
+      assert.equal(grid.getAttribute("aria-activedescendant"), destination.id);
+      assert.equal(destination.getAttribute("aria-selected"), "true");
+      assert.notEqual(win.getComputedStyle(destination).outlineStyle, "dotted");
+      assert.deepEqual(scrollOptions, { block: "nearest", inline: "nearest" });
+
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await Zotero.Promise.delay(20);
+      assert.equal(grid.getAttribute("aria-activedescendant"), destination.id);
+      assert.deepEqual(pane.getSelectedItems(true), [destinationID]);
+
+      for (let index = sourceIndex; index >= 0; index--) {
+        const expected = entries[index];
+        grid.dispatchEvent(
+          new win.KeyboardEvent("keydown", {
+            key: "ArrowLeft",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await waitFor(
+          () =>
+            pane.getSelectedItems(true)[0] === Number(expected.dataset.itemId),
+          "Left Arrow should select each preceding displayed item",
+        );
+        assert.equal(grid.getAttribute("aria-activedescendant"), expected.id);
+      }
+      const first = entries[0];
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await Zotero.Promise.delay(20);
+      assert.equal(grid.getAttribute("aria-activedescendant"), first.id);
+      assert.deepEqual(pane.getSelectedItems(true), [
+        Number(first.dataset.itemId),
+      ]);
+
+      for (let index = 1; index <= sourceIndex + 1; index++) {
+        const expected = entries[index];
+        grid.dispatchEvent(
+          new win.KeyboardEvent("keydown", {
+            key: "ArrowRight",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await waitFor(
+          () =>
+            pane.getSelectedItems(true)[0] === Number(expected.dataset.itemId),
+          "Right Arrow should select each following displayed item",
+        );
+      }
+      source.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(
+        () =>
+          pane.getSelectedItems(true)[0] === Number(source.dataset.itemId) &&
+          destination.getAttribute("aria-selected") === "false",
+        "Click selection should remain independent from the focused tile",
+      );
+      grid.focus();
+      assert.equal(grid.getAttribute("aria-activedescendant"), destination.id);
+      assert.equal(win.getComputedStyle(destination).outlineStyle, "dotted");
+
+      destination.scrollIntoView = originalScrollIntoView;
+    } finally {
+      grid.style.cssText = gridStyle;
+      if (grid.hidden) toggle();
+      for (const item of items) {
+        if (item.id) await item.eraseTx();
+      }
+    }
+  });
+
+  it("keeps an empty grid focusable and ignores horizontal navigation", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const deadline = Date.now() + 2000;
+    while (grid.querySelector(".grid-view-item") && Date.now() < deadline) {
+      await Zotero.Promise.delay(20);
+    }
+    assert.notExists(grid.querySelector(".grid-view-item"));
+
+    grid.blur();
+    grid.focus();
+    grid.dispatchEvent(new win.FocusEvent("focus"));
+    for (const key of ["ArrowLeft", "ArrowRight"]) {
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+
+    assert.strictEqual(win.document.activeElement, grid);
+    assert.equal(grid.getAttribute("role"), "listbox");
+    assert.notExists(grid.getAttribute("aria-activedescendant"));
+    assert.isEmpty(pane.getSelectedItems(true));
   });
 
   it("preserves grid state while a reader tab is active", async function () {

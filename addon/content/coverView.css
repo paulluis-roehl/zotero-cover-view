@@ -44,6 +44,11 @@
   color: HighlightText;
 }
 
+#cover-view-grid.owns-focus > .grid-view-item.focused:not(.selected) {
+  outline: 1px dotted currentColor;
+  outline-offset: 1px;
+}
+
 .grid-view-sentinel {
   grid-column: 1 / -1;
   height: 1px;
