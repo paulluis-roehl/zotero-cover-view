@@ -85,6 +85,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] make ISBN cover toggle refresh the grid renderer
   - [ ] only target items that actually need refreshing
   - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
+- [ ] refresh covers when metadata changes (for ISBN or auto-generated)
 - [x] add Open Library request scheduler that:
   - Limits concurrent network requests, likely to 2-3.
   - Enforces the documented 100 requests per 5-minute window.
