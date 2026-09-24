@@ -1,4 +1,8 @@
-import { GridNavigationCommand, GridRenderer } from "./gridRenderer";
+import {
+  GridNavigationCommand,
+  GridRenderer,
+  GridSelectionModifiers,
+} from "./gridRenderer";
 import { GridWindowUI } from "./gridWindowUI";
 import { ItemTreeBridge } from "./itemTreeBridge";
 import { getPref, observePrefs, setPref } from "../utils/prefs";
@@ -84,19 +88,34 @@ export class GridView {
     }
   }
 
-  private async selectItem(itemID: number): Promise<void> {
-    await this.tree.selectItem(itemID);
+  private async selectItems(itemIDs: number[]): Promise<void> {
+    await this.tree.selectItems(itemIDs);
     if (getPref("enableGridView")) {
       this.renderer.setSelection(this.tree.getSelectedIDs());
     }
   }
 
-  private readonly selectClickedItem = (itemID: number): void => {
+  private readonly selectClickedItem = (
+    itemID: number,
+    modifiers: GridSelectionModifiers,
+  ): void => {
     this.focusedItemID = itemID;
-    this.selectionAnchorID = itemID;
     this.renderer.setFocusedItem(itemID);
-    void this.selectItem(itemID).catch((error) => {
+    const anchorID = this.getSelectionAnchor();
+    let selectedIDs: number[];
+    if (modifiers.shift) {
+      const range = this.getRange(anchorID, itemID);
+      selectedIDs = modifiers.primary ? this.addToSelection(range) : range;
+    } else if (modifiers.primary) {
+      this.selectionAnchorID = itemID;
+      selectedIDs = this.toggleSelection(itemID);
+    } else {
+      this.selectionAnchorID = itemID;
+      selectedIDs = [itemID];
+    }
+    void this.selectItems(selectedIDs).catch((error) => {
       ztoolkit.log("Failed to select grid item", itemID, error);
+      this.resynchronizeSelection();
     });
   };
 
@@ -116,7 +135,10 @@ export class GridView {
     this.renderer.setFocusedItem(this.focusedItemID);
   };
 
-  private readonly navigate = (command: GridNavigationCommand): void => {
+  private readonly navigate = (
+    command: GridNavigationCommand,
+    modifiers: GridSelectionModifiers,
+  ): void => {
     this.ensureGridFocus();
     if (this.focusedItemID === undefined) return;
 
@@ -146,16 +168,56 @@ export class GridView {
     if (destinationID === undefined || destinationID === this.focusedItemID)
       return;
 
+    const anchorID = this.getSelectionAnchor();
     this.focusedItemID = destinationID;
-    this.selectionAnchorID = destinationID;
     this.renderer.setFocusedItem(destinationID, true);
-    void this.selectItem(destinationID).catch((error) => {
+    if (modifiers.primary && !modifiers.shift) {
+      this.selectionAnchorID = destinationID;
+      return;
+    }
+
+    const selectedIDs = modifiers.shift
+      ? modifiers.primary
+        ? this.addToSelection(this.getRange(anchorID, destinationID))
+        : this.getRange(anchorID, destinationID)
+      : [destinationID];
+    if (!modifiers.shift) this.selectionAnchorID = destinationID;
+    void this.selectItems(selectedIDs).catch((error) => {
       ztoolkit.log("Failed to navigate to grid item", destinationID, error);
-      if (getPref("enableGridView")) {
-        this.renderer.setSelection(this.tree.getSelectedIDs());
-      }
+      this.resynchronizeSelection();
     });
   };
+
+  private getSelectionAnchor(): number {
+    if (this.itemIDs.includes(this.selectionAnchorID ?? NaN)) {
+      return this.selectionAnchorID!;
+    }
+    this.selectionAnchorID = this.focusedItemID!;
+    return this.selectionAnchorID;
+  }
+
+  private getRange(startID: number, endID: number): number[] {
+    const start = this.itemIDs.indexOf(startID);
+    const end = this.itemIDs.indexOf(endID);
+    return this.itemIDs.slice(Math.min(start, end), Math.max(start, end) + 1);
+  }
+
+  private addToSelection(itemIDs: number[]): number[] {
+    return [...new Set([...this.tree.getSelectedIDs(), ...itemIDs])];
+  }
+
+  private toggleSelection(itemID: number): number[] {
+    const selectedIDs = new Set(this.tree.getSelectedIDs());
+    if (selectedIDs.has(itemID)) selectedIDs.delete(itemID);
+    else selectedIDs.add(itemID);
+    return [...selectedIDs];
+  }
+
+  private resynchronizeSelection(): void {
+    if (getPref("enableGridView")) {
+      this.renderer.setSelection(this.tree.getSelectedIDs());
+    }
+  }
 
   private syncItems(): void {
     if (!getPref("enableGridView")) return;

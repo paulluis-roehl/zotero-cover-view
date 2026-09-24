@@ -182,16 +182,24 @@ describe("grid view", function () {
     }
   });
 
-  it("handles only unmodified grid navigation keys", function () {
+  it("passes native selection modifiers with grid navigation keys", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
-    const commands: string[] = [];
+    const commands: Array<{
+      command: string;
+      primary: boolean;
+      shift: boolean;
+    }> = [];
     const renderer = new GridRenderer(
       host,
       () => {},
       undefined,
-      (command) => commands.push(String(command)),
+      (command, modifiers) =>
+        commands.push({ command: String(command), ...modifiers }),
     );
+    const primaryKey = win.navigator.platform.startsWith("Mac")
+      ? { metaKey: true }
+      : { ctrlKey: true };
 
     try {
       const left = new win.KeyboardEvent("keydown", {
@@ -224,9 +232,22 @@ describe("grid view", function () {
         bubbles: true,
         cancelable: true,
       });
-      const modified = new win.KeyboardEvent("keydown", {
+      const shift = new win.KeyboardEvent("keydown", {
         key: "ArrowRight",
-        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      const primary = new win.KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        ...primaryKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      const primaryShift = new win.KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        ...primaryKey,
+        shiftKey: true,
         bubbles: true,
         cancelable: true,
       });
@@ -242,24 +263,49 @@ describe("grid view", function () {
       host.dispatchEvent(down);
       host.dispatchEvent(home);
       host.dispatchEvent(end);
-      host.dispatchEvent(modified);
+      host.dispatchEvent(shift);
+      host.dispatchEvent(primary);
+      host.dispatchEvent(primaryShift);
       host.dispatchEvent(unrelated);
 
-      assert.deepEqual(commands, [
-        "left",
-        "right",
-        "up",
-        "down",
-        "home",
-        "end",
-      ]);
+      assert.deepEqual(
+        commands.map(({ command }) => command),
+        [
+          "left",
+          "right",
+          "up",
+          "down",
+          "home",
+          "end",
+          "right",
+          "right",
+          "right",
+        ],
+      );
+      assert.deepInclude(commands, {
+        command: "right",
+        primary: false,
+        shift: true,
+      });
+      assert.deepInclude(commands, {
+        command: "right",
+        primary: true,
+        shift: false,
+      });
+      assert.deepInclude(commands, {
+        command: "right",
+        primary: true,
+        shift: true,
+      });
       assert.isTrue(left.defaultPrevented);
       assert.isTrue(right.defaultPrevented);
       assert.isTrue(up.defaultPrevented);
       assert.isTrue(down.defaultPrevented);
       assert.isTrue(home.defaultPrevented);
       assert.isTrue(end.defaultPrevented);
-      assert.isFalse(modified.defaultPrevented);
+      assert.isTrue(shift.defaultPrevented);
+      assert.isTrue(primary.defaultPrevented);
+      assert.isTrue(primaryShift.defaultPrevented);
       assert.isFalse(unrelated.defaultPrevented);
     } finally {
       renderer.destroy();
@@ -595,6 +641,149 @@ describe("grid view", function () {
       assert.equal(grid.getAttribute("aria-activedescendant"), clickedEntry.id);
       assert.isTrue(clickedEntry.classList.contains("focused"));
       assert.isTrue(clickedEntry.classList.contains("selected"));
+    } finally {
+      if (grid.hidden) toggle();
+      for (const item of items) {
+        if (item.id) await item.eraseTx();
+      }
+    }
+  });
+
+  it("applies native modifier selection while retaining focused unselected tiles", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const items = Array.from({ length: 4 }, () => new Zotero.Item("book"));
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const primaryKey = win.navigator.platform.startsWith("Mac")
+      ? { metaKey: true }
+      : { ctrlKey: true };
+    const waitFor = async (condition: () => boolean, message: string) => {
+      const deadline = Date.now() + 2000;
+      while (!condition() && Date.now() < deadline) {
+        await Zotero.Promise.delay(20);
+      }
+      assert.isTrue(condition(), message);
+    };
+    const selectedIDs = () => pane.getSelectedItems(true);
+    const equalIDs = (left: number[], right: number[]) =>
+      left.length === right.length &&
+      left.every((id, index) => id === right[index]);
+    const sameIDs = (left: number[], right: number[]) =>
+      left.length === right.length && right.every((id) => left.includes(id));
+    const click = (entry: HTMLElement, modifiers = {}) =>
+      entry.dispatchEvent(
+        new win.MouseEvent("click", { bubbles: true, ...modifiers }),
+      );
+    const press = (key: string, modifiers = {}) =>
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key,
+          bubbles: true,
+          cancelable: true,
+          ...modifiers,
+        }),
+      );
+
+    try {
+      const titlePrefix = `Modifier selection ${Date.now()}`;
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `${titlePrefix} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(
+        () =>
+          items.every((item) =>
+            grid.querySelector(`[data-item-id="${item.id}"]`),
+          ),
+        "Modifier test items should be rendered",
+      );
+      const entries = items.map((item) =>
+        grid.querySelector<HTMLElement>(`[data-item-id="${item.id}"]`)!,
+      );
+      const range = (from: HTMLElement, to: HTMLElement) => {
+        const all = Array.from(
+          grid.querySelectorAll<HTMLElement>(".grid-view-item"),
+        );
+        const start = all.indexOf(from);
+        const end = all.indexOf(to);
+        return all
+          .slice(Math.min(start, end), Math.max(start, end) + 1)
+          .map((entry) => Number(entry.dataset.itemId));
+      };
+
+      click(entries[0]);
+      await waitFor(
+        () => selectedIDs().length === 1 && selectedIDs()[0] === items[0].id,
+        "Plain click should replace selection",
+      );
+      click(entries[2], { shiftKey: true });
+      const initialRange = range(entries[0], entries[2]);
+      await waitFor(
+        () => equalIDs(selectedIDs(), initialRange),
+        "Shift-click should replace selection with the displayed range",
+      );
+
+      click(entries[1], primaryKey);
+      await waitFor(
+        () => !selectedIDs().includes(items[1].id),
+        "Primary-click should toggle an item out of the selection",
+      );
+      click(entries[3], { ...primaryKey, shiftKey: true });
+      const additiveRange = range(entries[0], entries[3]);
+      await waitFor(
+        () => sameIDs(selectedIDs(), additiveRange),
+        "Primary+Shift-click should add the anchor range",
+      );
+
+      click(entries[1]);
+      await waitFor(
+        () => selectedIDs()[0] === items[1].id && selectedIDs().length === 1,
+        "Plain click should reset the keyboard anchor",
+      );
+      press("ArrowRight", { shiftKey: true });
+      const nextEntry = Array.from(
+        grid.querySelectorAll<HTMLElement>(".grid-view-item"),
+      )[
+        Array.from(grid.querySelectorAll(".grid-view-item")).indexOf(
+          entries[1],
+        ) + 1
+      ];
+      await waitFor(
+        () => equalIDs(selectedIDs(), range(entries[1], nextEntry)),
+        "Shift navigation should replace selection with the anchor range",
+      );
+      press("ArrowRight", primaryKey);
+      await Zotero.Promise.delay(50);
+      assert.deepEqual(selectedIDs(), range(entries[1], nextEntry));
+      const focusedID = Number(
+        grid.getAttribute("aria-activedescendant")!.match(/-(\d+)$/)![1],
+      );
+      assert.notInclude(selectedIDs(), focusedID);
+      press("Home", { ...primaryKey, shiftKey: true });
+      await waitFor(
+        () => selectedIDs().includes(items[1].id),
+        "Primary+Shift Home should add a range without clearing selection",
+      );
+
+      click(entries[1], primaryKey);
+      await waitFor(
+        () => !selectedIDs().includes(items[1].id),
+        "Primary-click should toggle a selected item",
+      );
+      await pane.selectItems([items[0].id], true);
+      await waitFor(
+        () => selectedIDs().length === 1 && selectedIDs()[0] === items[0].id,
+        "Native selection should contain the final toggle target",
+      );
+      click(entries[0], primaryKey);
+      await waitFor(
+        () => selectedIDs().length === 0,
+        "Primary-click should allow an empty native selection",
+      );
+      assert.equal(grid.getAttribute("aria-activedescendant"), entries[0].id);
     } finally {
       if (grid.hidden) toggle();
       for (const item of items) {

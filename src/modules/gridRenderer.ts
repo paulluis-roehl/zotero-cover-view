@@ -7,6 +7,11 @@ const CHUNK_SIZE = 120;
 export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end";
 
+export interface GridSelectionModifiers {
+  primary: boolean;
+  shift: boolean;
+}
+
 export interface GridRenderOptions {
   showAuthors: boolean;
 }
@@ -31,9 +36,15 @@ export class GridRenderer {
 
   constructor(
     private readonly host: HTMLElement,
-    private readonly onSelect: (itemID: number) => void,
+    private readonly onSelect: (
+      itemID: number,
+      modifiers: GridSelectionModifiers,
+    ) => void,
     private readonly onActivate?: (itemID: number) => void,
-    private readonly onNavigate?: (command: GridNavigationCommand) => void,
+    private readonly onNavigate?: (
+      command: GridNavigationCommand,
+      modifiers: GridSelectionModifiers,
+    ) => void,
     private readonly onFocus?: () => void,
   ) {
     const doc = host.ownerDocument;
@@ -74,7 +85,7 @@ export class GridRenderer {
     );
   }
 
-  private readonly handleClick = (event: Event): void => {
+  private readonly handleClick = (event: MouseEvent): void => {
     const entry = (event.target as Element | null)?.closest(
       ".grid-view-item",
     ) as HTMLElement | null;
@@ -83,7 +94,7 @@ export class GridRenderer {
     const itemID = Number(entry.dataset.itemId);
     if (Number.isSafeInteger(itemID)) {
       this.host.focus();
-      this.onSelect(itemID);
+      this.onSelect(itemID, this.getSelectionModifiers(event));
     }
   };
 
@@ -98,7 +109,12 @@ export class GridRenderer {
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    const modifiers = this.getSelectionModifiers(event);
+    if (
+      event.altKey ||
+      (event.ctrlKey && this.isMacOS()) ||
+      (event.metaKey && !this.isMacOS())
+    )
       return;
     const command = {
       ArrowLeft: "left",
@@ -111,8 +127,21 @@ export class GridRenderer {
     if (!command) return;
 
     event.preventDefault();
-    this.onNavigate?.(command);
+    this.onNavigate?.(command, modifiers);
   };
+
+  private getSelectionModifiers(
+    event: MouseEvent | KeyboardEvent,
+  ): GridSelectionModifiers {
+    return {
+      primary: this.isMacOS() ? event.metaKey : event.ctrlKey,
+      shift: event.shiftKey,
+    };
+  }
+
+  private isMacOS(): boolean {
+    return this.doc.defaultView!.navigator.platform.startsWith("Mac");
+  }
 
   private readonly handleFocus = (): void => {
     this.host.classList.add("owns-focus");

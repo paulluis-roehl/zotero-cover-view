@@ -36,6 +36,14 @@ export class ItemTreeBridge {
     await this.itemsView.selectItem(itemID);
   }
 
+  async selectItems(itemIDs: number[]): Promise<void> {
+    if (!itemIDs.length) {
+      this.itemsView.selection.clearSelection();
+      return;
+    }
+    await this.win.ZoteroPane.selectItems(itemIDs, true);
+  }
+
   async activateItem(itemID: number): Promise<void> {
     const item = await Zotero.Items.getAsync(itemID);
     if (item) {
