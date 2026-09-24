@@ -17,7 +17,9 @@ logs
 
 # Agents
 AGENTS.md
+CONTEXT.md
 .opencode
 .agents
 skills-lock.json
-docs/*
+docs
+.scratch
