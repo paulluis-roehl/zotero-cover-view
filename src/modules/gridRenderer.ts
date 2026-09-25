@@ -7,6 +7,12 @@ const CHUNK_SIZE = 120;
 export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end";
 
+export type GridItemCommand = "activate" | "toggle-selection" | "delete";
+
+export interface GridItemCommandOptions {
+  forceDelete?: boolean;
+}
+
 export interface GridSelectionModifiers {
   primary: boolean;
   shift: boolean;
@@ -46,6 +52,10 @@ export class GridRenderer {
       modifiers: GridSelectionModifiers,
     ) => void,
     private readonly onFocus?: () => void,
+    private readonly onItemCommand?: (
+      command: GridItemCommand,
+      options: GridItemCommandOptions,
+    ) => void,
   ) {
     const doc = host.ownerDocument;
     if (!doc) throw new Error("Cannot create grid renderer without a document");
@@ -116,7 +126,7 @@ export class GridRenderer {
       (event.metaKey && !this.isMacOS())
     )
       return;
-    const command = {
+    const navigationCommand = {
       ArrowLeft: "left",
       ArrowRight: "right",
       ArrowUp: "up",
@@ -124,11 +134,39 @@ export class GridRenderer {
       Home: "home",
       End: "end",
     }[event.key] as GridNavigationCommand | undefined;
+    if (navigationCommand) {
+      event.preventDefault();
+      this.onNavigate?.(navigationCommand, modifiers);
+      return;
+    }
+
+    const command = this.getItemCommand(event);
     if (!command) return;
 
     event.preventDefault();
-    this.onNavigate?.(command, modifiers);
+    this.onItemCommand?.(command.command, command.options);
   };
+
+  private getItemCommand(
+    event: KeyboardEvent,
+  ): { command: GridItemCommand; options: GridItemCommandOptions } | undefined {
+    if (event.key === "Enter") return { command: "activate", options: {} };
+    if (event.key === " " || event.key === "Spacebar") {
+      return { command: "toggle-selection", options: {} };
+    }
+    if (event.key === "Delete") {
+      return {
+        command: "delete",
+        options: {
+          forceDelete: this.isMacOS() ? event.metaKey : event.shiftKey,
+        },
+      };
+    }
+    if (event.key === "Backspace" && this.isMacOS()) {
+      return { command: "delete", options: { forceDelete: event.metaKey } };
+    }
+    return undefined;
+  }
 
   private getSelectionModifiers(
     event: MouseEvent | KeyboardEvent,

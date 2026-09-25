@@ -1,5 +1,7 @@
 import {
   GridNavigationCommand,
+  GridItemCommand,
+  GridItemCommandOptions,
   GridRenderer,
   GridSelectionModifiers,
 } from "./gridRenderer";
@@ -27,13 +29,10 @@ export class GridView {
     this.renderer = new GridRenderer(
       this.ui.host,
       this.selectClickedItem,
-      (itemID) => {
-        void this.tree.activateItem(itemID).catch((error) => {
-          ztoolkit.log("Failed to activate grid item", itemID, error);
-        });
-      },
+      this.activateClickedItem,
       this.navigate,
       this.ensureGridFocus,
+      this.handleItemCommand,
     );
     this.tree.onItemsChanged(this.scheduleSync);
     this.tabObserverID = Zotero.Notifier.registerObserver(
@@ -133,6 +132,48 @@ export class GridView {
         this.itemIDs[0];
     }
     this.renderer.setFocusedItem(this.focusedItemID);
+  };
+
+  private readonly activateClickedItem = (itemID: number): void => {
+    void this.tree.activateItem(itemID).catch((error) => {
+      ztoolkit.log("Failed to activate grid item", itemID, error);
+      this.resynchronizeSelection();
+    });
+  };
+
+  private readonly handleItemCommand = (
+    command: GridItemCommand,
+    options: GridItemCommandOptions,
+  ): void => {
+    switch (command) {
+      case "activate":
+        void this.tree.activateSelectedItems().catch((error) => {
+          ztoolkit.log("Failed to activate selected grid items", error);
+          this.resynchronizeSelection();
+        });
+        return;
+      case "toggle-selection":
+        this.ensureGridFocus();
+        if (this.focusedItemID === undefined) return;
+        void this.selectItems(this.toggleSelection(this.focusedItemID)).catch(
+          (error) => {
+            ztoolkit.log(
+              "Failed to toggle focused grid item selection",
+              this.focusedItemID,
+              error,
+            );
+            this.resynchronizeSelection();
+          },
+        );
+        return;
+      case "delete":
+        void this.tree
+          .deleteSelectedItems(options.forceDelete ?? false)
+          .catch((error) => {
+            ztoolkit.log("Failed to delete selected grid items", error);
+            this.resynchronizeSelection();
+          });
+    }
   };
 
   private readonly navigate = (

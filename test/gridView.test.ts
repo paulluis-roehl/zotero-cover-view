@@ -312,6 +312,196 @@ describe("grid view", function () {
     }
   });
 
+  it("interprets grid item commands without consuming unrelated shortcuts", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    const commands: Array<{ command: string; forceDelete?: boolean }> = [];
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      (command, options) => commands.push({ command, ...options }),
+    );
+    const isMacOS = win.navigator.platform.startsWith("Mac");
+    const primaryKey = isMacOS ? { metaKey: true } : { shiftKey: true };
+    const press = (key: string, modifiers = {}) => {
+      const event = new win.KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ...modifiers,
+      });
+      host.dispatchEvent(event);
+      return event;
+    };
+
+    try {
+      const enter = press("Enter");
+      const space = press(" ");
+      const deleteKey = press("Delete");
+      const forceDelete = press("Delete", primaryKey);
+      const backspace = press("Backspace");
+      const unrelated = press("r");
+
+      assert.deepEqual(commands, [
+        { command: "activate" },
+        { command: "toggle-selection" },
+        { command: "delete", forceDelete: false },
+        { command: "delete", forceDelete: true },
+        ...(isMacOS ? [{ command: "delete", forceDelete: false }] : []),
+      ]);
+      assert.isTrue(enter.defaultPrevented);
+      assert.isTrue(space.defaultPrevented);
+      assert.isTrue(deleteKey.defaultPrevented);
+      assert.isTrue(forceDelete.defaultPrevented);
+      assert.equal(backspace.defaultPrevented, isMacOS);
+      assert.isFalse(unrelated.defaultPrevented);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("bridges grid item commands to Zotero's selected-item actions", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const items = Array.from({ length: 20 }, () => new Zotero.Item("book"));
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const paneActions = pane as unknown as {
+      viewItems: (items: Zotero.Item[]) => Promise<void>;
+      deleteSelectedItems: (force?: boolean) => void;
+    };
+    const originalViewItems = paneActions.viewItems;
+    const originalDeleteSelectedItems = paneActions.deleteSelectedItems;
+    const activations: number[][] = [];
+    const deletions: boolean[] = [];
+    const waitFor = async (condition: () => boolean, message: string) => {
+      const deadline = Date.now() + 2000;
+      while (!condition() && Date.now() < deadline) {
+        await Zotero.Promise.delay(20);
+      }
+      assert.isTrue(condition(), message);
+    };
+    const press = (key: string, modifiers = {}) =>
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key,
+          bubbles: true,
+          cancelable: true,
+          ...modifiers,
+        }),
+      );
+
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Grid command bridge ${Date.now()} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(
+        () =>
+          items.every((item) =>
+            grid.querySelector(`[data-item-id="${item.id}"]`),
+          ),
+        "Command test items should be rendered",
+      );
+      paneActions.viewItems = async (selected) => {
+        activations.push(selected.map((item) => item.id));
+      };
+      paneActions.deleteSelectedItems = (force = false) => {
+        deletions.push(force);
+      };
+
+      await pane.selectItems([items[0].id, items[1].id], true);
+      const focused = grid.querySelector<HTMLElement>(
+        `[data-item-id="${items[2].id}"]`,
+      )!;
+      focused.dispatchEvent(
+        new win.MouseEvent("click", {
+          bubbles: true,
+          ...(win.navigator.platform.startsWith("Mac")
+            ? { metaKey: true }
+            : { ctrlKey: true }),
+        }),
+      );
+      await waitFor(
+        () => grid.getAttribute("aria-activedescendant") === focused.id,
+        "Primary-click should focus an unselected tile",
+      );
+
+      press("Enter");
+      await waitFor(
+        () => activations.length === 1,
+        "Enter should activate the authoritative selection",
+      );
+      assert.deepEqual(activations, [[items[0].id, items[1].id]]);
+
+      focused.dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true }));
+      await waitFor(
+        () => activations.length === 2,
+        "Double-click should activate its clicked tile",
+      );
+      assert.deepEqual(activations[1], [items[2].id]);
+
+      press(" ");
+      await waitFor(
+        () => pane.getSelectedItems(true).includes(items[2].id),
+        "Space should toggle focused selection without moving focus",
+      );
+      assert.equal(grid.getAttribute("aria-activedescendant"), focused.id);
+
+      await pane.selectItems([items[2].id], true);
+      press(" ");
+      await waitFor(
+        () => pane.getSelectedItems(true).length === 0,
+        "Space should allow the final selected item to be deselected",
+      );
+      press("Delete");
+      await Zotero.Promise.delay(20);
+      assert.isEmpty(deletions, "Delete should be a no-op without a selection");
+
+      await pane.selectItems(
+        items.map((item) => item.id),
+        true,
+      );
+      press("Enter");
+      await Zotero.Promise.delay(50);
+      assert.lengthOf(
+        activations,
+        2,
+        "Enter should not activate Zotero's 20-item selection",
+      );
+
+      await pane.selectItems([items[0].id], true);
+      press("Delete");
+      await waitFor(
+        () => deletions.length === 1,
+        "Delete should use Zotero's selected-item deletion action",
+      );
+      press(
+        "Delete",
+        win.navigator.platform.startsWith("Mac")
+          ? { metaKey: true }
+          : { shiftKey: true },
+      );
+      await waitFor(
+        () => deletions.length === 2,
+        "The platform force modifier should be bridged to Zotero",
+      );
+      assert.deepEqual(deletions, [false, true]);
+    } finally {
+      paneActions.viewItems = originalViewItems;
+      paneActions.deleteSelectedItems = originalDeleteSelectedItems;
+      if (grid.hidden) toggle();
+      for (const item of items) {
+        if (item.id) await item.eraseTx();
+      }
+    }
+  });
+
   it("renders tiles in finite chunks and appends the next chunk at the sentinel", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");

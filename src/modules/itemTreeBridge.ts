@@ -54,6 +54,23 @@ export class ItemTreeBridge {
     }
   }
 
+  async activateSelectedItems(): Promise<void> {
+    const itemIDs = this.getSelectedIDs();
+    if (!itemIDs.length || itemIDs.length >= ACTIVATION_ITEM_LIMIT) return;
+    const items = await Zotero.Items.getAsync(itemIDs);
+    if (items.length) {
+      await this.win.ZoteroPane.viewItems(
+        items,
+        new this.win.KeyboardEvent("keydown", { key: "Enter" }),
+      );
+    }
+  }
+
+  async deleteSelectedItems(force: boolean): Promise<void> {
+    if (!this.getSelectedIDs().length) return;
+    await this.win.ZoteroPane.deleteSelectedItems(force);
+  }
+
   /** Call after showing the native tree, when DOM measurements are available. */
   refreshLayout(): void {
     // Hidden selection/scroll updates can leave the windowed list's cached
@@ -91,3 +108,5 @@ export class ItemTreeBridge {
     for (const removeListener of this.removeListeners) removeListener();
   }
 }
+
+const ACTIVATION_ITEM_LIMIT = 20;
