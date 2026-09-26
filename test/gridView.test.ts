@@ -304,10 +304,6 @@ describe("grid view", function () {
     const originallyHidden = grid.hidden;
     const toggle = () => button.dispatchEvent(new win.Event("command"));
     const items = Array.from({ length: 3 }, () => new Zotero.Item("book"));
-    const actions = pane as unknown as {
-      deleteSelectedItems: (force?: boolean) => Promise<void>;
-    };
-    const originalDelete = actions.deleteSelectedItems;
     const waitFor = async (condition: () => boolean) => {
       const deadline = Date.now() + 3000;
       while (!condition() && Date.now() < deadline)
@@ -333,11 +329,6 @@ describe("grid view", function () {
       await waitFor(
         () => pane.getSelectedItems(true)[0] === Number(middle.dataset.itemId),
       );
-      actions.deleteSelectedItems = async () => {
-        await items
-          .find((item) => item.id === Number(middle.dataset.itemId))!
-          .eraseTx();
-      };
       grid.dispatchEvent(
         new win.KeyboardEvent("keydown", {
           key: "Delete",
@@ -346,7 +337,14 @@ describe("grid view", function () {
         }),
       );
       await waitFor(
-        () => grid.getAttribute("aria-activedescendant") === first.id,
+        () =>
+          !grid.querySelector(`[data-item-id="${middle.dataset.itemId}"]`) &&
+          grid.getAttribute("aria-activedescendant") === first.id,
+      );
+      assert.isTrue(
+        items.find((item) => item.id === Number(middle.dataset.itemId))!
+          .deleted,
+        "The real Zotero deletion action moves the item to the trash",
       );
       await Zotero.Promise.delay(250);
       assert.equal(
@@ -368,7 +366,6 @@ describe("grid view", function () {
         Number(last.dataset.itemId),
       ]);
     } finally {
-      actions.deleteSelectedItems = originalDelete;
       if (grid.hidden !== originallyHidden) toggle();
       for (const item of items)
         if (item.id && Zotero.Items.get(item.id)) await item.eraseTx();
@@ -1773,9 +1770,10 @@ describe("grid view", function () {
       for (const item of items) {
         assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
       }
-      assert.strictEqual(
-        grid.querySelector(`[data-item-id="${items[0].id}"]`),
-        firstEntry,
+      assert.equal(
+        grid.querySelector(`[data-item-id="${items[0].id}"] .grid-view-title`)
+          ?.textContent,
+        "Reader tab updated title",
       );
       assert.equal(grid.scrollTop, scrollTop);
 
