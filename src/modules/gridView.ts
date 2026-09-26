@@ -140,8 +140,11 @@ export class GridView {
   };
 
   refreshCovers(): void {
+    // The Cover column can be visible independently of the grid in this window.
+    // Redraw it even when the grid is active so both presentations pick up the
+    // newly selected lookup sources without requiring a view switch.
+    this.tree.refreshRows();
     if (getPref("enableGridView")) this.scheduleSync();
-    else this.tree.refreshRows();
   }
 
   private cancelSync(): void {

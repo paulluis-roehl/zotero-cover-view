@@ -3,6 +3,7 @@ import { BasicTool } from "zotero-plugin-toolkit";
 import { registerCoverColumn } from "../src/modules/coverColumn";
 import { CoverProvider } from "../src/modules/coverProvider";
 import { GridRenderer } from "../src/modules/gridRenderer";
+import { GridView } from "../src/modules/gridView";
 import { clearPref, getPref, setPref } from "../src/utils/prefs";
 
 const metadataPref = "fetchMetadataCover";
@@ -403,6 +404,29 @@ describe("opt-in metadata cover lookup", function () {
     setPref("fetchISBNCover", false);
     CoverProvider.cacheCover(item);
     placeholder(await CoverProvider.getCover(item.id));
+  });
+
+  it("redraws the Cover column on a cover-setting change even with the grid active", function () {
+    const originalGridPref = getPref("enableGridView");
+    let rowRefreshes = 0;
+    let gridRefreshes = 0;
+    const view = {
+      tree: { refreshRows: () => rowRefreshes++ },
+      scheduleSync: () => gridRefreshes++,
+    } as unknown as GridView;
+    try {
+      setPref("enableGridView", true);
+      GridView.prototype.refreshCovers.call(view);
+      assert.equal(rowRefreshes, 1);
+      assert.equal(gridRefreshes, 1);
+
+      setPref("enableGridView", false);
+      GridView.prototype.refreshCovers.call(view);
+      assert.equal(rowRefreshes, 2);
+      assert.equal(gridRefreshes, 1);
+    } finally {
+      setPref("enableGridView", originalGridPref);
+    }
   });
 
   it("uses the same resolved cover in the grid and Cover column without eager grid requests", async function () {
