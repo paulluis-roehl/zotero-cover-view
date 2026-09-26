@@ -25,7 +25,9 @@ export class GridView {
   private focusedItemID?: number;
   private selectionAnchorID?: number;
   private selectedIDs: number[] = [];
+  private intendedSelection: number[] = [];
   private pendingSelections = 0;
+  private selectionWrites: Promise<void> = Promise.resolve();
   private focusOwner?: "grid" | "tree";
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
@@ -139,41 +141,60 @@ export class GridView {
     }
   }
 
-  private async selectItems(itemIDs: number[]): Promise<void> {
-    this.pendingSelections++;
-    try {
-      await this.tree.selectItems(itemIDs);
-      this.selectedIDs = this.tree.getSelectedIDs();
-      if (getPref("enableGridView")) {
-        this.renderer.setSelection(this.selectedIDs);
-      }
-    } finally {
-      this.pendingSelections--;
+  private transitionSelection(
+    itemID: number,
+    modifiers: GridSelectionModifiers,
+    action: "click" | "navigate" | "toggle",
+  ): void {
+    if (!this.pendingSelections) {
+      this.intendedSelection = this.tree.getSelectedIDs();
     }
+    const anchorID = this.getSelectionAnchor();
+    this.focusedItemID = itemID;
+    this.renderer.setFocusedItem(itemID, action === "navigate");
+
+    if (action === "toggle") {
+      this.intendedSelection = this.toggleSelection(itemID);
+    } else if (modifiers.shift) {
+      const range = this.getRange(anchorID, itemID);
+      this.intendedSelection = modifiers.primary
+        ? this.addToSelection(range)
+        : range;
+    } else if (modifiers.primary && action === "navigate") {
+      this.selectionAnchorID = itemID;
+      return;
+    } else {
+      this.selectionAnchorID = itemID;
+      this.intendedSelection = modifiers.primary
+        ? this.toggleSelection(itemID)
+        : [itemID];
+    }
+
+    const selection = [...this.intendedSelection];
+    this.pendingSelections++;
+    this.selectionWrites = this.selectionWrites.then(async () => {
+      try {
+        await this.tree.selectItems(selection);
+      } catch (error) {
+        ztoolkit.log("Failed to select grid item", itemID, error);
+      } finally {
+        this.selectedIDs = this.tree.getSelectedIDs();
+        this.pendingSelections--;
+        if (!this.pendingSelections) {
+          this.intendedSelection = [...this.selectedIDs];
+        }
+        if (getPref("enableGridView")) {
+          this.renderer.setSelection(this.selectedIDs);
+        }
+      }
+    });
   }
 
   private readonly selectClickedItem = (
     itemID: number,
     modifiers: GridSelectionModifiers,
   ): void => {
-    this.focusedItemID = itemID;
-    this.renderer.setFocusedItem(itemID);
-    const anchorID = this.getSelectionAnchor();
-    let selectedIDs: number[];
-    if (modifiers.shift) {
-      const range = this.getRange(anchorID, itemID);
-      selectedIDs = modifiers.primary ? this.addToSelection(range) : range;
-    } else if (modifiers.primary) {
-      this.selectionAnchorID = itemID;
-      selectedIDs = this.toggleSelection(itemID);
-    } else {
-      this.selectionAnchorID = itemID;
-      selectedIDs = [itemID];
-    }
-    void this.selectItems(selectedIDs).catch((error) => {
-      ztoolkit.log("Failed to select grid item", itemID, error);
-      this.resynchronizeSelection();
-    });
+    this.transitionSelection(itemID, modifiers, "click");
   };
 
   private readonly ensureGridFocus = (): void => {
@@ -229,15 +250,10 @@ export class GridView {
       case "toggle-selection":
         this.ensureGridFocus();
         if (this.focusedItemID === undefined) return;
-        void this.selectItems(this.toggleSelection(this.focusedItemID)).catch(
-          (error) => {
-            ztoolkit.log(
-              "Failed to toggle focused grid item selection",
-              this.focusedItemID,
-              error,
-            );
-            this.resynchronizeSelection();
-          },
+        this.transitionSelection(
+          this.focusedItemID,
+          { primary: false, shift: false },
+          "toggle",
         );
         return;
       case "delete":
@@ -283,24 +299,7 @@ export class GridView {
     if (destinationID === undefined || destinationID === this.focusedItemID)
       return;
 
-    const anchorID = this.getSelectionAnchor();
-    this.focusedItemID = destinationID;
-    this.renderer.setFocusedItem(destinationID, true);
-    if (modifiers.primary && !modifiers.shift) {
-      this.selectionAnchorID = destinationID;
-      return;
-    }
-
-    const selectedIDs = modifiers.shift
-      ? modifiers.primary
-        ? this.addToSelection(this.getRange(anchorID, destinationID))
-        : this.getRange(anchorID, destinationID)
-      : [destinationID];
-    if (!modifiers.shift) this.selectionAnchorID = destinationID;
-    void this.selectItems(selectedIDs).catch((error) => {
-      ztoolkit.log("Failed to navigate to grid item", destinationID, error);
-      this.resynchronizeSelection();
-    });
+    this.transitionSelection(destinationID, modifiers, "navigate");
   };
 
   private getSelectionAnchor(): number {
@@ -318,19 +317,21 @@ export class GridView {
   }
 
   private addToSelection(itemIDs: number[]): number[] {
-    return [...new Set([...this.tree.getSelectedIDs(), ...itemIDs])];
+    return [...new Set([...this.intendedSelection, ...itemIDs])];
   }
 
   private toggleSelection(itemID: number): number[] {
-    const selectedIDs = new Set(this.tree.getSelectedIDs());
+    const selectedIDs = new Set(this.intendedSelection);
     if (selectedIDs.has(itemID)) selectedIDs.delete(itemID);
     else selectedIDs.add(itemID);
     return [...selectedIDs];
   }
 
   private resynchronizeSelection(): void {
+    this.selectedIDs = this.tree.getSelectedIDs();
+    if (!this.pendingSelections) this.intendedSelection = [...this.selectedIDs];
     if (getPref("enableGridView")) {
-      this.renderer.setSelection(this.tree.getSelectedIDs());
+      this.renderer.setSelection(this.selectedIDs);
     }
   }
 
@@ -348,6 +349,7 @@ export class GridView {
       (id) => !this.selectedIDs.includes(id),
     );
     this.selectedIDs = selectedIDs;
+    if (!this.pendingSelections) this.intendedSelection = [...selectedIDs];
 
     if (
       preserveFocusOnEntry &&
