@@ -12,6 +12,7 @@ This makes it more visually appealing especially for books (as opposed to academ
   - image attachment
   - first page of `.epub` or `.pdf` attachment
   - settings option: fetch missing covers through ISBN
+  - settings option: fetch missing covers through metadata
 - **Grid view**
   - display items in a grid instead of a list
   - adds a button to the main item bar to switch between grid view and list view
@@ -41,7 +42,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] support `.djvu`
 - [x] auto-generate default cover based on title
 - [x] try to fetch cover from internet (based on isbn)
-  - [ ] extend to include non-isbn metadata
+  - [x] extend to include non-isbn metadata
 - [ ] implement precedence setting
 
 **Grid view**
