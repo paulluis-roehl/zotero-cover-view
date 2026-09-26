@@ -40,7 +40,8 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] support `.jpg` / `.png`
 - [ ] support `.djvu`
 - [x] auto-generate default cover based on title
-- [x] try to fetch cover from internet
+- [x] try to fetch cover from internet (based on isbn)
+  - [ ] extend to include non-isbn metadata
 - [ ] implement precedence setting
 
 **Grid view**
