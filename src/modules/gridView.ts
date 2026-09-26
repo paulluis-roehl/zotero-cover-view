@@ -252,10 +252,10 @@ export class GridView {
   ): void => {
     switch (command) {
       case "activate":
-        void this.tree.activateSelectedItems().catch((error) => {
-          ztoolkit.log("Failed to activate selected grid items", error);
-          this.resynchronizeSelection();
-        });
+        this.runSelectedItemCommand(
+          () => this.tree.activateSelectedItems(),
+          "Failed to activate selected grid items",
+        );
         return;
       case "toggle-selection":
         this.ensureGridFocus();
@@ -267,14 +267,33 @@ export class GridView {
         );
         return;
       case "delete":
-        void this.tree
-          .deleteSelectedItems(options.forceDelete ?? false)
-          .catch((error) => {
-            ztoolkit.log("Failed to delete selected grid items", error);
-            this.resynchronizeSelection();
-          });
+        this.runSelectedItemCommand(
+          () => this.tree.deleteSelectedItems(options.forceDelete ?? false),
+          "Failed to delete selected grid items",
+        );
     }
   };
+
+  private runSelectedItemCommand(
+    action: () => Promise<void>,
+    errorMessage: string,
+  ): void {
+    const generation = this.selectionGeneration;
+    const run = async () => {
+      if (generation !== this.selectionGeneration) return;
+      try {
+        await action();
+      } catch (error) {
+        ztoolkit.log(errorMessage, error);
+        this.resynchronizeSelection();
+      }
+    };
+    if (this.pendingSelections) {
+      this.selectionWrites = this.selectionWrites.then(run);
+    } else {
+      void run();
+    }
+  }
 
   private readonly navigate = (
     command: GridNavigationCommand,

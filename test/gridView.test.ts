@@ -791,7 +791,23 @@ describe("grid view", function () {
       );
       await waitFor(
         () => grid.getAttribute("aria-activedescendant") === focused.id,
-        "Primary-click should focus an unselected tile",
+        "Primary-click should focus the tile",
+      );
+      await waitFor(
+        () => pane.getSelectedItems(true).includes(items[2].id),
+        "Primary-click should add the focused tile",
+      );
+      focused.dispatchEvent(
+        new win.MouseEvent("click", {
+          bubbles: true,
+          ...(win.navigator.platform.startsWith("Mac")
+            ? { metaKey: true }
+            : { ctrlKey: true }),
+        }),
+      );
+      await waitFor(
+        () => !pane.getSelectedItems(true).includes(items[2].id),
+        "Primary-click should leave focus on the unselected tile",
       );
 
       press("Enter");
@@ -1558,6 +1574,116 @@ describe("grid view", function () {
       for (const item of items) if (item.id) await item.eraseTx();
     }
   });
+
+  for (const command of ["Enter", "Delete"] as const) {
+    for (const rejectSelection of [false, true]) {
+      it(`${command} ${rejectSelection ? "cancels after" : "waits for"} a pending grid selection`, async function () {
+        const win = Zotero.getMainWindow()!;
+        const pane = win.ZoteroPane;
+        const grid = win.document.getElementById("cover-view-grid")!;
+        const button = win.document.getElementById("cover-view-toggle")!;
+        const originallyHidden = grid.hidden;
+        const toggle = () => button.dispatchEvent(new win.Event("command"));
+        const items = Array.from({ length: 3 }, () => new Zotero.Item("book"));
+        const originalSelectItems = pane.selectItems;
+        const actions = pane as unknown as {
+          viewItems: (items: Zotero.Item[]) => Promise<void>;
+          deleteSelectedItems: (force?: boolean) => void;
+        };
+        const originalViewItems = actions.viewItems;
+        const originalDeleteSelectedItems = actions.deleteSelectedItems;
+        const actedOn: number[][] = [];
+        const writes: number[][] = [];
+        let release: (() => void) | undefined;
+        let reject: ((error: Error) => void) | undefined;
+        const waitFor = async (condition: () => boolean) => {
+          const deadline = Date.now() + 3000;
+          while (!condition() && Date.now() < deadline)
+            await Zotero.Promise.delay(20);
+          assert.isTrue(condition());
+        };
+        const press = () =>
+          grid.dispatchEvent(
+            new win.KeyboardEvent("keydown", {
+              key: command,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+
+        try {
+          for (const [index, item] of items.entries()) {
+            item.setField("title", `Queued command ${Date.now()} ${index}`);
+            await item.saveTx();
+          }
+          if (grid.hidden) toggle();
+          await waitFor(() =>
+            items.every((item) =>
+              grid.querySelector(`[data-item-id="${item.id}"]`),
+            ),
+          );
+          await pane.selectItems([items[0].id], true);
+          await waitFor(
+            () =>
+              !!grid.querySelector(`[data-item-id="${items[0].id}"].selected`),
+          );
+          const pending = new Promise<void>((resolve, rejectPending) => {
+            release = resolve;
+            reject = rejectPending;
+          });
+          let first = true;
+          pane.selectItems = async (...args) => {
+            writes.push([...args[0]]);
+            if (first) {
+              first = false;
+              await pending;
+            }
+            return originalSelectItems.apply(pane, args);
+          };
+          actions.viewItems = async (selected) => {
+            actedOn.push(selected.map((item) => item.id));
+          };
+          actions.deleteSelectedItems = () => {
+            actedOn.push(pane.getSelectedItems(true));
+          };
+          const click = (item: Zotero.Item) =>
+            grid
+              .querySelector<HTMLElement>(`[data-item-id="${item.id}"]`)!
+              .dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+
+          click(items[1]);
+          press();
+          click(items[2]);
+          await waitFor(() => writes.length === 1);
+          assert.deepEqual(writes, [[items[1].id]]);
+          assert.isEmpty(actedOn, "Command must not act on the old selection");
+          if (rejectSelection) reject!(new Error("Selection rejected"));
+          else release!();
+
+          if (rejectSelection) {
+            await Zotero.Promise.delay(100);
+            assert.deepEqual(writes, [[items[1].id]]);
+            assert.isEmpty(actedOn, "Failed selection cancels the command");
+            assert.deepEqual(pane.getSelectedItems(true), [items[0].id]);
+            press();
+            await waitFor(() => actedOn.length === 1);
+            assert.deepEqual(actedOn, [[items[0].id]]);
+          } else {
+            await waitFor(() => actedOn.length === 1 && writes.length === 2);
+            assert.deepEqual(actedOn, [[items[1].id]]);
+            assert.deepEqual(writes[1], [items[2].id]);
+          }
+        } finally {
+          release?.();
+          pane.selectItems = originalSelectItems;
+          actions.viewItems = originalViewItems;
+          actions.deleteSelectedItems = originalDeleteSelectedItems;
+          if (grid.hidden !== originallyHidden) toggle();
+          for (const item of items) if (item.id) await item.eraseTx();
+        }
+      });
+    }
+  }
 
   it("navigates displayed items horizontally through the focused grid host", async function () {
     const win = Zotero.getMainWindow()!;
