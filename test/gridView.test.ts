@@ -1200,10 +1200,15 @@ describe("grid view", function () {
         tile,
       );
 
-      toggle();
-      setPref("tileSize", 120);
+      setPref("tileSize", 360);
       await waitFor(
-        () => grid.style.getPropertyValue("--cover-view-tile-size") === "120px",
+        () => grid.style.getPropertyValue("--cover-view-tile-size") === "360px",
+      );
+
+      toggle();
+      setPref("tileSize", 90);
+      await waitFor(
+        () => grid.style.getPropertyValue("--cover-view-tile-size") === "90px",
       );
       toggle();
       assert.strictEqual(

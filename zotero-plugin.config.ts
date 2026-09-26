@@ -37,6 +37,12 @@ export default defineConfig({
         target: "firefox115",
         outfile: `.scaffold/build/addon/content/scripts/${pkg.config.addonRef}.js`,
       },
+      {
+        entryPoints: ["src/preferencesPane.ts"],
+        bundle: true,
+        target: "firefox115",
+        outfile: ".scaffold/build/addon/content/scripts/preferences.js",
+      },
     ],
   },
 

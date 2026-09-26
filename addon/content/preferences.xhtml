@@ -13,20 +13,37 @@
     preference="showAuthors"
     data-l10n-id="pref-show-authors"
   />
-  <html:div style="margin: 12px 0">
+  <html:div class="cover-view-tile-size-setting">
     <html:label
       for="zotero-prefpane-__addonRef__-tile-size"
       data-l10n-id="pref-tile-size"
     ></html:label>
+    <html:div class="cover-view-tile-size-control">
+      <html:input
+        id="zotero-prefpane-__addonRef__-tile-size"
+        type="range"
+        min="90"
+        max="360"
+        step="9"
+        preference="tileSize"
+      />
+      <html:div class="cover-view-tile-size-marks" aria-hidden="true">
+        <html:span style="left: 0%">50%</html:span>
+        <html:span style="left: 33.333%">100%</html:span>
+        <html:span style="left: 66.667%">150%</html:span>
+        <html:span style="left: 100%">200%</html:span>
+      </html:div>
+    </html:div>
     <html:input
-      id="zotero-prefpane-__addonRef__-tile-size"
-      type="range"
-      min="100"
-      max="300"
-      step="10"
-      preference="tileSize"
-      style="display: block; width: 240px; max-width: 100%"
+      id="zotero-prefpane-__addonRef__-tile-size-percent"
+      class="cover-view-tile-size-percent"
+      type="number"
+      min="50"
+      max="200"
+      step="5"
+      data-l10n-id="pref-tile-size-percent"
     />
+    <html:span aria-hidden="true">%</html:span>
   </html:div>
   <checkbox
     id="zotero-prefpane-__addonRef__-fetch-isbn-cover"

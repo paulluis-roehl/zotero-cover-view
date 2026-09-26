@@ -12,5 +12,6 @@ export type FluentMessageId =
   | 'pref-help'
   | 'pref-show-authors'
   | 'pref-tile-size'
+  | 'pref-tile-size-percent'
   | 'pref-title'
   | 'prefs-title';

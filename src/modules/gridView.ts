@@ -136,7 +136,7 @@ export class GridView {
     const size = getPref("tileSize");
     this.ui.host.style.setProperty(
       "--cover-view-tile-size",
-      `${Number.isFinite(size) ? Math.max(100, Math.min(300, size)) : 180}px`,
+      `${Number.isFinite(size) ? Math.max(90, Math.min(360, size)) : 180}px`,
     );
   }
 
