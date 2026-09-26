@@ -36,6 +36,7 @@ describe("opt-in metadata cover lookup", function () {
       }>;
       displayCreator?: string;
       isbn?: string;
+      date?: string;
       attachments?: Zotero.Item[];
     } = {},
   ): Zotero.Item {
@@ -46,6 +47,7 @@ describe("opt-in metadata cover lookup", function () {
       creatorData,
       displayCreator,
       isbn = "",
+      date = "",
       attachments = [],
     } = options;
     Zotero.Items.get = (() => attachments) as typeof originalGet;
@@ -57,7 +59,13 @@ describe("opt-in metadata cover lookup", function () {
       isRegularItem: () => true,
       getDisplayTitle: () => title,
       getField: (field: string) =>
-        field === "ISBN" ? isbn : field === "title" ? title : "",
+        field === "ISBN"
+          ? isbn
+          : field === "title"
+            ? title
+            : field === "date"
+              ? date
+              : "",
       getCreators: () =>
         creators.map((name) => ({
           firstName: name.split(" ")[0],
@@ -425,6 +433,55 @@ describe("opt-in metadata cover lookup", function () {
     placeholder(await CoverProvider.getCover(item.id));
   });
 
+  it("replaces a changed placeholder and then uses an edited ISBN", async function () {
+    const first = book({ title: "Original", date: "2020" });
+    CoverProvider.cacheCover(first);
+    const initial = await CoverProvider.getCover(first.id);
+    assert.include(decodeURIComponent(initial!), "Original");
+    assert.include(decodeURIComponent(initial!), ">2020</text>");
+
+    const edited = book({
+      title: "Revised",
+      creators: ["New Author"],
+      date: "2024",
+    });
+    CoverProvider.cacheCover(edited);
+    const changed = await CoverProvider.getCover(edited.id);
+    assert.include(decodeURIComponent(changed!), "Revised");
+    assert.include(decodeURIComponent(changed!), "New Author");
+    assert.include(decodeURIComponent(changed!), ">2024</text>");
+    assert.notEqual(changed, initial);
+    assert.isEmpty(requests);
+
+    setPref("fetchISBNCover", true);
+    const withISBN = book({
+      title: "Revised",
+      creators: ["New Author"],
+      isbn: recordedISBN,
+    });
+    CoverProvider.cacheCover(withISBN);
+    assert.include(
+      (await CoverProvider.getCover(withISBN.id))!,
+      `${recordedISBN}.jpg`,
+    );
+  });
+
+  it("reconsiders metadata lookup when an item becomes a book", async function () {
+    setPref(metadataPref, true);
+    const section = book({ type: "bookSection" });
+    CoverProvider.cacheCover(section);
+    placeholder(await CoverProvider.getCover(section.id));
+    assert.isEmpty(requests);
+
+    const converted = book();
+    CoverProvider.cacheCover(converted);
+    assert.include(
+      (await CoverProvider.getCover(converted.id))!,
+      `${editionKey}.jpg`,
+    );
+    assert.isTrue(requests.some((url) => url.includes("search.json")));
+  });
+
   it("redraws the Cover column on a cover-setting change even with the grid active", function () {
     const originalGridPref = getPref("enableGridView");
     let rowRefreshes = 0;
@@ -520,6 +577,39 @@ describe("opt-in metadata cover lookup", function () {
         requests.filter((url) => url.includes("search.json")).length,
         1,
       );
+      setPref(metadataPref, false);
+      const edited = book({ title: "A New Title", creators: ["New Author"] });
+      Zotero.Items.get = ((id: number | number[]) =>
+        id === edited.id ? edited : []) as typeof originalGet;
+      CoverProvider.invalidate(edited.id, { discardPDF: false });
+      renderer.refreshCover(edited.id);
+      const updatedTile = host.querySelector<HTMLElement>(".grid-view-item")!;
+      assert.equal(
+        updatedTile.querySelector(".grid-view-title")!.textContent,
+        "A New Title",
+      );
+      nearViewport?.(
+        [
+          {
+            isIntersecting: true,
+            target: updatedTile,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
+      );
+      const updatedData = column!.dataProvider(edited, "cover");
+      const updatedCell = column!.renderCell(
+        0,
+        updatedData,
+        { className: "cover" },
+        false,
+        win.document,
+      );
+      await CoverProvider.getCover(edited.id);
+      await Zotero.Promise.delay(0);
+      const gridCover = updatedTile.querySelector("img")!.src;
+      assert.include(decodeURIComponent(gridCover), "A New Title");
+      assert.equal(updatedCell.querySelector("img")!.src, gridCover);
     } finally {
       renderer.destroy();
       Zotero.ItemTreeManager.registerColumns = originalRegister;

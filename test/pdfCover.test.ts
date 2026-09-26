@@ -1,4 +1,5 @@
 import { assert } from "chai";
+import { CoverProvider } from "../src/modules/coverProvider";
 import {
   cachePDFCover,
   deleteCachedPDFCover,
@@ -87,6 +88,21 @@ describe("PDF cover rendering", function () {
       assert.isNull(await getCachedPDFCover(itemID, "v2"));
       await deleteCachedPDFCover(itemID);
       assert.isNull(await getCachedPDFCover(itemID, "v1"));
+    } finally {
+      await deleteCachedPDFCover(itemID);
+    }
+  });
+
+  it("keeps a PDF cover file on metadata-only invalidation", async function () {
+    const itemID = Math.floor(Math.random() * 1_000_000_000);
+    const cover = "data:image/png;base64,iVBORw0KGgo=";
+    try {
+      await cachePDFCover(itemID, "unchanged-attachment", cover);
+      CoverProvider.invalidate(itemID, { discardPDF: false });
+      assert.equal(
+        await getCachedPDFCover(itemID, "unchanged-attachment"),
+        cover,
+      );
     } finally {
       await deleteCachedPDFCover(itemID);
     }

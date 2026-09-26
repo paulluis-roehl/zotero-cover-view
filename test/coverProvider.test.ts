@@ -331,6 +331,38 @@ describe("Cover provider", function () {
     }
   });
 
+  it("rejects an old lookup when metadata and lookup settings change together", async function () {
+    const originalFindCover = CoverProvider.findCover;
+    const originalMetadataPref = getPref("fetchMetadataCover");
+    const state = { title: "Before" };
+    const item = {
+      id: 103,
+      getDisplayTitle: () => state.title,
+      getField: () => "",
+    } as unknown as Zotero.Item;
+    let resolveOld!: (cover: string) => void;
+    let calls = 0;
+    CoverProvider.findCover = (() => {
+      calls++;
+      return calls === 1
+        ? new Promise<string>((resolve) => (resolveOld = resolve))
+        : Promise.resolve("new-cover");
+    }) as typeof CoverProvider.findCover;
+    try {
+      CoverProvider.cacheCover(item);
+      const old = CoverProvider.getCover(item.id);
+      state.title = "After";
+      setPref("fetchMetadataCover", !originalMetadataPref);
+      CoverProvider.cacheCover(item);
+      resolveOld("old-cover");
+      assert.isNull(await old);
+      assert.equal(await CoverProvider.getCover(item.id), "new-cover");
+    } finally {
+      CoverProvider.findCover = originalFindCover;
+      setPref("fetchMetadataCover", originalMetadataPref);
+    }
+  });
+
   it("refreshes a cached cover when ISBN fetching changes", async function () {
     const originalFindCover = CoverProvider.findCover;
     let calls = 0;
@@ -380,6 +412,84 @@ describe("Cover provider", function () {
       observer!("modify", "item", [attachment.id], {});
       assert.isNull(await CoverProvider.getCover(42));
     } finally {
+      CoverProvider.unregisterNotifier();
+      CoverProvider.findCover = originalFindCover;
+    }
+  });
+
+  it("refreshes only changed cover metadata, not tags", async function () {
+    let observer: _ZoteroTypes.Notifier.Notify | undefined;
+    Zotero.Notifier.registerObserver = ((ref) => {
+      observer = ref.notify;
+      return "metadata-test-notifier";
+    }) as typeof Zotero.Notifier.registerObserver;
+    const originalFindCover = CoverProvider.findCover;
+    const state = {
+      title: "Before",
+      creator: "Old Author",
+      date: "2020",
+      isbn: "",
+    };
+    const item = {
+      id: 120,
+      itemType: "book",
+      firstCreator: state.creator,
+      getDisplayTitle: () => state.title,
+      getField: (field: string) =>
+        field === "title"
+          ? state.title
+          : field === "date"
+            ? state.date
+            : state.isbn,
+      getCreatorsJSON: () => [
+        { lastName: state.creator, creatorType: "author" },
+      ],
+      isRegularItem: () => true,
+      getAttachments: () => [],
+    } as unknown as Zotero.Item;
+    Zotero.Items.get = ((id: number) =>
+      id === item.id ? item : false) as typeof originalGet;
+    const changes: number[] = [];
+    const stop = CoverProvider.onCoverChanged((id) => changes.push(id));
+    let lookups = 0;
+    CoverProvider.findCover = (async () => {
+      lookups++;
+      return `cover-${lookups}`;
+    }) as typeof CoverProvider.findCover;
+    try {
+      CoverProvider.registerNotifier();
+      CoverProvider.cacheCover(item);
+      assert.equal(await CoverProvider.getCover(item.id), "cover-1");
+      observer!("modify", "item", [item.id], {
+        [item.id]: { changed: { tags: true } },
+      });
+      CoverProvider.cacheCover(item);
+      assert.equal(await CoverProvider.getCover(item.id), "cover-1");
+      for (const field of [
+        "title",
+        "creator",
+        "date",
+        "isbn",
+        "type",
+      ] as const) {
+        if (field === "title") state.title = "After";
+        if (field === "creator") {
+          state.creator = "New Author";
+          Object.assign(item, { firstCreator: state.creator });
+        }
+        if (field === "date") state.date = "2024";
+        if (field === "isbn") state.isbn = "0385472579";
+        if (field === "type")
+          Object.assign(item, { itemType: "journalArticle" });
+        observer!("modify", "item", [item.id], {});
+        assert.isNull(await CoverProvider.getCover(item.id));
+        CoverProvider.cacheCover(item);
+        assert.equal(await CoverProvider.getCover(item.id), `cover-${lookups}`);
+      }
+      assert.equal(changes.length, 5);
+      assert.equal(lookups, 6);
+    } finally {
+      stop();
       CoverProvider.unregisterNotifier();
       CoverProvider.findCover = originalFindCover;
     }

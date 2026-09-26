@@ -20,20 +20,29 @@ export class CoverProvider {
       generation: number;
       fetchISBNCover: boolean;
       fetchMetadataCover: boolean;
+      metadata: string;
       promise: Promise<string | null>;
     }
   >();
   private static generations = new Map<number, number>();
   private static attachmentParents = new Map<number, number>();
   private static notifierID: string | undefined;
+  private static listeners = new Set<(itemID: number) => void>();
+
+  static onCoverChanged(listener: (itemID: number) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
 
   static cacheCover(item: Zotero.Item): void {
     const fetchISBNCover = this.shouldFetchISBNCover();
     const fetchMetadataCover = this.shouldFetchMetadataCover();
     const cached = this.cache.get(item.id);
+    const metadata = this.metadataSignature(item);
     if (
       cached?.fetchISBNCover !== fetchISBNCover ||
-      cached?.fetchMetadataCover !== fetchMetadataCover
+      cached?.fetchMetadataCover !== fetchMetadataCover ||
+      cached?.metadata !== metadata
     ) {
       if (cached) {
         this.generations.set(item.id, this.currentGeneration(item.id) + 1);
@@ -61,8 +70,13 @@ export class CoverProvider {
         generation,
         fetchISBNCover,
         fetchMetadataCover,
+        metadata,
         promise: cover,
       });
+      // Native row rendering may observe the edited item before its notifier
+      // callback. Still refresh the grid when this happens first.
+      if (cached && cached.metadata !== metadata)
+        this.emitCoverChanged(item.id);
     }
   }
 
@@ -194,14 +208,42 @@ export class CoverProvider {
     this.attachmentParents.clear();
   }
 
+  private static metadataSignature(item: Zotero.Item): string {
+    return JSON.stringify([
+      item.itemType,
+      item.getDisplayTitle?.(),
+      item.getField?.("title"),
+      item.firstCreator,
+      item.getCreatorsJSON?.(),
+      item.getField?.("date"),
+      item.getField?.("ISBN"),
+    ]);
+  }
+
   static registerNotifier(): void {
     if (this.notifierID) return;
     this.notifierID = Zotero.Notifier.registerObserver(
       {
-        notify: (_event, _type, ids, extraData) => {
+        notify: (event, _type, ids, extraData) => {
           for (const rawID of ids) {
             const id = Number(rawID);
             const attachment = Zotero.Items.get(id);
+            if (
+              event === "modify" &&
+              attachment &&
+              attachment.isRegularItem?.() &&
+              !attachment.parentItemID
+            ) {
+              const cached = this.cache.get(id);
+              if (
+                cached &&
+                cached.metadata !== this.metadataSignature(attachment)
+              ) {
+                this.invalidate(id, { discardPDF: false });
+                this.emitCoverChanged(id);
+              }
+              continue;
+            }
             const parentIDs = new Set<number>();
             const knownParent = this.attachmentParents.get(id);
             if (knownParent) parentIDs.add(knownParent);
@@ -222,7 +264,10 @@ export class CoverProvider {
             ]) {
               if (data?.[key]) parentIDs.add(Number(data[key]));
             }
-            for (const parentID of parentIDs) this.invalidate(parentID);
+            for (const parentID of parentIDs) {
+              this.invalidate(parentID);
+              this.emitCoverChanged(parentID);
+            }
           }
         },
       },
@@ -237,10 +282,17 @@ export class CoverProvider {
     this.notifierID = undefined;
   }
 
-  static invalidate(itemID: number): void {
+  static invalidate(
+    itemID: number,
+    { discardPDF = true }: { discardPDF?: boolean } = {},
+  ): void {
     this.generations.set(itemID, (this.generations.get(itemID) ?? 0) + 1);
     this.cache.delete(itemID);
-    void deleteCachedPDFCover(itemID);
+    if (discardPDF) void deleteCachedPDFCover(itemID);
+  }
+
+  private static emitCoverChanged(itemID: number): void {
+    for (const listener of this.listeners) listener(itemID);
   }
 
   private static currentGeneration(itemID: number): number {

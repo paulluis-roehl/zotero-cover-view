@@ -2191,9 +2191,10 @@ describe("grid view", function () {
       for (const item of items) {
         assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
       }
-      assert.strictEqual(
-        grid.querySelector(`[data-item-id="${items[0].id}"]`),
-        firstEntry,
+      assert.equal(
+        grid.querySelector(`[data-item-id="${items[0].id}"] .grid-view-title`)
+          ?.textContent,
+        "Reader tab updated title",
       );
       assert.equal(grid.scrollTop, scrollTop);
 

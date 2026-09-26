@@ -192,21 +192,10 @@ export class GridRenderer {
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
     const scrollTop = this.host.scrollTop;
-    const renderItems = items.map((item) => ({
-      item,
-      title: item.getDisplayTitle(),
-      authors: options.showAuthors ? item.firstCreator : "",
-    }));
-    const renderKey = JSON.stringify([
-      options.showAuthors,
-      getPref("fetchISBNCover"),
-      getPref("fetchMetadataCover"),
-      renderItems.map(({ item, title, authors }) => [
-        item.id,
-        title,
-        options.showAuthors ? authors : "",
-      ]),
-    ]);
+    const renderItems = items.map((item) =>
+      this.renderItem(item, options.showAuthors),
+    );
+    const renderKey = this.makeRenderKey(renderItems, options.showAuthors);
     if (renderKey === this.renderKey) return;
     this.renderKey = renderKey;
 
@@ -220,6 +209,44 @@ export class GridRenderer {
     this.renderChunk();
     this.updateActiveDescendant();
     this.host.scrollTop = scrollTop;
+  }
+
+  private makeRenderKey(items: GridRenderItem[], showAuthors: boolean): string {
+    return JSON.stringify([
+      showAuthors,
+      getPref("fetchISBNCover"),
+      getPref("fetchMetadataCover"),
+      items.map(({ item, title, authors }) => [
+        item.id,
+        title,
+        showAuthors ? authors : "",
+      ]),
+    ]);
+  }
+
+  private renderItem(item: Zotero.Item, showAuthors: boolean): GridRenderItem {
+    return {
+      item,
+      title: item.getDisplayTitle(),
+      authors: showAuthors ? item.firstCreator : "",
+    };
+  }
+
+  /** Replace only the edited tile; leave other covers and offscreen tiles alone. */
+  refreshCover(itemID: number): void {
+    const index = this.renderItems.findIndex(({ item }) => item.id === itemID);
+    if (index < 0) return;
+    const item = Zotero.Items.get(itemID);
+    if (!item || Array.isArray(item)) return;
+    const showAuthors = !!getPref("showAuthors");
+    this.renderItems[index] = this.renderItem(item, showAuthors);
+    this.renderKey = this.makeRenderKey(this.renderItems, showAuthors);
+    const oldEntry = this.entries.get(itemID);
+    if (!oldEntry) return;
+    this.coverObserver.unobserve(oldEntry);
+    const replacement = this.buildTile(this.renderItems[index], index);
+    oldEntry.replaceWith(replacement);
+    this.updateActiveDescendant();
   }
 
   private renderChunk(): void {

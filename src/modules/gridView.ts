@@ -7,6 +7,7 @@ import {
 } from "./gridRenderer";
 import { GridWindowUI } from "./gridWindowUI";
 import { ItemTreeBridge } from "./itemTreeBridge";
+import { CoverProvider } from "./coverProvider";
 import { getPref, observePrefs, setPref } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
@@ -22,6 +23,8 @@ export class GridView {
   private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
   private readonly tabObserverID: string;
+  private readonly stopCoverChanges: () => void;
+  private readonly pendingCoverIDs = new Set<number>();
   private syncTimer?: number;
   private focusFrame?: number;
   private readonly selectionTimer: number;
@@ -47,6 +50,14 @@ export class GridView {
       this.handleItemCommand,
     );
     this.tree.onItemsChanged(this.scheduleSync);
+    this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
+      this.tree.refreshRows();
+      if (this.win.Zotero_Tabs.selectedType !== "library") {
+        this.pendingCoverIDs.add(itemID);
+      } else if (getPref("enableGridView")) {
+        this.renderer.refreshCover(itemID);
+      }
+    });
     // Programmatic native selection changes do not emit row-provider updates.
     this.selectionTimer = win.setInterval(() => {
       if (!getPref("enableGridView") || this.pendingSelections) return;
@@ -63,6 +74,10 @@ export class GridView {
       {
         notify: (event, _type, ids) => {
           if (event === "select" && ids.some((id) => id === "zotero-pane")) {
+            for (const itemID of this.pendingCoverIDs) {
+              if (getPref("enableGridView")) this.renderer.refreshCover(itemID);
+            }
+            this.pendingCoverIDs.clear();
             this.renderer.refreshLayout();
           }
         },
@@ -123,6 +138,7 @@ export class GridView {
     this.win.document.removeEventListener("focusin", this.trackFocus);
     this.cancelSync();
     this.tree.destroy();
+    this.stopCoverChanges();
     Zotero.Notifier.unregisterObserver(this.tabObserverID);
 
     this.renderer.destroy();
