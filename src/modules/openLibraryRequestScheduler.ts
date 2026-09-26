@@ -139,7 +139,11 @@ async function requestOpenLibraryCover(
   url: string,
 ): Promise<OpenLibraryResponse> {
   const response = await Zotero.HTTP.request("GET", url, {
-    headers: { Accept: "image/jpeg" },
+    headers: {
+      Accept: url.startsWith("https://openlibrary.org/search.json")
+        ? "application/json"
+        : "image/jpeg",
+    },
     responseType: "arraybuffer",
     successCodes: [200, 403, 404, 429],
     timeout: 15_000,
