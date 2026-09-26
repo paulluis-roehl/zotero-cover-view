@@ -27,6 +27,7 @@ export class GridView {
   private selectedIDs: number[] = [];
   private intendedSelection: number[] = [];
   private pendingSelections = 0;
+  private selectionGeneration = 0;
   private selectionWrites: Promise<void> = Promise.resolve();
   private focusOwner?: "grid" | "tree";
 
@@ -171,16 +172,25 @@ export class GridView {
     }
 
     const selection = [...this.intendedSelection];
+    const generation = this.selectionGeneration;
     this.pendingSelections++;
     this.selectionWrites = this.selectionWrites.then(async () => {
       try {
-        await this.tree.selectItems(selection);
+        // A failed write invalidates all intents based on its expected result.
+        if (generation === this.selectionGeneration) {
+          await this.tree.selectItems(selection);
+        }
       } catch (error) {
+        this.selectionGeneration++;
+        this.selectionAnchorID = this.focusedItemID;
         ztoolkit.log("Failed to select grid item", itemID, error);
       } finally {
         this.selectedIDs = this.tree.getSelectedIDs();
         this.pendingSelections--;
-        if (!this.pendingSelections) {
+        if (
+          !this.pendingSelections ||
+          generation !== this.selectionGeneration
+        ) {
           this.intendedSelection = [...this.selectedIDs];
         }
         if (getPref("enableGridView")) {

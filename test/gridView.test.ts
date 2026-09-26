@@ -1471,6 +1471,94 @@ describe("grid view", function () {
     }
   });
 
+  it("recovers native selection and focus after rejecting a queued grid selection", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const items = Array.from({ length: 3 }, () => new Zotero.Item("book"));
+    const originalSelectItems = pane.selectItems;
+    const primaryKey = win.navigator.platform.startsWith("Mac")
+      ? { metaKey: true }
+      : { ctrlKey: true };
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(condition());
+    };
+    let rejectFirst: ((error: Error) => void) | undefined;
+    const writes: number[][] = [];
+
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Rejected selection ${Date.now()} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(() =>
+        items.every((item) =>
+          grid.querySelector(`[data-item-id="${item.id}"]`),
+        ),
+      );
+      const entries = items.map((item) =>
+        grid.querySelector<HTMLElement>(`[data-item-id="${item.id}"]`)!,
+      );
+      await pane.selectItems([items[0].id], true);
+      await waitFor(() => entries[0].getAttribute("aria-selected") === "true");
+      const failure = new Promise<void>((_resolve, reject) => {
+        rejectFirst = reject;
+      });
+      let first = true;
+      pane.selectItems = async (...args) => {
+        writes.push([...args[0]]);
+        if (first) {
+          first = false;
+          await failure;
+        }
+        return originalSelectItems.apply(pane, args);
+      };
+      const click = (entry: HTMLElement) =>
+        entry.dispatchEvent(
+          new win.MouseEvent("click", { bubbles: true, ...primaryKey }),
+        );
+
+      click(entries[1]);
+      click(entries[2]);
+      await waitFor(() => writes.length === 1);
+      assert.deepEqual(writes, [[items[0].id, items[1].id]]);
+      assert.equal(grid.getAttribute("aria-activedescendant"), entries[2].id);
+      rejectFirst!(new Error("Simulated native selection rejection"));
+      await waitFor(() => entries[2].getAttribute("aria-selected") === "false");
+      await Zotero.Promise.delay(50);
+      assert.deepEqual(
+        writes,
+        [[items[0].id, items[1].id]],
+        "Stale writes are cancelled",
+      );
+      assert.deepEqual(pane.getSelectedItems(true), [items[0].id]);
+      assert.deepEqual(
+        entries.map((entry) => entry.getAttribute("aria-selected")),
+        ["true", "false", "false"],
+      );
+      assert.equal(grid.getAttribute("aria-activedescendant"), entries[2].id);
+
+      // The next primary-click must start with the real native selection.
+      click(entries[2]);
+      await waitFor(() => writes.length === 2);
+      assert.deepEqual(writes[1], [items[0].id, items[2].id]);
+      await waitFor(() => entries[2].getAttribute("aria-selected") === "true");
+      assert.deepEqual(pane.getSelectedItems(true), [items[0].id, items[2].id]);
+    } finally {
+      rejectFirst?.(new Error("Test cleanup"));
+      pane.selectItems = originalSelectItems;
+      if (grid.hidden !== originallyHidden) toggle();
+      for (const item of items) if (item.id) await item.eraseTx();
+    }
+  });
+
   it("navigates displayed items horizontally through the focused grid host", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
