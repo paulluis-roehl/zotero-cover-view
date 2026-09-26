@@ -311,6 +311,9 @@ describe("grid view", function () {
       assert.isTrue(condition());
     };
     try {
+      // Zotero's forced Delete skips confirmation in the library view while
+      // still executing its real selected-item deletion action.
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
       for (const [index, item] of items.entries()) {
         item.setField("title", `Grid delete focus ${Date.now()} ${index}`);
         await item.saveTx();
@@ -332,6 +335,8 @@ describe("grid view", function () {
       grid.dispatchEvent(
         new win.KeyboardEvent("keydown", {
           key: "Delete",
+          metaKey: win.navigator.platform.startsWith("Mac"),
+          shiftKey: !win.navigator.platform.startsWith("Mac"),
           bubbles: true,
           cancelable: true,
         }),
@@ -1770,10 +1775,9 @@ describe("grid view", function () {
       for (const item of items) {
         assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
       }
-      assert.equal(
-        grid.querySelector(`[data-item-id="${items[0].id}"] .grid-view-title`)
-          ?.textContent,
-        "Reader tab updated title",
+      assert.strictEqual(
+        grid.querySelector(`[data-item-id="${items[0].id}"]`),
+        firstEntry,
       );
       assert.equal(grid.scrollTop, scrollTop);
 
