@@ -80,6 +80,18 @@ export class GridWindowUI {
     );
   }
 
+  ownsTreeFocus(element: Element | null): boolean {
+    return !!element && this.itemTree.contains(element);
+  }
+
+  ownsGridFocus(element: Element | null): boolean {
+    return !!element && this.host.contains(element);
+  }
+
+  isToggle(element: Element | null): boolean {
+    return !!element && this.toggleButton.contains(element);
+  }
+
   destroy(): void {
     this.toggleButton.removeEventListener("command", this.onToggle);
     this.itemTree.style.display = this.itemTreeDisplay;

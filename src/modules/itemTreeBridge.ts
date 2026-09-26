@@ -32,6 +32,13 @@ export class ItemTreeBridge {
     return this.win.ZoteroPane.getSelectedItems(true);
   }
 
+  focus(): void {
+    this.win.document
+      .getElementById("zotero-items-tree")
+      ?.querySelector<HTMLElement>("[role=tree]")
+      ?.focus();
+  }
+
   async selectItem(itemID: number): Promise<void> {
     await this.itemsView.selectItem(itemID);
   }

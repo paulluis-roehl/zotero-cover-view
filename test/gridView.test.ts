@@ -15,6 +15,366 @@ describe("grid view", function () {
     Reflect.deleteProperty(globalThis, "addon");
   });
 
+  it("follows selection changes, retains empty-selection focus, and restores identity after reorder", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const items = Array.from({ length: 3 }, () => new Zotero.Item("book"));
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const entries = () =>
+      Array.from(grid.querySelectorAll<HTMLElement>(".grid-view-item"));
+    const focused = () => grid.getAttribute("aria-activedescendant");
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(condition());
+    };
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Continuity ${Date.now()} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(() =>
+        items.every((item) =>
+          grid.querySelector(`[data-item-id="${item.id}"]`),
+        ),
+      );
+      const [first, second, third] = entries();
+      first.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(
+        () => pane.getSelectedItems(true)[0] === Number(first.dataset.itemId),
+      );
+
+      await pane.selectItems([Number(second.dataset.itemId)], true);
+      await waitFor(() => focused() === second.id);
+      await pane.selectItems(
+        [Number(first.dataset.itemId), Number(third.dataset.itemId)],
+        true,
+      );
+      await waitFor(() => focused() === third.id);
+      pane.itemsView!.selection.clearSelection();
+      await waitFor(() => !grid.querySelector(".grid-view-item.selected"));
+      assert.equal(focused(), third.id, "Empty selection retains valid focus");
+      third.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(
+        () => pane.getSelectedItems(true)[0] === Number(third.dataset.itemId),
+      );
+      pane.itemsView!.selection.clearSelection();
+      await waitFor(() => !grid.querySelector(".grid-view-item.selected"));
+
+      // A title change moves the focused item in Zotero's displayed sort order.
+      const reordered = items.find(
+        (item) => item.id === Number(third.dataset.itemId),
+      )!;
+      reordered.setField("title", `AAA Continuity ${Date.now()}`);
+      await reordered.saveTx();
+      await waitFor(() => entries()[0].dataset.itemId === String(reordered.id));
+      assert.equal(focused(), third.id);
+      grid.style.gridTemplateColumns = "150px";
+      assert.equal(focused(), third.id);
+      const successor = entries()[1];
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitFor(() =>
+        pane.getSelectedItems(true).includes(Number(successor.dataset.itemId)),
+      );
+      assert.deepEqual(
+        pane.getSelectedItems(true),
+        [reordered.id, Number(successor.dataset.itemId)],
+        "Anchor follows the reordered item",
+      );
+    } finally {
+      grid.style.gridTemplateColumns = "";
+      if (grid.hidden !== originallyHidden) toggle();
+      for (const item of items) if (item.id) await item.eraseTx();
+    }
+  });
+
+  it("falls back to selected and first tiles when returning with invalid grid focus", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const items = [new Zotero.Item("book"), new Zotero.Item("book")];
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(condition());
+    };
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Invalid focus ${Date.now()} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(() =>
+        items.every((item) =>
+          grid.querySelector(`[data-item-id="${item.id}"]`),
+        ),
+      );
+      const first = grid.querySelector<HTMLElement>(
+        `[data-item-id="${items[0].id}"]`,
+      )!;
+      const second = grid.querySelector<HTMLElement>(
+        `[data-item-id="${items[1].id}"]`,
+      )!;
+      first.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => pane.getSelectedItems(true)[0] === items[0].id);
+      toggle();
+      await items[0].eraseTx();
+      await pane.selectItems([items[1].id], true);
+      toggle();
+      assert.equal(grid.getAttribute("aria-activedescendant"), second.id);
+
+      toggle();
+      pane.itemsView!.selection.clearSelection();
+      await items[1].eraseTx();
+      const remaining = new Zotero.Item("book");
+      remaining.setField("title", `Only remaining ${Date.now()}`);
+      await remaining.saveTx();
+      items.push(remaining);
+      toggle();
+      assert.equal(
+        grid.getAttribute("aria-activedescendant"),
+        `cover-view-grid-item-${remaining.id}`,
+      );
+    } finally {
+      if (grid.hidden !== originallyHidden) toggle();
+      for (const item of items)
+        if (item.id && Zotero.Items.get(item.id)) await item.eraseTx();
+    }
+  });
+
+  it("retains grid focus across reflow and switches focus between item views", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const tree = win.document.getElementById("zotero-items-tree")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originalStyle = grid.style.cssText;
+    const originallyHidden = grid.hidden;
+    const items = [new Zotero.Item("book"), new Zotero.Item("book")];
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const waitFor = async (
+      condition: () => boolean,
+      message = "Condition not reached",
+    ) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline) {
+        await Zotero.Promise.delay(20);
+      }
+      assert.isTrue(condition(), message);
+    };
+
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Focus continuity ${Date.now()} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(() =>
+        items.every((item) =>
+          grid.querySelector(`[data-item-id="${item.id}"]`),
+        ),
+      );
+      const entry = grid.querySelector<HTMLElement>(
+        `[data-item-id="${items[0].id}"]`,
+      )!;
+      entry.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => pane.getSelectedItems(true)[0] === items[0].id);
+      grid.style.gridTemplateColumns = "150px";
+      assert.equal(grid.getAttribute("aria-activedescendant"), entry.id);
+
+      toggle();
+      await waitFor(
+        () => tree.contains(win.document.activeElement),
+        "Grid-to-tree focus transfer",
+      );
+      assert.deepEqual(pane.getSelectedItems(true), [items[0].id]);
+      await pane.selectItems([items[1].id], true);
+      tree.querySelector<HTMLElement>("[role=tree]")!.focus();
+      toggle();
+      assert.strictEqual(
+        win.document.activeElement,
+        grid,
+        "Tree-to-grid transfer",
+      );
+      assert.equal(grid.getAttribute("aria-activedescendant"), entry.id);
+      assert.deepEqual(pane.getSelectedItems(true), [items[1].id]);
+
+      // The toolbar can receive focus before its command is dispatched.
+      toggle();
+      await waitFor(() => grid.hidden, "List mode before toolbar switch");
+      await waitFor(
+        () => tree.contains(win.document.activeElement),
+        "Tree owns focus before toolbar switch",
+      );
+      tree.querySelector<HTMLElement>("[role=tree]")!.focus();
+      button.focus();
+      toggle();
+      await waitFor(
+        () => win.document.activeElement === grid,
+        "Toolbar-to-grid transfer",
+      );
+    } finally {
+      grid.style.cssText = originalStyle;
+      if (grid.hidden !== originallyHidden) toggle();
+      for (const item of items) if (item.id) await item.eraseTx();
+    }
+  });
+
+  it("recovers focus and anchor after external removal", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const items = Array.from({ length: 3 }, () => new Zotero.Item("book"));
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(condition());
+    };
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Removal continuity ${Date.now()} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(() =>
+        items.every((item) =>
+          grid.querySelector(`[data-item-id="${item.id}"]`),
+        ),
+      );
+      const entries = Array.from(
+        grid.querySelectorAll<HTMLElement>(".grid-view-item"),
+      );
+      const last = entries.at(-1)!;
+      const predecessor = entries.at(-2)!;
+      last.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(
+        () => pane.getSelectedItems(true)[0] === Number(last.dataset.itemId),
+      );
+      await items
+        .find((item) => item.id === Number(last.dataset.itemId))!
+        .eraseTx();
+      await waitFor(
+        () => grid.getAttribute("aria-activedescendant") === predecessor.id,
+      );
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          bubbles: true,
+          cancelable: true,
+          shiftKey: true,
+        }),
+      );
+      await waitFor(() => pane.getSelectedItems(true).length > 0);
+      assert.equal(
+        grid.getAttribute("aria-activedescendant"),
+        entries.at(-3)!.id,
+      );
+    } finally {
+      if (grid.hidden !== originallyHidden) toggle();
+      for (const item of items)
+        if (item.id && Zotero.Items.get(item.id)) await item.eraseTx();
+    }
+  });
+
+  it("uses the same predecessor fallback after a grid Delete command", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const items = Array.from({ length: 3 }, () => new Zotero.Item("book"));
+    const actions = pane as unknown as {
+      deleteSelectedItems: (force?: boolean) => Promise<void>;
+    };
+    const originalDelete = actions.deleteSelectedItems;
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(condition());
+    };
+    try {
+      for (const [index, item] of items.entries()) {
+        item.setField("title", `Grid delete focus ${Date.now()} ${index}`);
+        await item.saveTx();
+      }
+      if (grid.hidden) toggle();
+      await waitFor(() =>
+        items.every((item) =>
+          grid.querySelector(`[data-item-id="${item.id}"]`),
+        ),
+      );
+      const entries = Array.from(
+        grid.querySelectorAll<HTMLElement>(".grid-view-item"),
+      );
+      const [first, middle, last] = entries;
+      middle.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(
+        () => pane.getSelectedItems(true)[0] === Number(middle.dataset.itemId),
+      );
+      actions.deleteSelectedItems = async () => {
+        await items
+          .find((item) => item.id === Number(middle.dataset.itemId))!
+          .eraseTx();
+      };
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "Delete",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitFor(
+        () => grid.getAttribute("aria-activedescendant") === first.id,
+      );
+      await Zotero.Promise.delay(250);
+      assert.equal(
+        grid.getAttribute("aria-activedescendant"),
+        first.id,
+        "Deletion keeps predecessor focus after selection settles",
+      );
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitFor(() => pane.getSelectedItems(true).length === 2);
+      assert.deepEqual(pane.getSelectedItems(true), [
+        Number(first.dataset.itemId),
+        Number(last.dataset.itemId),
+      ]);
+    } finally {
+      actions.deleteSelectedItems = originalDelete;
+      if (grid.hidden !== originallyHidden) toggle();
+      for (const item of items)
+        if (item.id && Zotero.Items.get(item.id)) await item.eraseTx();
+    }
+  });
+
   it("restores visible native rows after scrolling the hidden list", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;

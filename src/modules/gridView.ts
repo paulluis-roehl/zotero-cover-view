@@ -19,9 +19,14 @@ export class GridView {
   private readonly renderer: GridRenderer;
   private readonly tabObserverID: string;
   private syncTimer?: number;
+  private focusFrame?: number;
+  private readonly selectionTimer: number;
   private itemIDs: number[] = [];
   private focusedItemID?: number;
   private selectionAnchorID?: number;
+  private selectedIDs: number[] = [];
+  private pendingSelections = 0;
+  private focusOwner?: "grid" | "tree";
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -31,10 +36,22 @@ export class GridView {
       this.selectClickedItem,
       this.activateClickedItem,
       this.navigate,
-      this.ensureGridFocus,
+      this.onGridFocus,
       this.handleItemCommand,
     );
     this.tree.onItemsChanged(this.scheduleSync);
+    // Programmatic native selection changes do not emit row-provider updates.
+    this.selectionTimer = win.setInterval(() => {
+      if (!getPref("enableGridView") || this.pendingSelections) return;
+      const selected = this.tree.getSelectedIDs();
+      if (
+        selected.length !== this.selectedIDs.length ||
+        selected.some((id) => !this.selectedIDs.includes(id))
+      ) {
+        this.scheduleSync();
+      }
+    }, 150);
+    win.document.addEventListener("focusin", this.trackFocus);
     this.tabObserverID = Zotero.Notifier.registerObserver(
       {
         notify: (event, _type, ids) => {
@@ -50,11 +67,42 @@ export class GridView {
   }
 
   applyEnabledPreference(): void {
-    const enabled = getPref("enableGridView");
+    const enabled = !!getPref("enableGridView");
+    const active = this.win.document.activeElement;
+    const outgoingOwner = this.ui.ownsGridFocus(active)
+      ? "grid"
+      : this.ui.ownsTreeFocus(active)
+        ? "tree"
+        : this.focusOwner;
+    const enteringGrid = enabled && !!this.ui.host.hidden;
     this.cancelSync();
+    if (this.focusFrame !== undefined) {
+      this.win.cancelAnimationFrame(this.focusFrame);
+      this.focusFrame = undefined;
+    }
     this.ui.setEnabled(enabled);
     if (!enabled) this.tree.refreshLayout();
-    this.syncItems();
+    this.syncItems(enteringGrid);
+    if (outgoingOwner === (enabled ? "tree" : "grid")) {
+      if (enabled) this.ui.host.focus();
+      else {
+        // Zotero's virtualized tree is not focusable until its newly shown
+        // layout has completed after the preference observer runs.
+        const currentFocus = this.win.document.activeElement;
+        this.focusFrame = this.win.requestAnimationFrame(() => {
+          this.focusFrame = undefined;
+          if (
+            !getPref("enableGridView") &&
+            this.win.document.activeElement === currentFocus
+          ) {
+            this.tree.focus();
+            if (this.ui.ownsTreeFocus(this.win.document.activeElement)) {
+              this.focusOwner = "tree";
+            }
+          }
+        });
+      }
+    }
   }
 
   readonly toggleEnabled = (): void => {
@@ -62,6 +110,10 @@ export class GridView {
   };
 
   destroy(): void {
+    if (this.focusFrame !== undefined)
+      this.win.cancelAnimationFrame(this.focusFrame);
+    this.win.clearInterval(this.selectionTimer);
+    this.win.document.removeEventListener("focusin", this.trackFocus);
     this.cancelSync();
     this.tree.destroy();
     Zotero.Notifier.unregisterObserver(this.tabObserverID);
@@ -88,9 +140,15 @@ export class GridView {
   }
 
   private async selectItems(itemIDs: number[]): Promise<void> {
-    await this.tree.selectItems(itemIDs);
-    if (getPref("enableGridView")) {
-      this.renderer.setSelection(this.tree.getSelectedIDs());
+    this.pendingSelections++;
+    try {
+      await this.tree.selectItems(itemIDs);
+      this.selectedIDs = this.tree.getSelectedIDs();
+      if (getPref("enableGridView")) {
+        this.renderer.setSelection(this.selectedIDs);
+      }
+    } finally {
+      this.pendingSelections--;
     }
   }
 
@@ -132,6 +190,22 @@ export class GridView {
         this.itemIDs[0];
     }
     this.renderer.setFocusedItem(this.focusedItemID);
+    if (!this.itemIDs.includes(this.selectionAnchorID ?? NaN)) {
+      this.selectionAnchorID = this.focusedItemID;
+    }
+  };
+
+  private readonly onGridFocus = (): void => {
+    // Catch native selection changes before the periodic check runs when a
+    // user moves keyboard focus into the grid.
+    this.syncItems();
+  };
+
+  private readonly trackFocus = (event: FocusEvent): void => {
+    const target = event.target as Element | null;
+    if (this.ui.ownsGridFocus(target)) this.focusOwner = "grid";
+    else if (this.ui.ownsTreeFocus(target)) this.focusOwner = "tree";
+    else if (!this.ui.isToggle(target)) this.focusOwner = undefined;
   };
 
   private readonly activateClickedItem = (itemID: number): void => {
@@ -260,20 +334,62 @@ export class GridView {
     }
   }
 
-  private syncItems(): void {
+  private syncItems(preserveFocusOnEntry = false): void {
     if (!getPref("enableGridView")) return;
     if (this.win.Zotero_Tabs.selectedType !== "library") return;
     const items = this.tree.getItems();
+    const previousIDs = this.itemIDs;
     this.itemIDs = items.map((item) => item.id);
+    const selectedIDs = this.tree.getSelectedIDs();
+    const selectionChanged =
+      selectedIDs.length !== this.selectedIDs.length ||
+      selectedIDs.some((id) => !this.selectedIDs.includes(id));
+    const additions = selectedIDs.filter(
+      (id) => !this.selectedIDs.includes(id),
+    );
+    this.selectedIDs = selectedIDs;
+
+    if (
+      preserveFocusOnEntry &&
+      !this.itemIDs.includes(this.focusedItemID ?? NaN)
+    ) {
+      const selected = new Set(selectedIDs);
+      this.focusedItemID =
+        this.itemIDs.findLast((id) => selected.has(id)) ?? this.itemIDs[0];
+    } else if (!this.itemIDs.includes(this.focusedItemID ?? NaN)) {
+      const oldIndex = previousIDs.indexOf(this.focusedItemID ?? NaN);
+      this.focusedItemID =
+        oldIndex < 0
+          ? undefined
+          : (previousIDs
+              .slice(0, oldIndex)
+              .reverse()
+              .find((id) => this.itemIDs.includes(id)) ?? this.itemIDs[0]);
+    } else if (
+      !preserveFocusOnEntry &&
+      !this.pendingSelections &&
+      selectionChanged &&
+      selectedIDs.length
+    ) {
+      this.focusedItemID =
+        (additions.length === 1 && this.itemIDs.includes(additions[0])
+          ? additions[0]
+          : undefined) ??
+        this.itemIDs.findLast((id) => selectedIDs.includes(id)) ??
+        this.focusedItemID;
+    }
+    if (!this.itemIDs.includes(this.selectionAnchorID ?? NaN)) {
+      this.selectionAnchorID = this.focusedItemID;
+    }
     this.renderer.setItems(items, {
       showAuthors: getPref("showAuthors"),
     });
-    this.renderer.setSelection(this.tree.getSelectedIDs());
+    this.renderer.setSelection(selectedIDs);
     if (!this.itemIDs.length) {
       this.focusedItemID = undefined;
       this.selectionAnchorID = undefined;
       this.renderer.setFocusedItem(undefined);
-    } else if (this.ui.host === this.win.document.activeElement) {
+    } else if (this.ui.ownsGridFocus(this.win.document.activeElement)) {
       this.ensureGridFocus();
     } else if (this.focusedItemID !== undefined) {
       this.renderer.setFocusedItem(this.focusedItemID);
