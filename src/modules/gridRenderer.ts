@@ -200,6 +200,7 @@ export class GridRenderer {
     const renderKey = JSON.stringify([
       options.showAuthors,
       getPref("fetchISBNCover"),
+      getPref("fetchMetadataCover"),
       renderItems.map(({ item, title, authors }) => [
         item.id,
         title,

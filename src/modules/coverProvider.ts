@@ -2,6 +2,7 @@ import { getPref } from "../utils/prefs";
 import { findEPUBCoverURI, isEPUBAttachment } from "./covers/epubCover";
 import { findImgCoverURI, isImgAttachment } from "./covers/imgCover";
 import { extractISBNs, findISBNCoverURI } from "./covers/isbnCover";
+import { findMetadataCoverURI } from "./covers/metadataCover";
 import { createPlaceholderCoverURI } from "./covers/placeholderCover";
 import {
   cachePDFCover,
@@ -18,6 +19,7 @@ export class CoverProvider {
     {
       generation: number;
       fetchISBNCover: boolean;
+      fetchMetadataCover: boolean;
       promise: Promise<string | null>;
     }
   >();
@@ -27,8 +29,12 @@ export class CoverProvider {
 
   static cacheCover(item: Zotero.Item): void {
     const fetchISBNCover = this.shouldFetchISBNCover();
+    const fetchMetadataCover = this.shouldFetchMetadataCover();
     const cached = this.cache.get(item.id);
-    if (cached?.fetchISBNCover !== fetchISBNCover) {
+    if (
+      cached?.fetchISBNCover !== fetchISBNCover ||
+      cached?.fetchMetadataCover !== fetchMetadataCover
+    ) {
       if (cached) {
         this.generations.set(item.id, this.currentGeneration(item.id) + 1);
       }
@@ -41,6 +47,8 @@ export class CoverProvider {
         undefined,
         generation,
         fetchISBNCover,
+        undefined,
+        fetchMetadataCover,
       )
         .catch((error) => {
           ztoolkit.log("Failed to resolve cover", item.id, error);
@@ -49,7 +57,12 @@ export class CoverProvider {
         .then((value) =>
           this.currentGeneration(item.id) === generation ? value : null,
         );
-      this.cache.set(item.id, { generation, fetchISBNCover, promise: cover });
+      this.cache.set(item.id, {
+        generation,
+        fetchISBNCover,
+        fetchMetadataCover,
+        promise: cover,
+      });
     }
   }
 
@@ -61,6 +74,10 @@ export class CoverProvider {
     return getPref("fetchISBNCover");
   }
 
+  static shouldFetchMetadataCover(): boolean {
+    return getPref("fetchMetadataCover");
+  }
+
   static async findCover(
     item: Zotero.Item,
     findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
@@ -69,6 +86,8 @@ export class CoverProvider {
     findISBNCover: typeof findISBNCoverURI = findISBNCoverURI,
     generation = this.currentGeneration(item.id),
     fetchISBNCover = this.shouldFetchISBNCover(),
+    findMetadataCover: typeof findMetadataCoverURI = findMetadataCoverURI,
+    fetchMetadataCover = this.shouldFetchMetadataCover(),
   ): Promise<string | null> {
     for (const attachment of this.findAttachments(item, isImgAttachment)) {
       this.rememberParent(attachment, item);
@@ -129,6 +148,35 @@ export class CoverProvider {
           if (cover) return cover;
         } catch (error) {
           ztoolkit.log("Failed to find ISBN cover", isbn, error);
+        }
+      }
+    }
+
+    if (
+      fetchMetadataCover &&
+      item.isRegularItem?.() &&
+      item.itemType === "book"
+    ) {
+      const title = item.getField("title");
+      const firstAuthor = item
+        .getCreatorsJSON()
+        .find((creator) => creator.creatorType === "author");
+      const author =
+        firstAuthor?.name?.trim() ||
+        [firstAuthor?.lastName?.trim(), firstAuthor?.firstName?.trim()]
+          .filter(Boolean)
+          .join(", ");
+      if (title?.trim() && author) {
+        try {
+          const surname = firstAuthor?.lastName?.trim();
+          const authors =
+            surname && surname !== author ? [author, surname] : [author];
+          for (const queryAuthor of authors) {
+            const cover = await findMetadataCover(title, queryAuthor);
+            if (cover) return cover;
+          }
+        } catch (error) {
+          ztoolkit.log("Failed to find metadata cover", item.id, error);
         }
       }
     }

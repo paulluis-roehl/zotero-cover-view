@@ -87,6 +87,10 @@ export class ItemTreeBridge {
     this.itemsView.tree?.invalidate();
   }
 
+  refreshRows(): void {
+    this.itemsView.tree?.invalidate();
+  }
+
   onItemsChanged(callback: () => void): () => void {
     const removeListeners: Array<() => void> = [];
     const rowUpdates = this.itemsView.rowProvider?.onUpdate;

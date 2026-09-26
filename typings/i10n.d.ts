@@ -8,6 +8,7 @@ export type FluentMessageId =
   | 'cover-view-switch-to-list'
   | 'pref-enable-grid-view'
   | 'pref-fetch-isbn-cover'
+  | 'pref-fetch-metadata-cover'
   | 'pref-help'
   | 'pref-show-authors'
   | 'pref-title'

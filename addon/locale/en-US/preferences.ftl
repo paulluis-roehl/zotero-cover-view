@@ -5,4 +5,6 @@ pref-show-authors =
     .label = Show authors
 pref-fetch-isbn-cover =
     .label = Fetch missing covers from Open Library using ISBN
+pref-fetch-metadata-cover =
+    .label = Fetch missing covers from Open Library using metadata
 pref-help = { $name } Build { $version } { $time }

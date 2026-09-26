@@ -1,5 +1,8 @@
 import { assert } from "chai";
-import { findMetadataCoverURI } from "../src/modules/covers/metadataCover";
+import {
+  findMetadataCoverURI,
+  MAX_SEARCH_RESULTS,
+} from "../src/modules/covers/metadataCover";
 
 describe("standalone metadata cover discovery", function () {
   const edition = "OL12345M";
@@ -15,7 +18,7 @@ describe("standalone metadata cover discovery", function () {
     );
   const path = (key: string, extension: string) =>
     PathUtils.join(directory(), `${key}.${extension}`);
-  const searchResponse = (docs: object[]) => ({
+  const searchResponse = (docs: unknown[]) => ({
     status: 200,
     bytes: new TextEncoder().encode(JSON.stringify({ docs })),
   });
@@ -66,19 +69,73 @@ describe("standalone metadata cover discovery", function () {
     );
   });
 
-  it("does not search without both fields or a first result with a cover edition", async function () {
+  it("does not search without both fields", async function () {
     let requests = 0;
     const request = async () => {
       requests++;
-      return searchResponse([
-        { isbn: ["9780385533225"] },
-        { cover_edition_key: edition },
-      ]);
+      return searchResponse([]);
     };
     assert.isNull(await findMetadataCoverURI("", "Author", request));
     assert.isNull(await findMetadataCoverURI("Title", " ", request));
-    assert.isNull(await findMetadataCoverURI("Title", "Author", request));
-    assert.equal(requests, 1);
+    assert.equal(requests, 0);
+  });
+
+  it("uses the first valid cover edition within MAX_SEARCH_RESULTS", async function () {
+    const urls: string[] = [];
+    const request = async (url: string) => {
+      urls.push(url);
+      return url.includes("search.json")
+        ? searchResponse([
+            { isbn: ["9780385533225"] },
+            null,
+            { cover_edition_key: "../other" },
+            { cover_edition_key: otherEdition },
+            { cover_edition_key: edition },
+          ])
+        : { status: 200, bytes: jpeg };
+    };
+    assert.equal(
+      await findMetadataCoverURI("Title", "Author", request),
+      Zotero.File.pathToFileURI(path(otherEdition, "jpg")),
+    );
+    assert.lengthOf(urls, 2);
+    assert.include(urls[1], `/olid/${otherEdition}-L.jpg`);
+  });
+
+  it("checks result MAX_SEARCH_RESULTS but not the next result", async function () {
+    const urls: string[] = [];
+    const withoutKeys = Array.from(
+      { length: MAX_SEARCH_RESULTS - 1 },
+      () => ({}),
+    );
+    const request = async (url: string) => {
+      urls.push(url);
+      return url.includes("search.json")
+        ? searchResponse([
+            ...withoutKeys,
+            { cover_edition_key: edition },
+            { cover_edition_key: otherEdition },
+          ])
+        : { status: 200, bytes: jpeg };
+    };
+    assert.equal(
+      await findMetadataCoverURI("Title", "Author", request),
+      Zotero.File.pathToFileURI(path(edition, "jpg")),
+    );
+    assert.include(urls[1], `/olid/${edition}-L.jpg`);
+
+    urls.length = 0;
+    assert.isNull(
+      await findMetadataCoverURI("Another Title", "Author", async (url) => {
+        urls.push(url);
+        return searchResponse([
+          ...withoutKeys,
+          {},
+          { cover_edition_key: otherEdition },
+        ]);
+      }),
+    );
+    assert.lengthOf(urls, 1);
   });
 
   it("rejects unsafe edition keys rather than requesting an arbitrary path", async function () {

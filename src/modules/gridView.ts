@@ -10,7 +10,11 @@ import { ItemTreeBridge } from "./itemTreeBridge";
 import { getPref, observePrefs, setPref } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
-const GRID_RENDER_PREFS = ["showAuthors", "fetchISBNCover"] as const;
+const GRID_RENDER_PREFS = [
+  "showAuthors",
+  "fetchISBNCover",
+  "fetchMetadataCover",
+] as const;
 let stopObservingPreferences: (() => void) | undefined;
 
 export class GridView {
@@ -134,6 +138,11 @@ export class GridView {
       this.syncItems();
     }, 60);
   };
+
+  refreshCovers(): void {
+    if (getPref("enableGridView")) this.scheduleSync();
+    else this.tree.refreshRows();
+  }
 
   private cancelSync(): void {
     if (this.syncTimer !== undefined) {
@@ -447,7 +456,7 @@ function registerPreferenceObserver(): void {
     }
   });
   const stopRenderObserver = observePrefs(GRID_RENDER_PREFS, () => {
-    for (const gridView of gridViews.values()) gridView.scheduleSync();
+    for (const gridView of gridViews.values()) gridView.refreshCovers();
   });
   stopObservingPreferences = () => {
     stopEnabledObserver();

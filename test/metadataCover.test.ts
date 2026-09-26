@@ -5,10 +5,8 @@ import { CoverProvider } from "../src/modules/coverProvider";
 import { GridRenderer } from "../src/modules/gridRenderer";
 import { clearPref, getPref, setPref } from "../src/utils/prefs";
 
-// The preference is deliberately accessed by name until the feature adds it to
-// the generated preference types. These tests must compile before implementation.
-const metadataPref = "fetchMetadataCover" as "fetchISBNCover";
-const editionISBN = "9780385533225";
+const metadataPref = "fetchMetadataCover";
+const editionKey = "OL12345M";
 const recordedISBN = "0385472579";
 const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 
@@ -20,7 +18,7 @@ describe("opt-in metadata cover lookup", function () {
   let toolkitDescriptor: PropertyDescriptor | undefined;
   const requests: string[] = [];
   let searchResult: object;
-  let editionResult: object;
+  let searchResultsForURL: ((url: string) => object) | undefined;
   let coverStatus: number;
   let recordedCoverStatus: number;
 
@@ -29,6 +27,13 @@ describe("opt-in metadata cover lookup", function () {
       type?: string;
       title?: string;
       creators?: string[];
+      creatorData?: Array<{
+        firstName?: string;
+        lastName?: string;
+        name?: string;
+        creatorType: "author" | "translator";
+      }>;
+      displayCreator?: string;
       isbn?: string;
       attachments?: Zotero.Item[];
     } = {},
@@ -37,20 +42,29 @@ describe("opt-in metadata cover lookup", function () {
       type = "book",
       title = "The Test Book",
       creators = ["Ada Lovelace"],
+      creatorData,
+      displayCreator,
       isbn = "",
       attachments = [],
     } = options;
     Zotero.Items.get = (() => attachments) as typeof originalGet;
     return {
       id: 92109,
-      firstCreator: creators[0] ?? "",
+      itemType: type,
+      firstCreator: displayCreator ?? creators[0] ?? "",
       isFileAttachment: () => false,
       isRegularItem: () => true,
-      getItemType: () => type,
       getDisplayTitle: () => title,
       getField: (field: string) =>
         field === "ISBN" ? isbn : field === "title" ? title : "",
       getCreators: () =>
+        creators.map((name) => ({
+          firstName: name.split(" ")[0],
+          lastName: name.split(" ").slice(1).join(" "),
+          creatorType: "author",
+        })),
+      getCreatorsJSON: () =>
+        creatorData ??
         creators.map((name) => ({
           firstName: name.split(" ")[0],
           lastName: name.split(" ").slice(1).join(" "),
@@ -84,7 +98,7 @@ describe("opt-in metadata cover lookup", function () {
       "covers",
       "open-library",
     );
-    for (const isbn of [editionISBN, recordedISBN]) {
+    for (const isbn of [recordedISBN]) {
       for (const extension of ["jpg", "missing"]) {
         await IOUtils.remove(
           PathUtils.join(directory, `${isbn}.${extension}`),
@@ -93,6 +107,12 @@ describe("opt-in metadata cover lookup", function () {
           },
         );
       }
+    }
+    for (const extension of ["jpg", "missing"]) {
+      await IOUtils.remove(
+        PathUtils.join(directory, "olid", `${editionKey}.${extension}`),
+        { ignoreAbsent: true },
+      );
     }
   }
 
@@ -121,15 +141,11 @@ describe("opt-in metadata cover lookup", function () {
           title: "The Test Book",
           author_name: ["Ada Lovelace"],
           isbn: [recordedISBN],
-          edition_key: ["OL1M"],
+          cover_edition_key: editionKey,
         },
       ],
     };
-    editionResult = {
-      key: "/books/OL1M",
-      title: "The Test Book",
-      isbn_13: [editionISBN],
-    };
+    searchResultsForURL = undefined;
     coverStatus = 200;
     recordedCoverStatus = 200;
     Zotero.HTTP.request = (async (
@@ -138,21 +154,23 @@ describe("opt-in metadata cover lookup", function () {
       options: unknown,
     ) => {
       const isSearch = url.includes("openlibrary.org/search.json");
-      const isEdition = url.includes("openlibrary.org/books/OL1M.json");
-      const isCover = url.includes("covers.openlibrary.org/b/isbn/");
-      if (!isSearch && !isEdition && !isCover)
+      const isISBNCover = url.includes("covers.openlibrary.org/b/isbn/");
+      const isMetadataCover = url.includes("covers.openlibrary.org/b/olid/");
+      if (!isSearch && !isISBNCover && !isMetadataCover)
         return originalRequest.call(Zotero.HTTP, method, url, options as never);
       requests.push(url);
-      const payload = isSearch ? searchResult : editionResult;
       return {
-        status: isCover
-          ? url.includes(recordedISBN)
-            ? recordedCoverStatus
-            : coverStatus
-          : 200,
-        response: (isCover
+        status:
+          isISBNCover || isMetadataCover
+            ? url.includes(recordedISBN)
+              ? recordedCoverStatus
+              : coverStatus
+            : 200,
+        response: (isISBNCover || isMetadataCover
           ? jpeg
-          : new TextEncoder().encode(JSON.stringify(payload))
+          : new TextEncoder().encode(
+              JSON.stringify(searchResultsForURL?.(url) ?? searchResult),
+            )
         ).buffer,
       };
     }) as typeof Zotero.HTTP.request;
@@ -177,21 +195,97 @@ describe("opt-in metadata cover lookup", function () {
     assert.strictEqual(getPref(metadataPref), false);
   });
 
-  it("requires both opt-ins and leaves the item unchanged", async function () {
-    const item = book();
+  it("uses metadata with ISBN fetching off and leaves the item unchanged", async function () {
+    const item = book({ isbn: recordedISBN });
     const originalField = item.getField("ISBN");
     placeholder(await CoverProvider.findCover(item));
     setPref(metadataPref, true);
-    placeholder(await CoverProvider.findCover(item));
-    assert.isEmpty(requests);
-
-    setPref("fetchISBNCover", true);
     const cover = await CoverProvider.findCover(item);
-    assert.include(cover!, `${editionISBN}.jpg`);
+    assert.include(cover!, `${editionKey}.jpg`);
     assert.isTrue(requests.some((url) => url.includes("search.json")));
-    assert.isTrue(requests.some((url) => url.includes("/books/OL1M.json")));
+    assert.isFalse(requests.some((url) => url.includes("/b/isbn/")));
+    assert.isTrue(
+      requests.some((url) => url.includes(`/olid/${editionKey}-L.jpg`)),
+    );
     assert.strictEqual(item.getField("ISBN"), originalField);
     assert.deepEqual(item.getAttachments(), []);
+  });
+
+  it("does not search metadata when only ISBN fetching is enabled", async function () {
+    setPref("fetchISBNCover", true);
+    placeholder(await CoverProvider.findCover(book()));
+    assert.isEmpty(requests);
+  });
+
+  it("searches using the first author's real name, not the multi-creator display label", async function () {
+    setPref("fetchISBNCover", true);
+    setPref(metadataPref, true);
+    const item = book({
+      title: "Das Vermächtnis der Drachenreiter",
+      creators: [
+        "Christopher Paolini",
+        "Sidharth Chaturvedi",
+        "Joannis Stefanidis",
+        "Christopher Paolini",
+      ],
+      displayCreator: "Paolini et al.",
+      creatorData: [
+        {
+          firstName: "Christopher",
+          lastName: "Paolini",
+          creatorType: "author",
+        },
+        {
+          firstName: "Sidharth",
+          lastName: "Chaturvedi",
+          creatorType: "author",
+        },
+        {
+          firstName: "Joannis",
+          lastName: "Stefanidis",
+          creatorType: "translator",
+        },
+        {
+          firstName: "Christopher",
+          lastName: "Paolini",
+          creatorType: "author",
+        },
+      ],
+    });
+
+    await CoverProvider.findCover(item);
+    const searchURL = requests.find((url) => url.includes("/search.json"));
+    assert.exists(searchURL);
+    assert.include(searchURL!, "author:Paolini%2C%20Christopher");
+    assert.notInclude(searchURL!, "et%20al");
+  });
+
+  it("retries with the first author's surname when a title makes their full name too restrictive", async function () {
+    setPref("fetchISBNCover", true);
+    setPref(metadataPref, true);
+    searchResultsForURL = (url) =>
+      url.includes("author:Doyle%2C%20Sir%20Arthur%20Conan")
+        ? { docs: [] }
+        : searchResult;
+    const item = book({
+      title: "A Study in Scarlet",
+      creators: ["Sir Arthur Conan Doyle"],
+      creatorData: [
+        {
+          firstName: "Sir Arthur Conan",
+          lastName: "Doyle",
+          creatorType: "author",
+        },
+      ],
+    });
+
+    assert.include((await CoverProvider.findCover(item))!, `${editionKey}.jpg`);
+    assert.deepEqual(
+      requests
+        .filter((url) => url.includes("/search.json"))
+        .map((url) => decodeURIComponent(url.split("author:")[1])),
+      ["Doyle, Sir Arthur Conan", "Doyle"],
+    );
   });
 
   it("keeps local covers and recorded ISBNs ahead of metadata search", async function () {
@@ -221,10 +315,7 @@ describe("opt-in metadata cover lookup", function () {
     setPref(metadataPref, true);
     recordedCoverStatus = 404;
     const item = book({ isbn: recordedISBN });
-    assert.include(
-      (await CoverProvider.findCover(item))!,
-      `${editionISBN}.jpg`,
-    );
+    assert.include((await CoverProvider.findCover(item))!, `${editionKey}.jpg`);
     assert.isTrue(
       requests.some((url) => url.includes(`${recordedISBN}-L.jpg`)),
     );
@@ -245,13 +336,15 @@ describe("opt-in metadata cover lookup", function () {
     assert.isEmpty(requests);
   });
 
-  it("rejects work-level ISBNs and unusable editions, then shows a placeholder", async function () {
+  it("ignores work-level ISBNs without a usable cover edition, then shows a placeholder", async function () {
     setPref("fetchISBNCover", true);
     setPref(metadataPref, true);
-    editionResult = { key: "/books/OL1M", isbn_13: ["9780385533226"] };
+    searchResult = {
+      docs: [{ isbn: [recordedISBN], cover_edition_key: "../invalid" }],
+    };
     placeholder(await CoverProvider.findCover(book()));
     assert.isTrue(requests.some((url) => url.includes("/search.json")));
-    assert.isTrue(requests.some((url) => url.includes("/books/OL1M.json")));
+    assert.isFalse(requests.some((url) => url.includes("/olid/")));
     assert.isFalse(requests.some((url) => url.includes("/isbn/")));
 
     requests.length = 0;
@@ -266,20 +359,47 @@ describe("opt-in metadata cover lookup", function () {
     setPref(metadataPref, true);
     coverStatus = 404;
     placeholder(await CoverProvider.findCover(book()));
-    assert.isTrue(requests.some((url) => url.includes(`${editionISBN}-L.jpg`)));
+    assert.isTrue(requests.some((url) => url.includes(`${editionKey}-L.jpg`)));
+  });
+
+  it("falls back to a placeholder when metadata lookup fails", async function () {
+    setPref("fetchISBNCover", true);
+    setPref(metadataPref, true);
+    placeholder(
+      await CoverProvider.findCover(
+        book(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async () => {
+          throw new Error("search unavailable");
+        },
+      ),
+    );
   });
 
   it("refreshes cached covers when either opt-in changes", async function () {
     const item = book();
-    setPref("fetchISBNCover", true);
     CoverProvider.cacheCover(item);
     placeholder(await CoverProvider.getCover(item.id));
     setPref(metadataPref, true);
     CoverProvider.cacheCover(item);
     assert.include(
       (await CoverProvider.getCover(item.id))!,
-      `${editionISBN}.jpg`,
+      `${editionKey}.jpg`,
     );
+    setPref("fetchISBNCover", true);
+    CoverProvider.cacheCover(item);
+    assert.include(
+      (await CoverProvider.getCover(item.id))!,
+      `${editionKey}.jpg`,
+    );
+    setPref(metadataPref, false);
+    CoverProvider.cacheCover(item);
+    placeholder(await CoverProvider.getCover(item.id));
     setPref("fetchISBNCover", false);
     CoverProvider.cacheCover(item);
     placeholder(await CoverProvider.getCover(item.id));
@@ -348,7 +468,7 @@ describe("opt-in metadata cover lookup", function () {
       );
       await CoverProvider.getCover(item.id);
       await Zotero.Promise.delay(0);
-      assert.include(tile.querySelector("img")!.src, `${editionISBN}.jpg`);
+      assert.include(tile.querySelector("img")!.src, `${editionKey}.jpg`);
       assert.equal(
         cell.querySelector("img")!.src,
         tile.querySelector("img")!.src,

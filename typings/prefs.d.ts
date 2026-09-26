@@ -10,6 +10,7 @@ declare namespace _ZoteroTypes {
       "enableGridView": boolean;
       "showAuthors": boolean;
       "fetchISBNCover": boolean;
+      "fetchMetadataCover": boolean;
     };
   }
 }
