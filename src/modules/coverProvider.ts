@@ -168,7 +168,11 @@ export class CoverProvider {
           .join(", ");
       if (title?.trim() && author) {
         try {
-          const surname = firstAuthor?.lastName?.trim();
+          // Zotero also supports single-field creators (`name`), which have
+          // no lastName. Use the final word as a surname for that form.
+          const surname =
+            firstAuthor?.lastName?.trim() ||
+            firstAuthor?.name?.trim().split(/\s+/).at(-1);
           const authors =
             surname && surname !== author ? [author, surname] : [author];
           for (const queryAuthor of authors) {

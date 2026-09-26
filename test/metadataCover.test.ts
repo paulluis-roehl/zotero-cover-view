@@ -289,6 +289,25 @@ describe("opt-in metadata cover lookup", function () {
     );
   });
 
+  it("retries the final name of a single-field author", async function () {
+    setPref(metadataPref, true);
+    searchResultsForURL = (url) =>
+      url.includes("author:Arthur%20Conan%20Doyle")
+        ? { docs: [] }
+        : searchResult;
+    const item = book({
+      creatorData: [{ name: "Arthur Conan Doyle", creatorType: "author" }],
+    });
+
+    assert.include((await CoverProvider.findCover(item))!, `${editionKey}.jpg`);
+    assert.deepEqual(
+      requests
+        .filter((url) => url.includes("/search.json"))
+        .map((url) => decodeURIComponent(url.split("author:")[1])),
+      ["Arthur Conan Doyle", "Doyle"],
+    );
+  });
+
   it("keeps local covers and recorded ISBNs ahead of metadata search", async function () {
     setPref("fetchISBNCover", true);
     setPref(metadataPref, true);

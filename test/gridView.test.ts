@@ -1169,6 +1169,69 @@ describe("grid view", function () {
     }
   });
 
+  it("refreshes the grid and Cover column rows when either cover lookup setting changes", async function () {
+    const win = Zotero.getMainWindow()!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const originalISBN = getPref("fetchISBNCover");
+    const originalMetadata = getPref("fetchMetadataCover");
+    const originalFindCover = CoverProvider.findCover;
+    const tree = win.ZoteroPane.itemsView!.tree!;
+    const originalInvalidate = tree.invalidate;
+    const item = new Zotero.Item("book");
+    let rowRefreshes = 0;
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const tile = () => grid.querySelector(`[data-item-id="${item.id}"]`);
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(
+        condition(),
+        "Cover preference change should refresh both views",
+      );
+    };
+    CoverProvider.findCover = (async () =>
+      `data:image/svg+xml,${getPref("fetchISBNCover")}-${getPref("fetchMetadataCover")}`) as typeof CoverProvider.findCover;
+    tree.invalidate = function (...args) {
+      rowRefreshes++;
+      return originalInvalidate.apply(this, args);
+    };
+    try {
+      setPref("fetchISBNCover", false);
+      setPref("fetchMetadataCover", false);
+      item.setField("title", `Lookup refresh ${Date.now()}`);
+      await item.saveTx();
+      if (grid.hidden) toggle();
+      await waitFor(() => !!tile());
+      const beforeISBN = tile();
+      const beforeRows = rowRefreshes;
+      setPref("fetchISBNCover", true);
+      await waitFor(() => tile() !== beforeISBN && rowRefreshes > beforeRows);
+
+      const beforeMetadata = tile();
+      const rowsAfterISBN = rowRefreshes;
+      setPref("fetchMetadataCover", true);
+      await waitFor(
+        () => tile() !== beforeMetadata && rowRefreshes > rowsAfterISBN,
+      );
+      CoverProvider.cacheCover(item);
+      assert.equal(
+        await CoverProvider.getCover(item.id),
+        "data:image/svg+xml,true-true",
+      );
+    } finally {
+      tree.invalidate = originalInvalidate;
+      CoverProvider.findCover = originalFindCover;
+      setPref("fetchISBNCover", originalISBN);
+      setPref("fetchMetadataCover", originalMetadata);
+      if (grid.hidden !== originallyHidden) toggle();
+      if (item.id) await item.eraseTx();
+      CoverProvider.clearCache();
+    }
+  });
+
   it("selects and focuses a grid tile when it is clicked", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
