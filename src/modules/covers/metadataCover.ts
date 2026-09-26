@@ -3,6 +3,7 @@ import { scheduleOpenLibraryRequest } from "../openLibraryRequestScheduler";
 const OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json";
 const OPEN_LIBRARY_COVERS_URL = "https://covers.openlibrary.org/b/olid";
 const CACHE_MISS_TTL = 7 * 24 * 60 * 60 * 1000;
+export const MAX_SEARCH_RESULTS = 5;
 
 type Request = typeof scheduleOpenLibraryRequest;
 
@@ -23,7 +24,7 @@ const imagePath = (key: string): string =>
 const missingPath = (key: string): string =>
   PathUtils.join(cacheDirectory(), `${key}.missing`);
 
-/** Find the first Open Library search result's cover edition and cache its JPEG. */
+/** Find the first cover edition within the search-result limit and cache its JPEG. */
 export function findMetadataCoverURI(
   title: string,
   author: string,
@@ -54,10 +55,17 @@ async function findAndCacheCover(
     throw new Error("Invalid Open Library search response");
 
   const result: unknown = JSON.parse(new TextDecoder().decode(search.bytes));
-  const first =
-    isRecord(result) && Array.isArray(result.docs) ? result.docs[0] : null;
-  const key = isRecord(first) ? first.cover_edition_key : null;
-  if (typeof key !== "string" || !/^OL\d+M$/.test(key)) return null;
+  let key: string | undefined;
+  if (isRecord(result) && Array.isArray(result.docs)) {
+    for (const entry of result.docs.slice(0, MAX_SEARCH_RESULTS)) {
+      const candidate = isRecord(entry) ? entry.cover_edition_key : null;
+      if (typeof candidate === "string" && /^OL\d+M$/.test(candidate)) {
+        key = candidate;
+        break;
+      }
+    }
+  }
+  if (!key) return null;
 
   const cached = await readCachedCover(key);
   if (cached) return cached;
