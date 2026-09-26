@@ -11,5 +11,6 @@ export type FluentMessageId =
   | 'pref-fetch-metadata-cover'
   | 'pref-help'
   | 'pref-show-authors'
+  | 'pref-tile-size'
   | 'pref-title'
   | 'prefs-title';

@@ -9,9 +9,13 @@
 }
 
 #cover-view-grid {
+  --cover-view-tile-size: 180px;
   box-sizing: border-box;
   flex: 1 1 auto;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 180px));
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(min(100%, var(--cover-view-tile-size)), 1fr)
+  );
   align-content: start;
   justify-content: center;
   gap: 24px 20px;
@@ -33,6 +37,8 @@
 
 .grid-view-item {
   min-width: 0;
+  width: min(100%, var(--cover-view-tile-size));
+  justify-self: center;
   /* Extend the selection background without shifting the cover or caption. */
   margin: -3px;
   padding: 3px;

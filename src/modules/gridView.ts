@@ -49,6 +49,7 @@ export class GridView {
       this.onGridFocus,
       this.handleItemCommand,
     );
+    this.applyTileSizePreference();
     this.tree.onItemsChanged(this.scheduleSync);
     this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
       this.tree.refreshRows();
@@ -130,6 +131,14 @@ export class GridView {
   readonly toggleEnabled = (): void => {
     setPref("enableGridView", !getPref("enableGridView"));
   };
+
+  applyTileSizePreference(): void {
+    const size = getPref("tileSize");
+    this.ui.host.style.setProperty(
+      "--cover-view-tile-size",
+      `${Number.isFinite(size) ? Math.max(100, Math.min(300, size)) : 180}px`,
+    );
+  }
 
   destroy(): void {
     if (this.focusFrame !== undefined)
@@ -477,9 +486,14 @@ function registerPreferenceObserver(): void {
   const stopRenderObserver = observePrefs(GRID_RENDER_PREFS, () => {
     for (const gridView of gridViews.values()) gridView.refreshCovers();
   });
+  const stopSizeObserver = observePrefs(["tileSize"], () => {
+    for (const gridView of gridViews.values())
+      gridView.applyTileSizePreference();
+  });
   stopObservingPreferences = () => {
     stopEnabledObserver();
     stopRenderObserver();
+    stopSizeObserver();
   };
 }
 

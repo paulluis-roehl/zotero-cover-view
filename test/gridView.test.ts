@@ -1169,6 +1169,54 @@ describe("grid view", function () {
     }
   });
 
+  it("resizes grid tiles on preference changes without replacing them", async function () {
+    const win = Zotero.getMainWindow()!;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originalSize = getPref("tileSize");
+    const originallyHidden = grid.hidden;
+    const item = new Zotero.Item("book");
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(condition(), "Tile size preference should update the grid");
+    };
+
+    try {
+      item.setField("title", `Tile sizing ${Date.now()}`);
+      await item.saveTx();
+      if (grid.hidden) toggle();
+      await waitFor(() => !!grid.querySelector(`[data-item-id="${item.id}"]`));
+      const tile = grid.querySelector(`[data-item-id="${item.id}"]`);
+
+      setPref("tileSize", 240);
+      await waitFor(
+        () => grid.style.getPropertyValue("--cover-view-tile-size") === "240px",
+      );
+      assert.strictEqual(
+        grid.querySelector(`[data-item-id="${item.id}"]`),
+        tile,
+      );
+
+      toggle();
+      setPref("tileSize", 120);
+      await waitFor(
+        () => grid.style.getPropertyValue("--cover-view-tile-size") === "120px",
+      );
+      toggle();
+      assert.strictEqual(
+        grid.querySelector(`[data-item-id="${item.id}"]`),
+        tile,
+      );
+    } finally {
+      setPref("tileSize", originalSize);
+      if (grid.hidden !== originallyHidden) toggle();
+      if (item.id) await item.eraseTx();
+    }
+  });
+
   it("refreshes the grid and Cover column rows when either cover lookup setting changes", async function () {
     const win = Zotero.getMainWindow()!;
     const grid = win.document.getElementById("cover-view-grid")!;

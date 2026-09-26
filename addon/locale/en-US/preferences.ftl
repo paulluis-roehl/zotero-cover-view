@@ -3,6 +3,7 @@ pref-enable-grid-view =
     .label = Enable grid view
 pref-show-authors =
     .label = Show authors
+pref-tile-size = Tile size in grid view
 pref-fetch-isbn-cover =
     .label = Fetch missing covers from Open Library using ISBN
 pref-fetch-metadata-cover =
