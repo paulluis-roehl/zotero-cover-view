@@ -48,10 +48,10 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 - [x] single click select
 - [x] double click open
-- [ ] multi-select (`shift + click` and `ctrl + click`)
+- [x] multi-select (`shift + click` and `ctrl + click`)
 - [ ] right click menu
 - [ ] general keyboard input and shortcuts
-  - [ ] adjust arrow keys for grid navigation
+  - [x] adjust arrow keys for grid navigation
 - [ ] drag and drop files into grid view
 
 **Settings**
