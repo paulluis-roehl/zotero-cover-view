@@ -101,8 +101,9 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] fix: pdf cover renders incorrectly in some cases (with "old" / scanned text)
 - [ ] fix: placeholder cover doesn't update when metadata changed
 - [ ] fix: focus
-  - clicking on collection, then grid does not shift focus from selected collection
-  - when switching back to list view, selection renders as "stale" (gray) rather than focused
+  - [x] clicking on collection, then grid should shift focus from selected collection
+  - [x] when switching back to list view, selection renders as "stale" (gray) rather than focused
+  - [ ] when focussing on something else, grid selection should become "stale" (gray)
 - [ ] fix: when selecting book through grid view and then disabling plugin, only two items above the book render in list view (rest is white space)
   - when selecting that same book through list view, then switching to grid view and doing the same, everything works as intended
   - just switching to list view and back fixes it as well
