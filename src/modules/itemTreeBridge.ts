@@ -41,7 +41,7 @@ export class ItemTreeBridge {
       this.itemsView.selection.clearSelection();
       return;
     }
-    await this.win.ZoteroPane.selectItems(itemIDs, true);
+    await this.win.ZoteroPane.selectItems(itemIDs);
   }
 
   async activateItem(itemID: number): Promise<void> {
