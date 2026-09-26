@@ -1576,8 +1576,8 @@ describe("grid view", function () {
   });
 
   for (const command of ["Enter", "Delete"] as const) {
-    for (const rejectSelection of [false, true]) {
-      it(`${command} ${rejectSelection ? "cancels after" : "waits for"} a pending grid selection`, async function () {
+    for (const outcome of ["success", "rejection", "unchanged"] as const) {
+      it(`${command} ${outcome === "success" ? "waits for" : "cancels after"} a pending grid selection ${outcome}`, async function () {
         const win = Zotero.getMainWindow()!;
         const pane = win.ZoteroPane;
         const grid = win.document.getElementById("cover-view-grid")!;
@@ -1637,6 +1637,7 @@ describe("grid view", function () {
             if (first) {
               first = false;
               await pending;
+              if (outcome === "unchanged") return;
             }
             return originalSelectItems.apply(pane, args);
           };
@@ -1657,10 +1658,10 @@ describe("grid view", function () {
           await waitFor(() => writes.length === 1);
           assert.deepEqual(writes, [[items[1].id]]);
           assert.isEmpty(actedOn, "Command must not act on the old selection");
-          if (rejectSelection) reject!(new Error("Selection rejected"));
+          if (outcome === "rejection") reject!(new Error("Selection rejected"));
           else release!();
 
-          if (rejectSelection) {
+          if (outcome === "rejection") {
             await Zotero.Promise.delay(100);
             assert.deepEqual(writes, [[items[1].id]]);
             assert.isEmpty(actedOn, "Failed selection cancels the command");
@@ -1669,9 +1670,20 @@ describe("grid view", function () {
             await waitFor(() => actedOn.length === 1);
             assert.deepEqual(actedOn, [[items[0].id]]);
           } else {
-            await waitFor(() => actedOn.length === 1 && writes.length === 2);
-            assert.deepEqual(actedOn, [[items[1].id]]);
+            await waitFor(() => writes.length === 2);
             assert.deepEqual(writes[1], [items[2].id]);
+            if (outcome === "unchanged") {
+              await waitFor(
+                () => pane.getSelectedItems(true)[0] === items[2].id,
+              );
+              assert.isEmpty(
+                actedOn,
+                "A resolved but unconfirmed selection cancels the command",
+              );
+            } else {
+              await waitFor(() => actedOn.length === 1);
+              assert.deepEqual(actedOn, [[items[1].id]]);
+            }
           }
         } finally {
           release?.();

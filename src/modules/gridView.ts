@@ -279,8 +279,19 @@ export class GridView {
     errorMessage: string,
   ): void {
     const generation = this.selectionGeneration;
+    const expectedSelection = this.pendingSelections
+      ? [...this.intendedSelection]
+      : undefined;
     const run = async () => {
       if (generation !== this.selectionGeneration) return;
+      if (expectedSelection) {
+        const selected = this.tree.getSelectedIDs();
+        if (
+          selected.length !== expectedSelection.length ||
+          expectedSelection.some((id) => !selected.includes(id))
+        )
+          return;
+      }
       try {
         await action();
       } catch (error) {
