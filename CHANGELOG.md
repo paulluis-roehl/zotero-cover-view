@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- Keep rapid grid selection changes in order, so clicks and keyboard actions apply to the intended items.
+- Wait for Zotero to confirm the current selection before running item commands, and recover cleanly if a selection change fails.
+
 ## 0.3.2
 
 - Navigate the cover grid with arrow keys, Home, and End; movement follows the visual layout as the grid resizes.
