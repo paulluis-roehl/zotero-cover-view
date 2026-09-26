@@ -87,7 +87,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] make ISBN cover toggle refresh the grid renderer
   - [ ] only target items that actually need refreshing
   - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
-- [ ] refresh covers when metadata changes (for ISBN or auto-generated)
+- [x] refresh covers when metadata changes (for ISBN or auto-generated)
 - [x] add Open Library request scheduler that:
   - Limits concurrent network requests, likely to 2-3.
   - Enforces the documented 100 requests per 5-minute window.
@@ -100,7 +100,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 **Bugs**
 
 - [ ] fix: pdf cover renders incorrectly in some cases (with "old" / scanned text)
-- [ ] fix: placeholder cover doesn't update when metadata changed
+- [x] fix: placeholder cover doesn't update when metadata changed
 - [ ] fix: focus
   - [x] clicking on collection, then grid should shift focus from selected collection
   - [x] when switching back to list view, selection renders as "stale" (gray) rather than focused
