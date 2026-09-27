@@ -688,6 +688,7 @@ describe("grid view", function () {
     );
     const isMacOS = win.navigator.platform.startsWith("Mac");
     const primaryKey = isMacOS ? { metaKey: true } : { shiftKey: true };
+    const selectAllModifier = isMacOS ? { metaKey: true } : { ctrlKey: true };
     const press = (key: string, modifiers = {}) => {
       const event = new win.KeyboardEvent("keydown", {
         key,
@@ -706,12 +707,9 @@ describe("grid view", function () {
       const forceDelete = press("Delete", primaryKey);
       const backspace = press("Backspace");
       const unrelated = press("r");
-      const selectAll = press(
-        "a",
-        isMacOS ? { metaKey: true } : { ctrlKey: true },
-      );
+      const selectAll = press("a", selectAllModifier);
       const shiftedSelectAll = press("a", {
-        ...(isMacOS ? { metaKey: true } : { ctrlKey: true }),
+        ...selectAllModifier,
         shiftKey: true,
       });
       const wrongModifier = press(
@@ -719,7 +717,7 @@ describe("grid view", function () {
         isMacOS ? { ctrlKey: true } : { metaKey: true },
       );
       const altSelectAll = press("a", {
-        ...(isMacOS ? { metaKey: true } : { ctrlKey: true }),
+        ...selectAllModifier,
         altKey: true,
       });
 

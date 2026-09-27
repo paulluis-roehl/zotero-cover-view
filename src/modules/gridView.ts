@@ -308,7 +308,12 @@ export class GridView {
         );
         return;
       case "select-all":
-        if (!this.itemIDs.length) return;
+        if (
+          !this.itemIDs.length &&
+          !this.pendingSelections &&
+          !this.tree.getSelectedIDs().length
+        )
+          return;
         this.intendedSelection = [...this.itemIDs];
         this.writeSelection();
         return;
