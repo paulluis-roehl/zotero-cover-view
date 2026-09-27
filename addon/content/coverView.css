@@ -46,6 +46,11 @@
 }
 
 .grid-view-item.selected {
+  background: color-mix(in srgb, GrayText 35%, transparent);
+  color: CanvasText;
+}
+
+#cover-view-grid.owns-focus > .grid-view-item.selected {
   background: Highlight;
   color: HighlightText;
 }

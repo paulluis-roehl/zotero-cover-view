@@ -470,6 +470,80 @@ describe("grid view", function () {
     }
   });
 
+  it("dims selected tiles when focus leaves and restores them without changing selection or navigation", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const item = new Zotero.Item("book");
+    const toggle = () => button.dispatchEvent(new win.Event("command"));
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 3000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(condition());
+    };
+
+    try {
+      item.setField("title", `Inactive selection ${Date.now()}`);
+      await item.saveTx();
+      if (grid.hidden) toggle();
+      await waitFor(() => !!grid.querySelector(`[data-item-id="${item.id}"]`));
+      const tile = grid.querySelector<HTMLElement>(
+        `[data-item-id="${item.id}"]`,
+      )!;
+      tile.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => pane.getSelectedItems(true)[0] === item.id);
+      grid.focus();
+      win.dispatchEvent(new win.Event("focus"));
+      const activeColor = win.getComputedStyle(tile).backgroundColor;
+      const position = grid.getAttribute("aria-activedescendant");
+      assert.isTrue(
+        grid.classList.contains("owns-focus"),
+        `Grid should own focus (active: ${win.document.activeElement?.id})`,
+      );
+
+      button.focus();
+      // The test runner does not activate the Zotero window, so XUL focus()
+      // changes activeElement without dispatching its native focus event.
+      button.dispatchEvent(new win.FocusEvent("focus"));
+      assert.strictEqual(win.document.activeElement, button);
+      assert.isTrue(tile.classList.contains("selected"));
+      assert.equal(tile.getAttribute("aria-selected"), "true");
+      assert.notEqual(win.getComputedStyle(tile).backgroundColor, activeColor);
+      assert.deepEqual(pane.getSelectedItems(true), [item.id]);
+      assert.equal(grid.getAttribute("aria-activedescendant"), position);
+
+      for (const id of ["zotero-collections-tree", "zotero-item-pane"]) {
+        grid.focus();
+        grid.dispatchEvent(new win.FocusEvent("focus"));
+        const outside = win.document.getElementById(id);
+        assert.exists(outside, `${id} must exist in the main window`);
+        outside.dispatchEvent(new win.FocusEvent("focus"));
+        assert.notEqual(
+          win.getComputedStyle(tile).backgroundColor,
+          activeColor,
+        );
+        assert.deepEqual(pane.getSelectedItems(true), [item.id]);
+        assert.equal(grid.getAttribute("aria-activedescendant"), position);
+      }
+
+      grid.focus();
+      grid.dispatchEvent(new win.FocusEvent("focus"));
+      assert.equal(win.getComputedStyle(tile).backgroundColor, activeColor);
+      win.dispatchEvent(new win.Event("blur"));
+      assert.notEqual(win.getComputedStyle(tile).backgroundColor, activeColor);
+      assert.deepEqual(pane.getSelectedItems(true), [item.id]);
+      assert.equal(grid.getAttribute("aria-activedescendant"), position);
+      win.dispatchEvent(new win.Event("focus"));
+      assert.equal(win.getComputedStyle(tile).backgroundColor, activeColor);
+    } finally {
+      if (grid.hidden !== originallyHidden) toggle();
+      if (item.id) await item.eraseTx();
+    }
+  });
+
   it("updates selection without replacing tiles and ignores undisplayed IDs", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");

@@ -69,6 +69,9 @@ export class GridRenderer {
     this.host.addEventListener("keydown", this.handleKeyDown);
     this.host.addEventListener("focus", this.handleFocus);
     this.host.addEventListener("blur", this.handleBlur);
+    doc.addEventListener("focus", this.handleDocumentFocus, true);
+    doc.defaultView!.addEventListener("blur", this.handleWindowBlur);
+    doc.defaultView!.addEventListener("focus", this.handleWindowFocus);
     this.chunkObserver = new doc.defaultView!.IntersectionObserver(
       (entries: IntersectionObserverEntry[]) => {
         const sentinel = this.host.querySelector(".grid-view-sentinel");
@@ -205,6 +208,22 @@ export class GridRenderer {
 
   private readonly handleBlur = (): void => {
     this.host.classList.remove("owns-focus");
+  };
+
+  private readonly handleDocumentFocus = (event: FocusEvent): void => {
+    if (event.target !== this.host) this.host.classList.remove("owns-focus");
+  };
+
+  private readonly handleWindowBlur = (): void => {
+    this.host.classList.remove("owns-focus");
+  };
+
+  private readonly handleWindowFocus = (): void => {
+    // Switching windows need not blur the document's active element.
+    this.host.classList.toggle(
+      "owns-focus",
+      this.doc.activeElement === this.host,
+    );
   };
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
@@ -548,6 +567,9 @@ export class GridRenderer {
     this.host.removeEventListener("keydown", this.handleKeyDown);
     this.host.removeEventListener("focus", this.handleFocus);
     this.host.removeEventListener("blur", this.handleBlur);
+    this.doc.removeEventListener("focus", this.handleDocumentFocus, true);
+    this.doc.defaultView!.removeEventListener("blur", this.handleWindowBlur);
+    this.doc.defaultView!.removeEventListener("focus", this.handleWindowFocus);
     this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
     this.renderItems = [];
