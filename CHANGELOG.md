@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Optional cover search based on metadata
+- Add more keyboard shortcuts
+- Add context menu to grid view
+- Option to change grid size (and `ctrl+scroll` shortcut)
+
+
 ## 0.3.3
 
 - Keep rapid grid selection changes in order, so clicks and keyboard actions apply to the intended items.
