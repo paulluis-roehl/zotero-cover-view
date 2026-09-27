@@ -380,6 +380,13 @@ export class GridView {
           command === "up" ? -1 : 1,
         );
         break;
+      case "page-up":
+      case "page-down":
+        destinationID = this.renderer.getPageDestination(
+          this.focusedItemID,
+          command === "page-up" ? -1 : 1,
+        );
+        break;
       case "home":
         destinationID = this.itemIDs[0];
         break;

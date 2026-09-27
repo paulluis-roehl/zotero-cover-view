@@ -5,7 +5,7 @@ import { getPref } from "../utils/prefs";
 const CHUNK_SIZE = 120;
 
 export type GridNavigationCommand =
-  "left" | "right" | "up" | "down" | "home" | "end";
+  "left" | "right" | "up" | "down" | "home" | "end" | "page-up" | "page-down";
 
 export type GridItemCommand =
   "activate" | "toggle-selection" | "select-all" | "delete";
@@ -121,6 +121,13 @@ export class GridRenderer {
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     const modifiers = this.getSelectionModifiers(event);
+    // Zotero uses both Ctrl and Cmd page shortcuts to change tabs. Leave
+    // these combinations (including Shift) to the application.
+    if (
+      (event.key === "PageUp" || event.key === "PageDown") &&
+      (event.ctrlKey || event.metaKey)
+    )
+      return;
     if (
       event.altKey ||
       (event.ctrlKey && this.isMacOS()) ||
@@ -134,6 +141,8 @@ export class GridRenderer {
       ArrowDown: "down",
       Home: "home",
       End: "end",
+      PageUp: "page-up",
+      PageDown: "page-down",
     }[event.key] as GridNavigationCommand | undefined;
     if (navigationCommand) {
       event.preventDefault();
@@ -416,6 +425,61 @@ export class GridRenderer {
 
     const destination =
       destinationRow[Math.min(columnIndex, destinationRow.length - 1)];
+    const destinationID = Number(destination.dataset.itemId);
+    return Number.isSafeInteger(destinationID) ? destinationID : undefined;
+  }
+
+  /** Move about one viewport in the current visual column, using live rows. */
+  getPageDestination(itemID: number, direction: -1 | 1): number | undefined {
+    const current = this.entries.get(itemID);
+    if (!current) return undefined;
+
+    let rows = this.getRenderedRows();
+    const rowIndex = rows.findIndex((row) => row.includes(current));
+    const columnIndex = rows[rowIndex].indexOf(current);
+    if (rows.length === 1 && this.renderedCount < this.renderItems.length) {
+      this.renderChunk();
+      rows = this.getRenderedRows();
+    }
+    const rowStep =
+      rows.length > 1 ? rows[1][0].offsetTop - rows[0][0].offsetTop : 0;
+    // Keep the last visible row on the next page rather than jumping to the
+    // first row below it. Still advance a row in short viewports.
+    const distance = Math.max(rowStep, this.host.clientHeight - rowStep);
+    const targetTop = current.offsetTop + direction * distance;
+
+    if (direction === 1) {
+      while (
+        this.renderedCount < this.renderItems.length &&
+        rows.at(-1)![0].offsetTop < targetTop
+      ) {
+        this.renderChunk();
+        rows = this.getRenderedRows();
+      }
+    }
+
+    let destinationRowIndex = rowIndex;
+    for (
+      let index = rowIndex + direction;
+      index >= 0 && index < rows.length;
+      index += direction
+    ) {
+      destinationRowIndex = index;
+      if (direction * (rows[index][0].offsetTop - targetTop) >= 0) {
+        const previous = index - direction;
+        if (
+          previous !== rowIndex &&
+          Math.abs(rows[previous][0].offsetTop - targetTop) <
+            Math.abs(rows[index][0].offsetTop - targetTop)
+        ) {
+          destinationRowIndex = previous;
+        }
+        break;
+      }
+    }
+
+    const row = rows[destinationRowIndex];
+    const destination = row[Math.min(columnIndex, row.length - 1)];
     const destinationID = Number(destination.dataset.itemId);
     return Number.isSafeInteger(destinationID) ? destinationID : undefined;
   }
