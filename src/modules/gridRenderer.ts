@@ -446,7 +446,23 @@ export class GridRenderer {
     // Move to the furthest row that has entered this viewport, including a
     // partially visible row. Still advance a row in short viewports.
     const distance = Math.max(rowStep, this.host.clientHeight - 1);
-    const targetTop = current.offsetTop + direction * distance;
+    const viewport = this.host.getBoundingClientRect();
+    const currentRect = current.getBoundingClientRect();
+    const viewportEdge =
+      current.offsetTop +
+      (direction === 1
+        ? viewport.bottom - currentRect.top - 1
+        : viewport.top - currentRect.top);
+    const targetTop =
+      direction === 1
+        ? Math.max(
+            current.offsetTop + rowStep,
+            Math.min(current.offsetTop + distance, viewportEdge),
+          )
+        : Math.min(
+            current.offsetTop - rowStep,
+            Math.max(current.offsetTop - distance, viewportEdge),
+          );
 
     if (direction === 1) {
       while (
@@ -467,7 +483,12 @@ export class GridRenderer {
       destinationRowIndex = index;
       if (direction * (rows[index][0].offsetTop - targetTop) > 0) {
         const previous = index - direction;
-        if (previous !== rowIndex) {
+        const rowRect = rows[index][0].getBoundingClientRect();
+        const partiallyVisible =
+          direction === 1
+            ? rowRect.top < viewport.bottom
+            : rowRect.bottom > viewport.top;
+        if (previous !== rowIndex && !partiallyVisible) {
           destinationRowIndex = previous;
         }
         break;

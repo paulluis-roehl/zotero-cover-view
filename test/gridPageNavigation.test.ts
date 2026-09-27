@@ -101,6 +101,7 @@ describe("grid page navigation", function () {
       await waitFor(() => selected()[0] === ids[1], "Reset starting selection");
       grid.style.padding = "";
       grid.style.height = `${rowHeight * 3.5}px`;
+      grid.scrollTop = 0;
       assert.closeTo(grid.clientHeight, rowHeight * 3.5, 2);
       press("PageDown");
       await waitFor(
@@ -109,7 +110,41 @@ describe("grid page navigation", function () {
       );
       assert.equal(grid.getAttribute("aria-activedescendant"), entries[10].id);
 
+      grid.scrollTop = 0;
+      const fourthRowTop =
+        entries[10].getBoundingClientRect().top -
+        grid.getBoundingClientRect().top;
+      grid.style.height = `${fourthRowTop}px`;
+      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => selected()[0] === ids[1], "Viewport edge start");
+      assert.closeTo(
+        entries[10].getBoundingClientRect().top,
+        grid.getBoundingClientRect().bottom,
+        1,
+      );
+      press("PageDown");
+      await waitFor(
+        () => selected()[0] === ids[7],
+        "Row starting below viewport is not selected",
+      );
+
+      grid.scrollTop = 0;
+      grid.style.height = `${fourthRowTop + 1}px`;
+      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => selected()[0] === ids[1], "One-pixel viewport start");
+      assert.isBelow(
+        entries[10].getBoundingClientRect().top,
+        grid.getBoundingClientRect().bottom,
+        "Fourth row is actually visible",
+      );
+      press("PageDown");
+      await waitFor(
+        () => selected()[0] === ids[10],
+        "One visible pixel includes the fourth row",
+      );
+
       grid.style.height = `${(entries[3].offsetTop - entries[0].offsetTop) * 2 - 8}px`;
+      grid.scrollTop = 0;
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Reset starting selection");
       assert.isTrue(press("PageDown").defaultPrevented);
@@ -156,6 +191,7 @@ describe("grid page navigation", function () {
       assert.deepEqual(selected(), ids.slice(4, 10));
 
       grid.style.height = `${rowHeight / 2}px`;
+      grid.scrollTop = 0;
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Short viewport start");
       press("PageDown");
@@ -166,6 +202,7 @@ describe("grid page navigation", function () {
       assert.isAbove(grid.scrollTop, 0, "Next row scrolls into view");
 
       grid.style.height = `${rowHeight * 2 - 8}px`;
+      grid.scrollTop = 0;
       grid.style.gridTemplateColumns = "repeat(2, 150px)";
       assert.notEqual(entries[1].offsetTop, entries[2].offsetTop);
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
