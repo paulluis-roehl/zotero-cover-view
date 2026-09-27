@@ -381,7 +381,7 @@ export class GridView {
         this.runSelectedItemCommand(async () => {
           const selected = this.tree.getSelectedIDs();
           if (!selected.length) return;
-            const anchor = this.renderer.ensureVisibleMenuAnchor(selected);
+          const anchor = this.renderer.ensureVisibleMenuAnchor(selected);
           if (anchor) await this.tree.openSelectedItemsMenu(anchor);
         }, "Failed to open selected grid items menu");
         return;

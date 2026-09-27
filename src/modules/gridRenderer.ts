@@ -425,7 +425,9 @@ export class GridRenderer {
   }
 
   /** Choose the last selected tile in grid order that intersects the viewport. */
-  ensureVisibleMenuAnchor(selectedIDs: readonly number[]): HTMLElement | undefined {
+  ensureVisibleMenuAnchor(
+    selectedIDs: readonly number[],
+  ): HTMLElement | undefined {
     const selected = new Set(selectedIDs);
     const viewport = this.host.getBoundingClientRect();
     let visible: HTMLElement | undefined;

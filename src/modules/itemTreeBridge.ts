@@ -78,34 +78,35 @@ export class ItemTreeBridge {
     await this.win.ZoteroPane.deleteSelectedItems(force);
   }
 
-  /** Zotero's internal item-tree callback; keep its runtime contract here. */
+  /** Build Zotero's native item menu, then let Gecko flip it before display. */
   async openSelectedItemsMenu(anchor: HTMLElement): Promise<void> {
     const pane = this.win.ZoteroPane as typeof this.win.ZoteroPane & {
-      onItemsContextMenuOpen?: (
-        event: { target: HTMLElement; screenX: number; screenY: number },
-        x: number,
-        y: number,
-      ) => Promise<void>;
+      buildItemContextMenu?: () => Promise<void>;
     };
-    if (typeof pane.onItemsContextMenuOpen !== "function") {
+    const popup = this.win.document.getElementById(
+      "zotero-itemmenu",
+    ) as XULPopupElement | null;
+    if (
+      typeof pane.buildItemContextMenu !== "function" ||
+      !popup?.openPopupAtScreenRect
+    ) {
       throw new Error("Zotero item context menu opener is unavailable");
     }
+    await pane.buildItemContextMenu();
     const rect = anchor.getBoundingClientRect();
     const viewport = anchor.parentElement?.getBoundingClientRect() ?? rect;
-    // A partially clipped tile is still visible, but its origin may be
-    // outside the grid. Position the popup beside its visible portion.
-    const x = Math.round(
-      this.win.mozInnerScreenX +
-        Math.max(viewport.left, Math.min(rect.right, viewport.right)),
-    );
-    const y = Math.round(
-      this.win.mozInnerScreenY +
-        Math.max(viewport.top, Math.min(rect.top, viewport.bottom)),
-    );
-    await pane.onItemsContextMenuOpen(
-      { target: anchor, screenX: x, screenY: y },
-      x,
-      y,
+    // This rectangle is the visible portion of the tile. Gecko positions a
+    // short menu below it and flips a long menu above it in one paint.
+    const right = Math.min(rect.right, viewport.right);
+    const top = Math.max(rect.top, viewport.top);
+    const bottom = Math.min(rect.bottom, viewport.bottom);
+    popup.openPopupAtScreenRect(
+      "after_start",
+      Math.round(this.win.mozInnerScreenX + right),
+      Math.round(this.win.mozInnerScreenY + top),
+      0,
+      Math.round(bottom - top),
+      true,
     );
   }
 
