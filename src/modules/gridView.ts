@@ -16,6 +16,11 @@ const GRID_RENDER_PREFS = [
   "fetchISBNCover",
   "fetchMetadataCover",
 ] as const;
+const WHEEL_PIXELS_PER_NOTCH = 100;
+const WHEEL_LINES_PER_NOTCH = 3;
+const TILE_SIZE_STEP = 9; // 5% of the 180px baseline
+const MIN_TILE_SIZE = 90;
+const MAX_TILE_SIZE = 360;
 let stopObservingPreferences: (() => void) | undefined;
 
 export class GridView {
@@ -37,6 +42,7 @@ export class GridView {
   private selectionGeneration = 0;
   private selectionWrites: Promise<void> = Promise.resolve();
   private focusOwner?: "grid" | "tree";
+  private wheelRemainder = 0;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -50,6 +56,9 @@ export class GridView {
       this.handleItemCommand,
     );
     this.applyTileSizePreference();
+    this.ui.host.addEventListener("wheel", this.handleWheel, {
+      passive: false,
+    });
     this.tree.onItemsChanged(this.scheduleSync);
     this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
       this.tree.refreshRows();
@@ -104,6 +113,7 @@ export class GridView {
       this.focusFrame = undefined;
     }
     this.ui.setEnabled(enabled);
+    if (!enabled) this.wheelRemainder = 0;
     if (!enabled) this.tree.refreshLayout();
     this.syncItems(enteringGrid);
     if (outgoingOwner === (enabled ? "tree" : "grid")) {
@@ -136,15 +146,59 @@ export class GridView {
     const size = getPref("tileSize");
     this.ui.host.style.setProperty(
       "--cover-view-tile-size",
-      `${Number.isFinite(size) ? Math.max(90, Math.min(360, size)) : 180}px`,
+      `${Number.isFinite(size) ? Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, size)) : 180}px`,
     );
   }
+
+  private readonly handleWheel = (event: WheelEvent): void => {
+    const isMacOS = this.win.navigator.platform.startsWith("Mac");
+    if (
+      this.ui.host.hidden ||
+      event.altKey ||
+      event.shiftKey ||
+      (isMacOS
+        ? !event.metaKey || event.ctrlKey
+        : !event.ctrlKey || event.metaKey)
+    )
+      return;
+
+    event.preventDefault();
+    const delta =
+      event.deltaMode === 1 // DOM_DELTA_LINE
+        ? event.deltaY / WHEEL_LINES_PER_NOTCH
+        : event.deltaMode === 2 // DOM_DELTA_PAGE
+          ? event.deltaY
+          : event.deltaY / WHEEL_PIXELS_PER_NOTCH;
+    if (!Number.isFinite(delta)) return;
+    const current = getPref("tileSize");
+    if (
+      (current <= MIN_TILE_SIZE && delta > 0) ||
+      (current >= MAX_TILE_SIZE && delta < 0)
+    ) {
+      this.wheelRemainder = 0;
+      return;
+    }
+    this.wheelRemainder += delta;
+    const notches = Math.trunc(this.wheelRemainder);
+    if (!notches) return;
+    this.wheelRemainder -= notches;
+
+    const size = Math.max(
+      MIN_TILE_SIZE,
+      Math.min(MAX_TILE_SIZE, current - notches * TILE_SIZE_STEP),
+    );
+    if (size !== current) setPref("tileSize", size);
+    if (size === MIN_TILE_SIZE || size === MAX_TILE_SIZE) {
+      this.wheelRemainder = 0;
+    }
+  };
 
   destroy(): void {
     if (this.focusFrame !== undefined)
       this.win.cancelAnimationFrame(this.focusFrame);
     this.win.clearInterval(this.selectionTimer);
     this.win.document.removeEventListener("focusin", this.trackFocus);
+    this.ui.host.removeEventListener("wheel", this.handleWheel);
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
