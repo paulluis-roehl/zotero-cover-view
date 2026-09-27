@@ -51,13 +51,13 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] double click open
 - [x] multi-select (`shift + click` and `ctrl + click`)
 - [ ] right click menu
-- [ ] general keyboard input and shortcuts
+- [x] general keyboard input and shortcuts
   - [x] adjust arrow keys for grid navigation
 - [ ] drag and drop files into grid view
 
 **Settings**
 
-- [ ] grid size
+- [x] grid size
 - [ ] grid item aspect ratio
   - update in `coverView.css` and also `placeholderCover.ts` default cover svg
 - [ ] further display options for grid view (e.g. title, author, year, ...)
@@ -99,15 +99,17 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 **Bugs**
 
-- [ ] fix: pdf cover renders incorrectly in some cases (with "old" / scanned text)
+- [>] fix: pdf cover renders incorrectly in some cases (with "old" / scanned text)
 - [x] fix: placeholder cover doesn't update when metadata changed
-- [ ] fix: focus
+- [x] fix: focus
   - [x] clicking on collection, then grid should shift focus from selected collection
   - [x] when switching back to list view, selection renders as "stale" (gray) rather than focused
-  - [ ] when focussing on something else, grid selection should become "stale" (gray)
+  - [x] when focussing on something else, grid selection should become "stale" (gray)
 - [ ] fix: when selecting book through grid view and then disabling plugin, only two items above the book render in list view (rest is white space)
   - when selecting that same book through list view, then switching to grid view and doing the same, everything works as intended
   - just switching to list view and back fixes it as well
+- [ ] fix: when lazy-loading grid view, scrollbar does not account for all items
+  - (maybe items themselves shouldn't be lazy-loaded, only covers)
 
 <br/>
 
@@ -119,7 +121,7 @@ See setup and debug details there.
 - Based on the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) by [@windingwind](https://github.com/windingwind).
 - Inspired by [this](https://forums.zotero.org/discussion/121736/feature-request-cover-flow-or-book-jacket-image-display-view) discussion on the Zotero forum.
 - Implementation also inspired by [zotero-lib-view](https://github.com/reiherj/zotero-lib-view).
-- ISBN-based cover images are provided by [Open Library](https://openlibrary.org/) through its [Covers API](https://openlibrary.org/dev/docs/api/covers).
+- ISBN and metadata-based cover images for books are provided by [Open Library](https://openlibrary.org/) through its [Covers API](https://openlibrary.org/dev/docs/api/covers).
 
 ## Disclaimer
 
