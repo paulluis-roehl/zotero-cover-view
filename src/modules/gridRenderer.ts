@@ -443,9 +443,9 @@ export class GridRenderer {
     }
     const rowStep =
       rows.length > 1 ? rows[1][0].offsetTop - rows[0][0].offsetTop : 0;
-    // Keep the last visible row on the next page rather than jumping to the
-    // first row below it. Still advance a row in short viewports.
-    const distance = Math.max(rowStep, this.host.clientHeight - rowStep);
+    // Move to the furthest row that has entered this viewport, including a
+    // partially visible row. Still advance a row in short viewports.
+    const distance = Math.max(rowStep, this.host.clientHeight - 1);
     const targetTop = current.offsetTop + direction * distance;
 
     if (direction === 1) {
@@ -467,11 +467,7 @@ export class GridRenderer {
       destinationRowIndex = index;
       if (direction * (rows[index][0].offsetTop - targetTop) >= 0) {
         const previous = index - direction;
-        if (
-          previous !== rowIndex &&
-          Math.abs(rows[previous][0].offsetTop - targetTop) <
-            Math.abs(rows[index][0].offsetTop - targetTop)
-        ) {
+        if (previous !== rowIndex) {
           destinationRowIndex = previous;
         }
         break;

@@ -81,6 +81,18 @@ describe("grid page navigation", function () {
 
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Starting selection");
+      grid.style.height = `${rowHeight * 3.5}px`;
+      assert.closeTo(grid.clientHeight, rowHeight * 3.5, 2);
+      press("PageDown");
+      await waitFor(
+        () => selected()[0] === ids[10],
+        "PageDown reaches the partially visible fourth row",
+      );
+      assert.equal(grid.getAttribute("aria-activedescendant"), entries[10].id);
+
+      grid.style.height = `${rowHeight * 2}px`;
+      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => selected()[0] === ids[1], "Reset starting selection");
       assert.isTrue(press("PageDown").defaultPrevented);
       await waitFor(
         () => selected()[0] === ids[4],
