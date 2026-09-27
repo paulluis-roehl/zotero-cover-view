@@ -120,7 +120,7 @@ describe("grid page navigation", function () {
       assert.closeTo(
         entries[10].getBoundingClientRect().top,
         grid.getBoundingClientRect().bottom,
-        1,
+        0.05,
       );
       press("PageDown");
       await waitFor(
@@ -132,10 +132,12 @@ describe("grid page navigation", function () {
       grid.style.height = `${fourthRowTop + 1}px`;
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "One-pixel viewport start");
-      assert.isBelow(
-        entries[10].getBoundingClientRect().top,
-        grid.getBoundingClientRect().bottom,
-        "Fourth row is actually visible",
+      assert.closeTo(
+        grid.getBoundingClientRect().bottom -
+          entries[10].getBoundingClientRect().top,
+        1,
+        0.05,
+        "Exactly one pixel of the fourth row is visible",
       );
       press("PageDown");
       await waitFor(
