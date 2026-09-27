@@ -376,6 +376,15 @@ export class GridView {
           () => this.tree.deleteSelectedItems(options.forceDelete ?? false),
           "Failed to delete selected grid items",
         );
+        return;
+      case "context-menu":
+        this.runSelectedItemCommand(async () => {
+          const selected = this.tree.getSelectedIDs();
+          if (!selected.length) return;
+            const anchor = this.renderer.ensureVisibleMenuAnchor(selected);
+          if (anchor) await this.tree.openSelectedItemsMenu(anchor);
+        }, "Failed to open selected grid items menu");
+        return;
     }
   };
 

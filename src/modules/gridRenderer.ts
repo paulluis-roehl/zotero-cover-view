@@ -8,7 +8,7 @@ export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end" | "page-up" | "page-down";
 
 export type GridItemCommand =
-  "activate" | "toggle-selection" | "select-all" | "delete";
+  "activate" | "toggle-selection" | "select-all" | "delete" | "context-menu";
 
 export interface GridItemCommandOptions {
   forceDelete?: boolean;
@@ -163,6 +163,14 @@ export class GridRenderer {
   private getItemCommand(
     event: KeyboardEvent,
   ): { command: GridItemCommand; options: GridItemCommandOptions } | undefined {
+    if (
+      (event.key === "ContextMenu" ||
+        (event.key === "F10" && event.shiftKey)) &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      return { command: "context-menu", options: {} };
+    }
     if (
       event.key.toLowerCase() === "a" &&
       (this.isMacOS() ? event.metaKey : event.ctrlKey) &&
@@ -414,6 +422,33 @@ export class GridRenderer {
         .get(itemID)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
+  }
+
+  /** Choose the last selected tile in grid order that intersects the viewport. */
+  ensureVisibleMenuAnchor(selectedIDs: readonly number[]): HTMLElement | undefined {
+    const selected = new Set(selectedIDs);
+    const viewport = this.host.getBoundingClientRect();
+    let visible: HTMLElement | undefined;
+    for (const entry of this.entries.values()) {
+      if (!selected.has(Number(entry.dataset.itemId))) continue;
+      const rect = entry.getBoundingClientRect();
+      if (
+        rect.bottom > viewport.top &&
+        rect.top < viewport.bottom &&
+        rect.right > viewport.left &&
+        rect.left < viewport.right
+      ) {
+        visible = entry;
+      }
+    }
+    if (visible) return visible;
+
+    const last = this.renderItems.findLast(({ item }) => selected.has(item.id));
+    if (!last) return undefined;
+    this.renderThroughItem(last.item.id);
+    const entry = this.entries.get(last.item.id);
+    entry?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    return entry;
   }
 
   /** Find the item in the corresponding column of an adjacent rendered row. */

@@ -78,6 +78,37 @@ export class ItemTreeBridge {
     await this.win.ZoteroPane.deleteSelectedItems(force);
   }
 
+  /** Zotero's internal item-tree callback; keep its runtime contract here. */
+  async openSelectedItemsMenu(anchor: HTMLElement): Promise<void> {
+    const pane = this.win.ZoteroPane as typeof this.win.ZoteroPane & {
+      onItemsContextMenuOpen?: (
+        event: { target: HTMLElement; screenX: number; screenY: number },
+        x: number,
+        y: number,
+      ) => Promise<void>;
+    };
+    if (typeof pane.onItemsContextMenuOpen !== "function") {
+      throw new Error("Zotero item context menu opener is unavailable");
+    }
+    const rect = anchor.getBoundingClientRect();
+    const viewport = anchor.parentElement?.getBoundingClientRect() ?? rect;
+    // A partially clipped tile is still visible, but its origin may be
+    // outside the grid. Position the popup beside its visible portion.
+    const x = Math.round(
+      this.win.mozInnerScreenX +
+        Math.max(viewport.left, Math.min(rect.right, viewport.right)),
+    );
+    const y = Math.round(
+      this.win.mozInnerScreenY +
+        Math.max(viewport.top, Math.min(rect.top, viewport.bottom)),
+    );
+    await pane.onItemsContextMenuOpen(
+      { target: anchor, screenX: x, screenY: y },
+      x,
+      y,
+    );
+  }
+
   /** Call after showing the native tree, when DOM measurements are available. */
   refreshLayout(): void {
     // Hidden selection/scroll updates can leave the windowed list's cached
