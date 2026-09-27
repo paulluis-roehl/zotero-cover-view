@@ -136,6 +136,17 @@ describe("grid page navigation", function () {
       );
       assert.deepEqual(selected(), ids.slice(4, 10));
 
+      grid.style.height = `${rowHeight / 2}px`;
+      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => selected()[0] === ids[1], "Short viewport start");
+      press("PageDown");
+      await waitFor(
+        () => selected()[0] === ids[4],
+        "Short viewport still advances one row",
+      );
+      assert.isAbove(grid.scrollTop, 0, "Next row scrolls into view");
+
+      grid.style.height = `${rowHeight * 2}px`;
       grid.style.gridTemplateColumns = "repeat(2, 150px)";
       assert.notEqual(entries[1].offsetTop, entries[2].offsetTop);
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
@@ -155,7 +166,6 @@ describe("grid page navigation", function () {
       );
       press("PageUp");
       assert.deepEqual(selected(), [ids[1]], "First boundary clamps");
-
     } finally {
       grid.style.cssText = originalStyle;
       if (grid.hidden !== originallyHidden) toggle();
@@ -169,9 +179,14 @@ describe("grid page navigation", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
     const commands: string[] = [];
-    const renderer = new GridRenderer(host, () => {}, undefined, (command) => {
-      commands.push(command);
-    });
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      undefined,
+      (command) => {
+        commands.push(command);
+      },
+    );
     try {
       for (const modifiers of [
         { ctrlKey: true },
@@ -195,23 +210,38 @@ describe("grid page navigation", function () {
     }
   });
 
-  it("pages across rendering chunks without requesting covers outside the viewport", function () {
+  it("pages across rendering chunks without requesting covers outside the viewport", async function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
+    const originalCacheCover = CoverProvider.cacheCover;
     const originalGetCover = CoverProvider.getCover;
     const requestedIDs: number[] = [];
+    const cachedIDs: number[] = [];
+    const observed = new Set<Element>();
+    let notifyCover: IntersectionObserverCallback | undefined;
     class FakeIntersectionObserver {
       constructor(
-        _callback: IntersectionObserverCallback,
-        _options?: IntersectionObserverInit,
-      ) {}
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
+        callback: IntersectionObserverCallback,
+        options?: IntersectionObserverInit,
+      ) {
+        if (options?.rootMargin === "200px") notifyCover = callback;
+      }
+      observe(target: Element): void {
+        if (notifyCover) observed.add(target);
+      }
+      unobserve(target: Element): void {
+        observed.delete(target);
+      }
+      disconnect(): void {
+        observed.clear();
+      }
     }
     win.IntersectionObserver =
       FakeIntersectionObserver as unknown as typeof IntersectionObserver;
+    CoverProvider.cacheCover = (item) => {
+      cachedIDs.push(item.id);
+    };
     CoverProvider.getCover = (id) => {
       requestedIDs.push(id);
       return Promise.resolve(null);
@@ -271,9 +301,26 @@ describe("grid page navigation", function () {
         requestedIDs,
         "Rendering skipped tiles does not load their covers",
       );
+      const destination = host.querySelector<HTMLElement>(
+        `[data-item-id="${focusedID}"]`,
+      )!;
+      assert.isTrue(observed.has(destination));
+      notifyCover?.(
+        [
+          {
+            isIntersecting: true,
+            target: destination,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
+      );
+      await Promise.resolve();
+      assert.deepEqual(cachedIDs, [focusedID]);
+      assert.deepEqual(requestedIDs, [focusedID]);
     } finally {
       renderer.destroy();
       host.remove();
+      CoverProvider.cacheCover = originalCacheCover;
       CoverProvider.getCover = originalGetCover;
       win.IntersectionObserver = originalIntersectionObserver;
     }
