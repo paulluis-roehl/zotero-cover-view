@@ -57,6 +57,11 @@ export class GridRenderer {
       command: GridItemCommand,
       options: GridItemCommandOptions,
     ) => void,
+    private readonly onContextMenu?: (
+      itemID: number,
+      screenX: number,
+      screenY: number,
+    ) => void,
   ) {
     const doc = host.ownerDocument;
     if (!doc) throw new Error("Cannot create grid renderer without a document");
@@ -66,6 +71,7 @@ export class GridRenderer {
     this.host.setAttribute("aria-multiselectable", "true");
     this.host.addEventListener("click", this.handleClick);
     this.host.addEventListener("dblclick", this.handleDoubleClick);
+    this.host.addEventListener("contextmenu", this.handleContextMenu);
     this.host.addEventListener("keydown", this.handleKeyDown);
     this.host.addEventListener("focus", this.handleFocus);
     this.host.addEventListener("blur", this.handleBlur);
@@ -100,26 +106,34 @@ export class GridRenderer {
   }
 
   private readonly handleClick = (event: MouseEvent): void => {
-    const entry = (event.target as Element | null)?.closest(
-      ".grid-view-item",
-    ) as HTMLElement | null;
-    if (!entry || !this.host.contains(entry)) return;
-
-    const itemID = Number(entry.dataset.itemId);
-    if (Number.isSafeInteger(itemID)) {
+    const itemID = this.getEventItemID(event);
+    if (itemID !== undefined) {
       this.host.focus();
       this.onSelect(itemID, this.getSelectionModifiers(event));
     }
   };
 
   private readonly handleDoubleClick = (event: Event): void => {
+    const itemID = this.getEventItemID(event);
+    if (itemID !== undefined) this.onActivate?.(itemID);
+  };
+
+  private getEventItemID(event: Event): number | undefined {
     const entry = (event.target as Element | null)?.closest(
       ".grid-view-item",
     ) as HTMLElement | null;
-    if (!entry || !this.host.contains(entry)) return;
+    if (!entry || !this.host.contains(entry)) return undefined;
 
     const itemID = Number(entry.dataset.itemId);
-    if (Number.isSafeInteger(itemID)) this.onActivate?.(itemID);
+    return Number.isSafeInteger(itemID) ? itemID : undefined;
+  }
+
+  private readonly handleContextMenu = (event: MouseEvent): void => {
+    const itemID = this.getEventItemID(event);
+    if (itemID === undefined) return;
+    event.preventDefault();
+    this.host.focus();
+    this.onContextMenu?.(itemID, event.screenX, event.screenY);
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -601,6 +615,7 @@ export class GridRenderer {
     this.renderKey = undefined;
     this.host.removeEventListener("click", this.handleClick);
     this.host.removeEventListener("dblclick", this.handleDoubleClick);
+    this.host.removeEventListener("contextmenu", this.handleContextMenu);
     this.host.removeEventListener("keydown", this.handleKeyDown);
     this.host.removeEventListener("focus", this.handleFocus);
     this.host.removeEventListener("blur", this.handleBlur);

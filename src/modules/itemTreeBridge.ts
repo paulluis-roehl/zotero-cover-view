@@ -80,6 +80,30 @@ export class ItemTreeBridge {
 
   /** Build Zotero's native item menu, then let Gecko flip it before display. */
   async openSelectedItemsMenu(anchor: HTMLElement): Promise<void> {
+    const rect = anchor.getBoundingClientRect();
+    const viewport = anchor.parentElement?.getBoundingClientRect() ?? rect;
+    // This rectangle is the visible portion of the tile. Gecko positions a
+    // short menu below it and flips a long menu above it in one paint.
+    const right = Math.min(rect.right, viewport.right);
+    const top = Math.max(rect.top, viewport.top);
+    const bottom = Math.min(rect.bottom, viewport.bottom);
+    await this.openItemMenu(
+      Math.round(this.win.mozInnerScreenX + right),
+      Math.round(this.win.mozInnerScreenY + top),
+      Math.round(bottom - top),
+    );
+  }
+
+  /** Open the native menu at the pointer without targeting the hidden tree. */
+  async openSelectedItemsMenuAtScreen(x: number, y: number): Promise<void> {
+    await this.openItemMenu(x, y, 0);
+  }
+
+  private async openItemMenu(
+    x: number,
+    y: number,
+    height: number,
+  ): Promise<void> {
     const pane = this.win.ZoteroPane as typeof this.win.ZoteroPane & {
       buildItemContextMenu?: () => Promise<void>;
     };
@@ -93,21 +117,7 @@ export class ItemTreeBridge {
       throw new Error("Zotero item context menu opener is unavailable");
     }
     await pane.buildItemContextMenu();
-    const rect = anchor.getBoundingClientRect();
-    const viewport = anchor.parentElement?.getBoundingClientRect() ?? rect;
-    // This rectangle is the visible portion of the tile. Gecko positions a
-    // short menu below it and flips a long menu above it in one paint.
-    const right = Math.min(rect.right, viewport.right);
-    const top = Math.max(rect.top, viewport.top);
-    const bottom = Math.min(rect.bottom, viewport.bottom);
-    popup.openPopupAtScreenRect(
-      "after_start",
-      Math.round(this.win.mozInnerScreenX + right),
-      Math.round(this.win.mozInnerScreenY + top),
-      0,
-      Math.round(bottom - top),
-      true,
-    );
+    popup.openPopupAtScreenRect("after_start", x, y, 0, height, true);
   }
 
   /** Call after showing the native tree, when DOM measurements are available. */

@@ -54,6 +54,7 @@ export class GridView {
       this.navigate,
       this.onGridFocus,
       this.handleItemCommand,
+      this.openClickedItemMenu,
     );
     this.applyTileSizePreference();
     this.ui.host.addEventListener("wheel", this.handleWheel, {
@@ -300,6 +301,28 @@ export class GridView {
     modifiers: GridSelectionModifiers,
   ): void => {
     this.transitionSelection(itemID, modifiers, "click");
+  };
+
+  private readonly openClickedItemMenu = (
+    itemID: number,
+    screenX: number,
+    screenY: number,
+  ): void => {
+    if (!this.pendingSelections) {
+      this.intendedSelection = this.tree.getSelectedIDs();
+    }
+    this.focusedItemID = itemID;
+    this.selectionAnchorID = itemID;
+    this.renderer.setFocusedItem(itemID);
+    if (!this.intendedSelection.includes(itemID)) {
+      this.intendedSelection = [itemID];
+      this.writeSelection(itemID);
+    }
+    this.runSelectedItemCommand(async () => {
+      if (this.tree.getSelectedIDs().includes(itemID)) {
+        await this.tree.openSelectedItemsMenuAtScreen(screenX, screenY);
+      }
+    }, "Failed to open selected grid items menu");
   };
 
   private readonly ensureGridFocus = (): void => {

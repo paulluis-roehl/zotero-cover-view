@@ -1,7 +1,7 @@
 import { assert } from "chai";
 import { ItemTreeBridge } from "../src/modules/itemTreeBridge";
 
-describe("grid keyboard item menu", function () {
+describe("grid item menu", function () {
   it("uses native selection and the last visible selected tile, waiting for pending writes", async function () {
     this.timeout(120000);
     const win = Zotero.getMainWindow()!;
@@ -44,6 +44,16 @@ describe("grid keyboard item menu", function () {
         ...modifiers,
       });
       grid.dispatchEvent(event);
+      return event;
+    };
+    const rightClick = (entry: HTMLElement, x: number, y: number) => {
+      const event = new win.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        screenX: x,
+        screenY: y,
+      });
+      entry.querySelector(".grid-view-title")!.dispatchEvent(event);
       return event;
     };
     const waitFor = async (condition: () => boolean) => {
@@ -216,13 +226,59 @@ describe("grid keyboard item menu", function () {
         ),
       );
 
-      const focusBeforeFailure = grid.getAttribute("aria-activedescendant");
+      await pane.selectItems([ids[0], ids[2]]);
+      const selectedMenu = rightClick(entries[0], 412, 527);
+      assert.isTrue(selectedMenu.defaultPrevented);
+      await waitFor(() => calls.length === 7);
+      assert.sameMembers(calls[6].selected, [ids[0], ids[2]]);
+      assert.deepEqual(
+        [calls[6].x, calls[6].y, calls[6].height],
+        [412, 527, 0],
+      );
+      assert.equal(grid.getAttribute("aria-activedescendant"), entries[0].id);
+      assert.equal(win.document.activeElement, grid);
+      entries[1].dispatchEvent(
+        new win.MouseEvent("click", { bubbles: true, shiftKey: true }),
+      );
+      await waitFor(
+        () =>
+          pane.getSelectedItems(true).length === 2 &&
+          pane.getSelectedItems(true).includes(ids[1]),
+      );
+      assert.sameMembers(pane.getSelectedItems(true), [ids[0], ids[1]]);
+
+      let releaseRightClick!: () => void;
+      const rightClickPending = new Promise<void>((resolve) => {
+        releaseRightClick = resolve;
+      });
+      override("selectItems", async (selected: number[]) => {
+        await rightClickPending;
+        return nativeSelect(selected);
+      });
+      assert.isTrue(rightClick(entries[3], 631, 744).defaultPrevented);
+      await Zotero.Promise.delay(30);
+      assert.lengthOf(calls, 7, "Pointer menu waits for native selection");
+      releaseRightClick();
+      await waitFor(() => calls.length === 8);
+      assert.deepEqual(calls[7].selected, [ids[3]]);
+      assert.deepEqual(
+        [calls[7].x, calls[7].y, calls[7].height],
+        [631, 744, 0],
+      );
+      assert.equal(grid.getAttribute("aria-activedescendant"), entries[3].id);
+      assert.equal(win.document.activeElement, grid);
+      entries[4].dispatchEvent(
+        new win.MouseEvent("click", { bubbles: true, shiftKey: true }),
+      );
+      await waitFor(() => pane.getSelectedItems(true).includes(ids[4]));
+      assert.sameMembers(pane.getSelectedItems(true), [ids[3], ids[4]]);
+
       override("buildItemContextMenu", undefined);
-      press("ContextMenu");
+      rightClick(entries[2], 123, 234);
       await waitFor(() => logs.length > 0);
-      assert.lengthOf(calls, 6);
+      assert.lengthOf(calls, 8);
       assert.deepEqual(pane.getSelectedItems(true), [ids[2]]);
-      assert.equal(grid.getAttribute("aria-activedescendant"), focusBeforeFailure);
+      assert.equal(grid.getAttribute("aria-activedescendant"), entries[2].id);
       assert.match(
         String(logs.at(-1)![0]),
         /Failed to open selected grid items menu/,
@@ -232,11 +288,39 @@ describe("grid keyboard item menu", function () {
       override("buildItemContextMenu", async () => {
         throw new Error("Menu opener failed");
       });
-      press("F10", { shiftKey: true });
+      const focusAfterFailure = grid.getAttribute("aria-activedescendant");
+      rightClick(entries[2], 123, 234);
       await waitFor(() => logs.length > logCount);
       assert.match(String(logs.at(-1)![1]), /Menu opener failed/);
       assert.deepEqual(pane.getSelectedItems(true), [ids[2]]);
-      assert.equal(grid.getAttribute("aria-activedescendant"), focusBeforeFailure);
+      assert.equal(
+        grid.getAttribute("aria-activedescendant"),
+        focusAfterFailure,
+      );
+
+      const beforeKeyboardFailure = logs.length;
+      press("F10", { shiftKey: true });
+      await waitFor(() => logs.length > beforeKeyboardFailure);
+      assert.deepEqual(pane.getSelectedItems(true), [ids[2]]);
+      assert.equal(
+        grid.getAttribute("aria-activedescendant"),
+        focusAfterFailure,
+      );
+
+      override("buildItemContextMenu", async () => {});
+      const beforeMissingPopup = logs.length;
+      Object.defineProperty(popup, "openPopupAtScreenRect", {
+        configurable: true,
+        value: undefined,
+      });
+      rightClick(entries[2], 321, 432);
+      await waitFor(() => logs.length > beforeMissingPopup);
+      assert.lengthOf(calls, 8);
+      assert.deepEqual(pane.getSelectedItems(true), [ids[2]]);
+      assert.equal(
+        grid.getAttribute("aria-activedescendant"),
+        focusAfterFailure,
+      );
     } finally {
       if (originalBuilder)
         Object.defineProperty(pane, "buildItemContextMenu", originalBuilder);
