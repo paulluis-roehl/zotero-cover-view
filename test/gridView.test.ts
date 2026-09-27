@@ -706,6 +706,22 @@ describe("grid view", function () {
       const forceDelete = press("Delete", primaryKey);
       const backspace = press("Backspace");
       const unrelated = press("r");
+      const selectAll = press(
+        "a",
+        isMacOS ? { metaKey: true } : { ctrlKey: true },
+      );
+      const shiftedSelectAll = press("a", {
+        ...(isMacOS ? { metaKey: true } : { ctrlKey: true }),
+        shiftKey: true,
+      });
+      const wrongModifier = press(
+        "a",
+        isMacOS ? { ctrlKey: true } : { metaKey: true },
+      );
+      const altSelectAll = press("a", {
+        ...(isMacOS ? { metaKey: true } : { ctrlKey: true }),
+        altKey: true,
+      });
 
       assert.deepEqual(commands, [
         { command: "activate" },
@@ -713,6 +729,7 @@ describe("grid view", function () {
         { command: "delete", forceDelete: false },
         { command: "delete", forceDelete: true },
         ...(isMacOS ? [{ command: "delete", forceDelete: false }] : []),
+        { command: "select-all" },
       ]);
       assert.isTrue(enter.defaultPrevented);
       assert.isTrue(space.defaultPrevented);
@@ -720,6 +737,10 @@ describe("grid view", function () {
       assert.isTrue(forceDelete.defaultPrevented);
       assert.equal(backspace.defaultPrevented, isMacOS);
       assert.isFalse(unrelated.defaultPrevented);
+      assert.isTrue(selectAll.defaultPrevented);
+      assert.isFalse(shiftedSelectAll.defaultPrevented);
+      assert.isFalse(wrongModifier.defaultPrevented);
+      assert.isFalse(altSelectAll.defaultPrevented);
     } finally {
       renderer.destroy();
     }

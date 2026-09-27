@@ -7,7 +7,8 @@ const CHUNK_SIZE = 120;
 export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end";
 
-export type GridItemCommand = "activate" | "toggle-selection" | "delete";
+export type GridItemCommand =
+  "activate" | "toggle-selection" | "select-all" | "delete";
 
 export interface GridItemCommandOptions {
   forceDelete?: boolean;
@@ -150,6 +151,13 @@ export class GridRenderer {
   private getItemCommand(
     event: KeyboardEvent,
   ): { command: GridItemCommand; options: GridItemCommandOptions } | undefined {
+    if (
+      event.key.toLowerCase() === "a" &&
+      (this.isMacOS() ? event.metaKey : event.ctrlKey) &&
+      !event.shiftKey
+    ) {
+      return { command: "select-all", options: {} };
+    }
     if (event.key === "Enter") return { command: "activate", options: {} };
     if (event.key === " " || event.key === "Spacebar") {
       return { command: "toggle-selection", options: {} };

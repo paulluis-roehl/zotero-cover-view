@@ -208,6 +208,10 @@ export class GridView {
         : [itemID];
     }
 
+    this.writeSelection(itemID);
+  }
+
+  private writeSelection(itemID?: number): void {
     const selection = [...this.intendedSelection];
     const generation = this.selectionGeneration;
     this.pendingSelections++;
@@ -302,6 +306,11 @@ export class GridView {
           { primary: false, shift: false },
           "toggle",
         );
+        return;
+      case "select-all":
+        if (!this.itemIDs.length) return;
+        this.intendedSelection = [...this.itemIDs];
+        this.writeSelection();
         return;
       case "delete":
         this.runSelectedItemCommand(
