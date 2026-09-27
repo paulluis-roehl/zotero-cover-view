@@ -465,7 +465,7 @@ export class GridRenderer {
       index += direction
     ) {
       destinationRowIndex = index;
-      if (direction * (rows[index][0].offsetTop - targetTop) >= 0) {
+      if (direction * (rows[index][0].offsetTop - targetTop) > 0) {
         const previous = index - direction;
         if (previous !== rowIndex) {
           destinationRowIndex = previous;

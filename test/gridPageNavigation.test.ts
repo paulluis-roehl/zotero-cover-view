@@ -30,7 +30,10 @@ describe("grid page navigation", function () {
       const deadline = Date.now() + 5000;
       while (!condition() && Date.now() < deadline)
         await Zotero.Promise.delay(20);
-      assert.isTrue(condition(), message);
+      assert.isTrue(
+        condition(),
+        `${message}; selected ${selected().join(",")}, focused ${grid.getAttribute("aria-activedescendant")}`,
+      );
     };
     const press = (key: string, modifiers = {}) => {
       const event = new win.KeyboardEvent("keydown", {
@@ -76,11 +79,27 @@ describe("grid page navigation", function () {
       const rowHeight = entries[3].offsetTop - entries[0].offsetTop;
       assert.isAbove(rowHeight, 0);
       grid.style.flex = "none";
-      grid.style.height = `${rowHeight * 2}px`;
-      assert.closeTo(grid.clientHeight, rowHeight * 2, 2);
+      grid.style.height = `${rowHeight * 2 - 8}px`;
+      assert.closeTo(grid.clientHeight, rowHeight * 2 - 8, 2);
 
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Starting selection");
+      grid.style.padding = "0";
+      grid.style.height = `${rowHeight * 3 + 1}px`;
+      assert.isBelow(
+        entries[10].offsetTop,
+        grid.scrollTop + grid.clientHeight,
+        "Fourth row has entered the viewport",
+      );
+      press("PageDown");
+      await waitFor(
+        () => selected()[0] === ids[10],
+        "PageDown reaches a fourth row visible by one pixel",
+      );
+
+      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => selected()[0] === ids[1], "Reset starting selection");
+      grid.style.padding = "";
       grid.style.height = `${rowHeight * 3.5}px`;
       assert.closeTo(grid.clientHeight, rowHeight * 3.5, 2);
       press("PageDown");
@@ -90,7 +109,7 @@ describe("grid page navigation", function () {
       );
       assert.equal(grid.getAttribute("aria-activedescendant"), entries[10].id);
 
-      grid.style.height = `${rowHeight * 2}px`;
+      grid.style.height = `${(entries[3].offsetTop - entries[0].offsetTop) * 2 - 8}px`;
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Reset starting selection");
       assert.isTrue(press("PageDown").defaultPrevented);
@@ -146,7 +165,7 @@ describe("grid page navigation", function () {
       );
       assert.isAbove(grid.scrollTop, 0, "Next row scrolls into view");
 
-      grid.style.height = `${rowHeight * 2}px`;
+      grid.style.height = `${rowHeight * 2 - 8}px`;
       grid.style.gridTemplateColumns = "repeat(2, 150px)";
       assert.notEqual(entries[1].offsetTop, entries[2].offsetTop);
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
