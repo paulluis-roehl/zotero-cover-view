@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Cache metadata cover search results across Zotero restarts, so unchanged books do not repeat Open Library searches.
+
 ## 0.4.0
 
 - Optional cover search based on metadata
