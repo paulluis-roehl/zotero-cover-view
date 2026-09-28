@@ -3,7 +3,6 @@ import { scheduleOpenLibraryRequest } from "../openLibraryRequestScheduler";
 const OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json";
 const OPEN_LIBRARY_COVERS_URL = "https://covers.openlibrary.org/b/olid";
 const CACHE_MISS_TTL = 7 * 24 * 60 * 60 * 1000;
-const SEARCH_RESULT_TTL = 30 * 24 * 60 * 60 * 1000;
 export const MAX_SEARCH_RESULTS = 5;
 
 type Request = typeof scheduleOpenLibraryRequest;
@@ -132,12 +131,7 @@ async function readCachedSearch(
       (typeof value.key !== "string" || !/^OL\d+M$/.test(value.key))
     )
       return undefined;
-    const ttl = value.key === null ? CACHE_MISS_TTL : SEARCH_RESULT_TTL;
-    if (
-      typeof value.timestamp !== "number" ||
-      value.timestamp > Date.now() ||
-      Date.now() - value.timestamp >= ttl
-    ) {
+    if (isExpiredSearch(value)) {
       await IOUtils.remove(searchPath(query), { ignoreAbsent: true });
       return undefined;
     }
@@ -173,17 +167,23 @@ export async function pruneExpiredMetadataSearchCache(): Promise<void> {
       )
         continue;
       if (inFlight.has(value.query)) continue;
-      const ttl = value.key === null ? CACHE_MISS_TTL : SEARCH_RESULT_TTL;
-      if (
-        typeof value.timestamp === "number" &&
-        (value.timestamp > Date.now() || Date.now() - value.timestamp >= ttl)
-      ) {
+      if (isExpiredSearch(value)) {
         await IOUtils.remove(path, { ignoreAbsent: true });
       }
     } catch {
       // A file being replaced by another lookup can be retried next session.
     }
   }
+}
+
+function isExpiredSearch(value: Record<string, unknown>): boolean {
+  const timestamp = value.timestamp;
+  return (
+    typeof timestamp !== "number" ||
+    !Number.isFinite(timestamp) ||
+    timestamp > Date.now() ||
+    (value.key === null && Date.now() - timestamp >= CACHE_MISS_TTL)
+  );
 }
 
 async function writeCachedSearch(

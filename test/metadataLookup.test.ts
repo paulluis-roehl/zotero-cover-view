@@ -148,7 +148,7 @@ describe("standalone metadata cover discovery", function () {
     assert.equal(requests, 1);
   });
 
-  it("retries stale search results instead of using an old edition", async function () {
+  it("keeps a successful search mapping beyond 30 days", async function () {
     const cache = queryPath("Title", "Author");
     await IOUtils.makeDirectory(PathUtils.join(directory(), "search"), {
       createAncestors: true,
@@ -171,15 +171,40 @@ describe("standalone metadata cover discovery", function () {
     };
     assert.equal(
       await findMetadataCoverURI("Title", "Author", request),
-      Zotero.File.pathToFileURI(path(edition, "jpg")),
+      Zotero.File.pathToFileURI(path(otherEdition, "jpg")),
     );
     assert.deepEqual(urls, [
-      "https://openlibrary.org/search.json?q=title:Title%20author:Author",
-      `https://covers.openlibrary.org/b/olid/${edition}-L.jpg?default=false`,
+      `https://covers.openlibrary.org/b/olid/${otherEdition}-L.jpg?default=false`,
     ]);
   });
 
-  it("prunes expired unused entries without removing fresh shared searches", async function () {
+  it("retries a missing search result after a week", async function () {
+    await IOUtils.makeDirectory(PathUtils.join(directory(), "search"), {
+      createAncestors: true,
+    });
+    await IOUtils.writeUTF8(
+      queryPath("Title", "Author"),
+      JSON.stringify({
+        query: JSON.stringify(["Title", "Author"]),
+        key: null,
+        timestamp: Date.now() - 8 * 24 * 60 * 60 * 1000,
+      }),
+    );
+    const urls: string[] = [];
+    const request = async (url: string) => {
+      urls.push(url);
+      return url.includes("search.json")
+        ? searchResponse([{ cover_edition_key: edition }])
+        : { status: 200, bytes: jpeg };
+    };
+    assert.equal(
+      await findMetadataCoverURI("Title", "Author", request),
+      Zotero.File.pathToFileURI(path(edition, "jpg")),
+    );
+    assert.equal(urls.filter((url) => url.includes("search.json")).length, 1);
+  });
+
+  it("prunes expired misses without removing shared successful searches", async function () {
     await IOUtils.makeDirectory(PathUtils.join(directory(), "search"), {
       createAncestors: true,
     });
@@ -198,7 +223,7 @@ describe("standalone metadata cover discovery", function () {
       JSON.stringify({
         query: JSON.stringify(["Different Title", "Author"]),
         key: edition,
-        timestamp: Date.now(),
+        timestamp: Date.now() - 31 * 24 * 60 * 60 * 1000,
       }),
     );
     await pruneExpiredMetadataSearchCache();
