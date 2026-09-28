@@ -2,6 +2,7 @@ import { assert } from "chai";
 import {
   findMetadataCoverURI,
   MAX_SEARCH_RESULTS,
+  pruneExpiredMetadataSearchCache,
 } from "../src/modules/covers/metadataCover";
 
 describe("standalone metadata cover discovery", function () {
@@ -176,6 +177,33 @@ describe("standalone metadata cover discovery", function () {
       "https://openlibrary.org/search.json?q=title:Title%20author:Author",
       `https://covers.openlibrary.org/b/olid/${edition}-L.jpg?default=false`,
     ]);
+  });
+
+  it("prunes expired unused entries without removing fresh shared searches", async function () {
+    await IOUtils.makeDirectory(PathUtils.join(directory(), "search"), {
+      createAncestors: true,
+    });
+    const old = queryPath("Title", "Author");
+    const fresh = queryPath("Different Title", "Author");
+    await IOUtils.writeUTF8(
+      old,
+      JSON.stringify({
+        query: JSON.stringify(["Title", "Author"]),
+        key: null,
+        timestamp: Date.now() - 8 * 24 * 60 * 60 * 1000,
+      }),
+    );
+    await IOUtils.writeUTF8(
+      fresh,
+      JSON.stringify({
+        query: JSON.stringify(["Different Title", "Author"]),
+        key: edition,
+        timestamp: Date.now(),
+      }),
+    );
+    await pruneExpiredMetadataSearchCache();
+    assert.isFalse(await IOUtils.exists(old));
+    assert.isTrue(await IOUtils.exists(fresh));
   });
 
   it("redownloads a removed JPEG without repeating the metadata search", async function () {

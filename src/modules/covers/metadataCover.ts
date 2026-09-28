@@ -9,6 +9,7 @@ export const MAX_SEARCH_RESULTS = 5;
 type Request = typeof scheduleOpenLibraryRequest;
 
 const inFlight = new Map<string, Promise<string | null>>();
+let cleanupScheduled = false;
 
 const cacheDirectory = (): string =>
   PathUtils.join(
@@ -41,6 +42,7 @@ export function findMetadataCoverURI(
   const normalizedTitle = title.trim();
   const normalizedAuthor = author.trim();
   if (!normalizedTitle || !normalizedAuthor) return Promise.resolve(null);
+  scheduleSearchCacheCleanup();
 
   // The tuple, not the request URL, is the identity of a metadata lookup.
   const query = JSON.stringify([normalizedTitle, normalizedAuthor]);
@@ -143,6 +145,44 @@ async function readCachedSearch(
   } catch {
     // Missing or malformed search cache entries are treated as cache misses.
     return undefined;
+  }
+}
+
+// Defer housekeeping so it cannot hold up the first covers displayed on startup.
+function scheduleSearchCacheCleanup(): void {
+  if (cleanupScheduled) return;
+  cleanupScheduled = true;
+  setTimeout(() => {
+    void pruneExpiredMetadataSearchCache().catch((error) =>
+      ztoolkit.log("Failed to clean metadata search cache", error),
+    );
+  }, 60_000);
+}
+
+export async function pruneExpiredMetadataSearchCache(): Promise<void> {
+  const directory = PathUtils.join(cacheDirectory(), "search");
+  if (!(await IOUtils.exists(directory))) return;
+  for (const path of await IOUtils.getChildren(directory)) {
+    if (!/[\\/][a-f0-9]{40}\.json$/.test(path)) continue;
+    try {
+      const value: unknown = JSON.parse(await IOUtils.readUTF8(path));
+      if (
+        !isRecord(value) ||
+        typeof value.query !== "string" ||
+        searchPath(value.query) !== path
+      )
+        continue;
+      if (inFlight.has(value.query)) continue;
+      const ttl = value.key === null ? CACHE_MISS_TTL : SEARCH_RESULT_TTL;
+      if (
+        typeof value.timestamp === "number" &&
+        (value.timestamp > Date.now() || Date.now() - value.timestamp >= ttl)
+      ) {
+        await IOUtils.remove(path, { ignoreAbsent: true });
+      }
+    } catch {
+      // A file being replaced by another lookup can be retried next session.
+    }
   }
 }
 
