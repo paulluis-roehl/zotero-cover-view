@@ -1,12 +1,30 @@
 const DEFAULT_COVER_WIDTH = 300;
 const DEFAULT_PAGE_WIDTH = 612;
+const MAX_CANVAS_PIXELS = 16_777_216;
+const PDFJS_MODULE_URL = "resource://zotero/reader/pdf/build/pdf.mjs";
+const PDFJS_WORKER_URL = "resource://zotero/reader/pdf/build/pdf.worker.mjs";
+const PDFJS_WASM_URL = "resource://zotero/reader/pdf/web/wasm/";
 
-interface PDFRenderResult {
-  buf: ArrayBuffer | null;
+interface PDFPage {
+  getViewport(options: { scale: number }): { width: number; height: number };
+  render(options: {
+    canvasContext: CanvasRenderingContext2D;
+    viewport: { width: number; height: number };
+  }): { promise: Promise<void> };
+}
+
+interface PDFJSModule {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument(options: { data: Uint8Array; wasmUrl: string }): {
+    promise: Promise<{
+      getPage(index: number): Promise<PDFPage>;
+      destroy(): Promise<void>;
+    }>;
+  };
 }
 
 interface ZoteroPDFWorker {
-  _enqueue<T>(action: () => Promise<T>, isPriority?: boolean): Promise<T>;
+  _enqueue<T>(action: () => Promise<T>): Promise<T>;
   _query<T>(
     action: string,
     data: Record<string, unknown>,
@@ -37,7 +55,7 @@ export function createPDFCacheSignature(
   attachment: Zotero.Item,
   filePath: string,
 ): string {
-  return `${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
+  return `v2:${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
 }
 
 export async function getCachedPDFCover(
@@ -94,7 +112,7 @@ export async function deleteCachedPDFCover(itemID: number): Promise<void> {
 }
 
 /**
- * Render the first page of a PDF as a PNG data URI.
+ * Render the first page with the same PDF.js engine and decoder assets as Zotero's reader.
  */
 export async function findPDFCoverURI(
   filePath: string,
@@ -104,6 +122,48 @@ export async function findPDFCoverURI(
     throw new Error("PDF cover width must be a positive number");
   }
 
+  const win = Zotero.getMainWindow();
+  if (!win) throw new Error("Cannot render PDF cover without a Zotero window");
+  // Import in the window realm: Zotero's sandbox freezes Map.prototype, while
+  // the reader's PDF.js module installs a Map polyfill during initialization.
+  let pdfjs: PDFJSModule;
+  try {
+    pdfjs = (await win.eval(`import("${PDFJS_MODULE_URL}")`)) as PDFJSModule;
+  } catch {
+    // Older Zotero versions do not ship the reader as an ES module.
+    return renderWithDocumentWorker(filePath, targetWidth);
+  }
+  pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+  const document = await pdfjs.getDocument({
+    data: new Uint8Array(await IOUtils.read(filePath)),
+    wasmUrl: PDFJS_WASM_URL,
+  }).promise;
+  try {
+    const page = await document.getPage(1);
+    const bounds = page.getViewport({ scale: 1 });
+    const scale = Math.min(
+      targetWidth / DEFAULT_PAGE_WIDTH,
+      Math.sqrt(MAX_CANVAS_PIXELS / (bounds.width * bounds.height)),
+    );
+    const viewport = page.getViewport({ scale });
+    const canvas = win.document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext("2d", {
+      alpha: false,
+    }) as CanvasRenderingContext2D | null;
+    if (!context) throw new Error("Cannot create PDF cover canvas");
+    await page.render({ canvasContext: context, viewport }).promise;
+    return canvas.toDataURL("image/png");
+  } finally {
+    await document.destroy();
+  }
+}
+
+async function renderWithDocumentWorker(
+  filePath: string,
+  targetWidth: number,
+): Promise<string | null> {
   const bytes = new Uint8Array(await IOUtils.read(filePath));
   const buf = bytes.buffer.slice(
     bytes.byteOffset,
@@ -111,7 +171,7 @@ export async function findPDFCoverURI(
   ) as ArrayBuffer;
   const worker = Zotero.PDFWorker as ZoteroPDFWorker;
   const result = await worker._enqueue(() =>
-    worker._query<PDFRenderResult>(
+    worker._query<{ buf: ArrayBuffer | null }>(
       "pdf.renderArea",
       {
         buf,
@@ -122,9 +182,7 @@ export async function findPDFCoverURI(
       [buf],
     ),
   );
-  if (!result.buf) return null;
-
-  return `${PNG_DATA_PREFIX}${encodeBase64(result.buf)}`;
+  return result.buf ? `${PNG_DATA_PREFIX}${encodeBase64(result.buf)}` : null;
 }
 
 function encodeBase64(buffer: ArrayBuffer | Uint8Array): string {

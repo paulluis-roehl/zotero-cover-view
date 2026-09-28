@@ -3,6 +3,7 @@
 ## 0.4.1
 
 - Cache metadata cover search results across Zotero restarts, so unchanged books do not repeat Open Library searches.
+- Render complete PDF covers for scanned pages whose CCITT-compressed images were previously omitted.
 
 ## 0.4.0
 
@@ -10,7 +11,6 @@
 - Add more keyboard shortcuts
 - Add context menu to grid view
 - Option to change grid size (and `ctrl+scroll` shortcut)
-
 
 ## 0.3.3
 
