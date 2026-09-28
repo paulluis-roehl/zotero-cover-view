@@ -123,6 +123,42 @@ describe("opt-in metadata cover lookup", function () {
         { ignoreAbsent: true },
       );
     }
+    for (const [title, author] of [
+      ["The Test Book", "Lovelace, Ada"],
+      ["The Test Book", "Lovelace"],
+      ["The Test Book", "Arthur Conan Doyle"],
+      ["The Test Book", "Doyle"],
+      ["Das Vermächtnis der Drachenreiter", "Paolini, Christopher"],
+      ["A Study in Scarlet", "Doyle, Sir Arthur Conan"],
+      ["A Study in Scarlet", "Doyle"],
+      ["Another Test Book", "Lovelace, Ada"],
+      ["Another Test Book", "Lovelace"],
+      ["A New Title", "Author, New"],
+      ["Edited Book", "Lovelace, Ada"],
+      ["The Test Book", "Author, New"],
+      ["The Test Book", "Author"],
+    ]) {
+      const query = JSON.stringify([title, author]);
+      await IOUtils.remove(
+        PathUtils.join(
+          directory,
+          "olid",
+          "search",
+          `${Zotero.Utilities.Internal.sha1(query)}.json`,
+        ),
+        { ignoreAbsent: true },
+      );
+      const url = `https://openlibrary.org/search.json?q=title:${encodeURIComponent(title)}%20author:${encodeURIComponent(author)}`;
+      await IOUtils.remove(
+        PathUtils.join(
+          directory,
+          "olid",
+          "search",
+          `${Zotero.Utilities.Internal.sha1(url)}.json`,
+        ),
+        { ignoreAbsent: true },
+      );
+    }
   }
 
   const placeholder = (cover: string | null) =>
@@ -377,7 +413,9 @@ describe("opt-in metadata cover lookup", function () {
 
     requests.length = 0;
     searchResult = { docs: [] };
-    placeholder(await CoverProvider.findCover(book()));
+    placeholder(
+      await CoverProvider.findCover(book({ title: "Another Test Book" })),
+    );
     assert.isTrue(requests.some((url) => url.includes("/search.json")));
     assert.isFalse(requests.some((url) => url.includes("/isbn/")));
   });
@@ -480,6 +518,40 @@ describe("opt-in metadata cover lookup", function () {
       `${editionKey}.jpg`,
     );
     assert.isTrue(requests.some((url) => url.includes("search.json")));
+  });
+
+  it("resolves changed title and author with new keys while retaining shared results", async function () {
+    setPref(metadataPref, true);
+    const original = book();
+    CoverProvider.cacheCover(original);
+    assert.include(
+      (await CoverProvider.getCover(original.id))!,
+      `${editionKey}.jpg`,
+    );
+
+    const editedTitle = book({ title: "Edited Book" });
+    CoverProvider.cacheCover(editedTitle);
+    assert.include(
+      (await CoverProvider.getCover(original.id))!,
+      `${editionKey}.jpg`,
+    );
+
+    const editedAuthor = book({ creators: ["New Author"] });
+    CoverProvider.cacheCover(editedAuthor);
+    assert.include(
+      (await CoverProvider.getCover(original.id))!,
+      `${editionKey}.jpg`,
+    );
+
+    CoverProvider.cacheCover(original);
+    assert.include(
+      (await CoverProvider.getCover(original.id))!,
+      `${editionKey}.jpg`,
+    );
+    assert.equal(
+      requests.filter((url) => url.includes("search.json")).length,
+      3,
+    );
   });
 
   it("redraws the Cover column on a cover-setting change even with the grid active", function () {

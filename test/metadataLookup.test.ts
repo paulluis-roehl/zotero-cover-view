@@ -18,6 +18,14 @@ describe("standalone metadata cover discovery", function () {
     );
   const path = (key: string, extension: string) =>
     PathUtils.join(directory(), `${key}.${extension}`);
+  const queryPath = (title: string, author: string) => {
+    const query = JSON.stringify([title.trim(), author.trim()]);
+    return PathUtils.join(
+      directory(),
+      "search",
+      `${Zotero.Utilities.Internal.sha1(query)}.json`,
+    );
+  };
   const searchResponse = (docs: unknown[]) => ({
     status: 200,
     bytes: new TextEncoder().encode(JSON.stringify({ docs })),
@@ -26,6 +34,24 @@ describe("standalone metadata cover discovery", function () {
     for (const key of [edition, otherEdition]) {
       for (const extension of ["jpg", "missing"])
         await IOUtils.remove(path(key, extension), { ignoreAbsent: true });
+    }
+    for (const [title, author] of [
+      ["A Study in Scarlet", "Doyle, Arthur Conan"],
+      ["Title", "Author"],
+      ["Another Title", "Author"],
+      ["Different Title", "Author"],
+      ["Title", "Other Author"],
+    ]) {
+      await IOUtils.remove(queryPath(title, author), { ignoreAbsent: true });
+      const url = `https://openlibrary.org/search.json?q=title:${encodeURIComponent(title)}%20author:${encodeURIComponent(author)}`;
+      await IOUtils.remove(
+        PathUtils.join(
+          directory(),
+          "search",
+          `${Zotero.Utilities.Internal.sha1(url)}.json`,
+        ),
+        { ignoreAbsent: true },
+      );
     }
   };
 
@@ -59,7 +85,6 @@ describe("standalone metadata cover discovery", function () {
     assert.deepEqual(urls, [
       "https://openlibrary.org/search.json?q=title:A%20Study%20in%20Scarlet%20author:Doyle%2C%20Arthur%20Conan",
       `https://covers.openlibrary.org/b/olid/${edition}-L.jpg?default=false`,
-      "https://openlibrary.org/search.json?q=title:A%20Study%20in%20Scarlet%20author:Doyle%2C%20Arthur%20Conan",
     ]);
     assert.equal(first, Zotero.File.pathToFileURI(path(edition, "jpg")));
     assert.equal(second, first);
@@ -67,6 +92,105 @@ describe("standalone metadata cover discovery", function () {
       Array.from(await IOUtils.read(path(edition, "jpg"))),
       Array.from(jpeg),
     );
+  });
+
+  it("reuses a saved search across lookups but searches a changed title", async function () {
+    const urls: string[] = [];
+    const request = async (url: string) => {
+      urls.push(url);
+      return url.includes("search.json")
+        ? searchResponse([{ cover_edition_key: edition }])
+        : { status: 200, bytes: jpeg };
+    };
+    await findMetadataCoverURI("Title", "Author", request);
+    await findMetadataCoverURI("Title", "Author", request);
+    await findMetadataCoverURI("Different Title", "Author", request);
+    await findMetadataCoverURI("Title", "Other Author", request);
+    assert.equal(urls.filter((url) => url.includes("search.json")).length, 3);
+    assert.equal(urls.filter((url) => url.includes("/olid/")).length, 1);
+  });
+
+  it("reads a cached title/author tuple without storing the request URL", async function () {
+    await IOUtils.makeDirectory(PathUtils.join(directory(), "search"), {
+      createAncestors: true,
+    });
+    await IOUtils.writeUTF8(
+      queryPath("Title", "Author"),
+      JSON.stringify({
+        query: JSON.stringify(["Title", "Author"]),
+        key: edition,
+        timestamp: Date.now(),
+      }),
+    );
+    const urls: string[] = [];
+    const request = async (url: string) => {
+      urls.push(url);
+      return { status: 200, bytes: jpeg };
+    };
+    assert.equal(
+      await findMetadataCoverURI(" Title ", "Author", request),
+      Zotero.File.pathToFileURI(path(edition, "jpg")),
+    );
+    assert.deepEqual(urls, [
+      `https://covers.openlibrary.org/b/olid/${edition}-L.jpg?default=false`,
+    ]);
+  });
+
+  it("caches searches without a cover edition temporarily", async function () {
+    let requests = 0;
+    const request = async () => {
+      requests++;
+      return searchResponse([]);
+    };
+    assert.isNull(await findMetadataCoverURI("Title", "Author", request));
+    assert.isNull(await findMetadataCoverURI("Title", "Author", request));
+    assert.equal(requests, 1);
+  });
+
+  it("retries stale search results instead of using an old edition", async function () {
+    const cache = queryPath("Title", "Author");
+    await IOUtils.makeDirectory(PathUtils.join(directory(), "search"), {
+      createAncestors: true,
+    });
+    const query = JSON.stringify(["Title", "Author"]);
+    await IOUtils.writeUTF8(
+      cache,
+      JSON.stringify({
+        query,
+        key: otherEdition,
+        timestamp: Date.now() - 31 * 24 * 60 * 60 * 1000,
+      }),
+    );
+    const urls: string[] = [];
+    const request = async (requestedURL: string) => {
+      urls.push(requestedURL);
+      return requestedURL.includes("search.json")
+        ? searchResponse([{ cover_edition_key: edition }])
+        : { status: 200, bytes: jpeg };
+    };
+    assert.equal(
+      await findMetadataCoverURI("Title", "Author", request),
+      Zotero.File.pathToFileURI(path(edition, "jpg")),
+    );
+    assert.deepEqual(urls, [
+      "https://openlibrary.org/search.json?q=title:Title%20author:Author",
+      `https://covers.openlibrary.org/b/olid/${edition}-L.jpg?default=false`,
+    ]);
+  });
+
+  it("redownloads a removed JPEG without repeating the metadata search", async function () {
+    const urls: string[] = [];
+    const request = async (url: string) => {
+      urls.push(url);
+      return url.includes("search.json")
+        ? searchResponse([{ cover_edition_key: edition }])
+        : { status: 200, bytes: jpeg };
+    };
+    await findMetadataCoverURI("Title", "Author", request);
+    await IOUtils.remove(path(edition, "jpg"));
+    await findMetadataCoverURI("Title", "Author", request);
+    assert.equal(urls.filter((url) => url.includes("search.json")).length, 1);
+    assert.equal(urls.filter((url) => url.includes("/olid/")).length, 2);
   });
 
   it("does not search without both fields", async function () {
@@ -166,6 +290,10 @@ describe("standalone metadata cover discovery", function () {
   });
 
   it("deduplicates simultaneous lookups", async function () {
+    let started!: () => void;
+    const searchStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     let release!: (value: ReturnType<typeof searchResponse>) => void;
     let requests = 0;
     const request = async (url: string) => {
@@ -173,12 +301,14 @@ describe("standalone metadata cover discovery", function () {
       if (url.includes("search.json"))
         return new Promise<ReturnType<typeof searchResponse>>((resolve) => {
           release = resolve;
+          started();
         });
       return { status: 200, bytes: jpeg };
     };
     const first = findMetadataCoverURI("Title", "Author", request);
     const second = findMetadataCoverURI("Title", "Author", request);
     assert.strictEqual(first, second);
+    await searchStarted;
     release(searchResponse([{ cover_edition_key: edition }]));
     assert.equal(await first, Zotero.File.pathToFileURI(path(edition, "jpg")));
     assert.equal(requests, 2);
