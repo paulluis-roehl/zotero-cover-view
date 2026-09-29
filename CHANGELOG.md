@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Drag-and-drop files in grid view
+- Enhance grid view display options
+- Add cover to item info
+
 ## 0.4.1
 
 - Cache metadata cover search results across Zotero restarts, so unchanged books do not repeat Open Library searches.
