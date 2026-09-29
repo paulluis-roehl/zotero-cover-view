@@ -32,6 +32,42 @@ export class ItemTreeBridge {
     return this.win.ZoteroPane.getSelectedItems(true);
   }
 
+  /** Supply the same source row and payload helper used by Zotero's item tree.
+   * The collection tree uses this row to decide add/move/copy and invalid drops.
+   */
+  startItemDrag(event: DragEvent, itemIDs: number[]): void {
+    const source = (
+      this.itemsView as ItemsView & {
+        collectionTreeRows?: Array<unknown>;
+      }
+    ).collectionTreeRows?.[0];
+    const dragDrop = (
+      Zotero as typeof Zotero & {
+        DragDrop: { currentDragSource: unknown };
+      }
+    ).DragDrop;
+    const onDragItems = (
+      Zotero.Utilities.Internal as unknown as {
+        onDragItems?: (event: DragEvent, ids: number[], image: Element) => void;
+      }
+    ).onDragItems;
+    if (!source || !onDragItems || !event.currentTarget || !itemIDs.length) {
+      throw new Error("Native Zotero item drag is unavailable");
+    }
+    dragDrop.currentDragSource = source;
+    try {
+      onDragItems(
+        event,
+        itemIDs,
+        (event.target as Element).closest(".grid-view-item") ??
+          (event.target as Element),
+      );
+    } catch (error) {
+      dragDrop.currentDragSource = null;
+      throw error;
+    }
+  }
+
   focus(): void {
     this.win.document
       .getElementById("zotero-items-tree")

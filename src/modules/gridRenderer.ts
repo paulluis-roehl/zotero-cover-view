@@ -62,6 +62,7 @@ export class GridRenderer {
       screenX: number,
       screenY: number,
     ) => void,
+    private readonly onDragStart?: (itemID: number, event: DragEvent) => void,
   ) {
     const doc = host.ownerDocument;
     if (!doc) throw new Error("Cannot create grid renderer without a document");
@@ -72,6 +73,7 @@ export class GridRenderer {
     this.host.addEventListener("click", this.handleClick);
     this.host.addEventListener("dblclick", this.handleDoubleClick);
     this.host.addEventListener("contextmenu", this.handleContextMenu);
+    this.host.addEventListener("dragstart", this.handleDragStart);
     this.host.addEventListener("keydown", this.handleKeyDown);
     this.host.addEventListener("focus", this.handleFocus);
     this.host.addEventListener("blur", this.handleBlur);
@@ -134,6 +136,15 @@ export class GridRenderer {
     event.preventDefault();
     this.host.focus();
     this.onContextMenu?.(itemID, event.screenX, event.screenY);
+  };
+
+  private readonly handleDragStart = (event: DragEvent): void => {
+    const itemID = this.getEventItemID(event);
+    if (itemID === undefined || !event.dataTransfer || !this.onDragStart) {
+      event.preventDefault();
+      return;
+    }
+    this.onDragStart(itemID, event);
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -349,6 +360,7 @@ export class GridRenderer {
     entry.classList.toggle("focused", this.focusedItemID === item.id);
     entry.id = `${this.host.id || "cover-view-grid"}-item-${item.id}`;
     entry.setAttribute("role", "option");
+    entry.draggable = true;
     entry.setAttribute("aria-selected", String(this.selectedIDs.has(item.id)));
     this.entries.set(item.id, entry);
 
@@ -358,6 +370,8 @@ export class GridRenderer {
     const image = this.doc.createElement("img");
     image.alt = getString("cover-view-image-alt", { args: { title } });
     image.hidden = true;
+    // Native image dragging would bypass the tile's item payload.
+    image.draggable = false;
     coverFrame.appendChild(image);
 
     const caption = this.doc.createElement("figcaption");
@@ -616,6 +630,7 @@ export class GridRenderer {
     this.host.removeEventListener("click", this.handleClick);
     this.host.removeEventListener("dblclick", this.handleDoubleClick);
     this.host.removeEventListener("contextmenu", this.handleContextMenu);
+    this.host.removeEventListener("dragstart", this.handleDragStart);
     this.host.removeEventListener("keydown", this.handleKeyDown);
     this.host.removeEventListener("focus", this.handleFocus);
     this.host.removeEventListener("blur", this.handleBlur);

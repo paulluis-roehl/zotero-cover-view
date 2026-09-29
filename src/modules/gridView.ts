@@ -55,6 +55,7 @@ export class GridView {
       this.onGridFocus,
       this.handleItemCommand,
       this.openClickedItemMenu,
+      this.startItemDrag,
     );
     this.applyTileSizePreference();
     this.ui.host.addEventListener("wheel", this.handleWheel, {
@@ -301,6 +302,26 @@ export class GridView {
     modifiers: GridSelectionModifiers,
   ): void => {
     this.transitionSelection(itemID, modifiers, "click");
+  };
+
+  private readonly startItemDrag = (itemID: number, event: DragEvent): void => {
+    try {
+      // Read the native selection at drag start. An unselected tile is dragged
+      // alone without changing selection or queuing an asynchronous tree write.
+      const selected = this.tree.getSelectedIDs();
+      const selectedSet = new Set(
+        selected.includes(itemID) ? selected : [itemID],
+      );
+      const itemIDs = this.itemIDs.filter((id) => selectedSet.has(id));
+      if (!itemIDs.length) {
+        event.preventDefault();
+        return;
+      }
+      this.tree.startItemDrag(event, itemIDs);
+    } catch (error) {
+      event.preventDefault();
+      ztoolkit.log("Failed to start grid item drag", itemID, error);
+    }
   };
 
   private readonly openClickedItemMenu = (
