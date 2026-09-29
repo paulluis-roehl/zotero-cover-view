@@ -93,18 +93,21 @@ export class ItemTreeBridge {
     if (!library || !library.editable) return false;
     if (!rows.every((row) => row.isCollection() || row.isLibrary(true)))
       return false;
-    // Native onDrop imports each entry by its .path. Do not pass it URLs,
-    // directories, mixed flavors, or entries whose type we cannot verify.
-    if (
-      !transfer.types?.includes("application/x-moz-file") ||
-      transfer.types.some(
-        (type) => type !== "application/x-moz-file" && type !== "Files",
-      ) ||
-      !transfer.mozItemCount ||
-      !transfer.mozGetDataAt
-    )
-      return false;
+    // Dolphin advertises a URL flavor along with native files. Accept it only
+    // when every entry also has a verified local file for native onDrop.
     try {
+      if (
+        !transfer.types?.includes("application/x-moz-file") ||
+        transfer.types.some(
+          (type) =>
+            type !== "application/x-moz-file" &&
+            type !== "text/x-moz-url" &&
+            type !== "Files",
+        ) ||
+        !transfer.mozItemCount ||
+        !transfer.mozGetDataAt
+      )
+        return false;
       for (let index = 0; index < transfer.mozItemCount; index++) {
         const file = transfer.mozGetDataAt("application/x-moz-file", index) as {
           path?: string;

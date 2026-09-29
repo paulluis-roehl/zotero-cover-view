@@ -76,8 +76,16 @@ describe("grid whitespace file drops", function () {
       recognize.autoRecognizeItems = (items) => {
         recognized = items;
       };
-      const transfer = fileTransfer(path);
-      assert.isTrue(bridge.canDropFiles(transfer));
+      // Build a Gecko transfer with the two flavors reported by Dolphin.
+      const transfer = new win.DataTransfer();
+      const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      file.initWithPath(path);
+      transfer.mozSetDataAt("application/x-moz-file", file, 0);
+      transfer.mozSetDataAt("text/x-moz-url", `file://${path}`, 0);
+      assert.isTrue(
+        bridge.canDropFiles(transfer),
+        "Dolphin's file + URL flavors must still import the local PDF",
+      );
       const over = drag(win, grid, "dragover", transfer);
       assert.isTrue(over.defaultPrevented);
       // Observe completion without replacing the native implementation.
