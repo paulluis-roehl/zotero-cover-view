@@ -5,6 +5,18 @@ type ListenerEvent = {
 type ItemsView = _ZoteroTypes.ItemTree & {
   _treebox?: { update(): void };
   tree?: { invalidate(): void };
+  collectionTreeRows?: CollectionDropRow[];
+  canDropCheck?: (
+    row: number,
+    orient: number,
+    transfer: DataTransfer,
+  ) => boolean;
+  onDrop?: (event: DragEvent, row: number) => Promise<void>;
+};
+type CollectionDropRow = {
+  ref: { libraryID: number; id?: number };
+  isCollection(): boolean;
+  isLibrary(root?: boolean): boolean;
 };
 type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
@@ -66,6 +78,59 @@ export class ItemTreeBridge {
       dragDrop.currentDragSource = null;
       throw error;
     }
+  }
+
+  /** Delegate whitespace file drops to the same importer as Zotero's item tree. */
+  canDropFiles(transfer: DataTransfer | null): boolean {
+    if (!transfer || !this.itemsView.onDrop || !this.itemsView.canDropCheck)
+      return false;
+    const rows = this.itemsView.collectionTreeRows;
+    if (!rows?.length || rows.some((row) => !row.ref)) return false;
+    const libraries = new Set(rows.map((row) => row.ref.libraryID));
+    if (libraries.size !== 1) return false;
+    const libraryID = rows[0].ref.libraryID;
+    const library = Zotero.Libraries.get(libraryID);
+    if (!library || !library.editable) return false;
+    if (!rows.every((row) => row.isCollection() || row.isLibrary(true)))
+      return false;
+    // Native onDrop imports each entry by its .path. Do not pass it URLs,
+    // directories, mixed flavors, or entries whose type we cannot verify.
+    if (
+      !transfer.types?.includes("application/x-moz-file") ||
+      transfer.types.some(
+        (type) => type !== "application/x-moz-file" && type !== "Files",
+      ) ||
+      !transfer.mozItemCount ||
+      !transfer.mozGetDataAt
+    )
+      return false;
+    try {
+      for (let index = 0; index < transfer.mozItemCount; index++) {
+        const file = transfer.mozGetDataAt("application/x-moz-file", index) as {
+          path?: string;
+          isFile?: () => boolean;
+        } | null;
+        if (!file?.path || !file.isFile?.()) return false;
+      }
+      return this.itemsView.canDropCheck(-1, -1, transfer);
+    } catch {
+      return false;
+    }
+  }
+
+  async dropFiles(event: DragEvent): Promise<void> {
+    if (!this.canDropFiles(event.dataTransfer)) return;
+    const dragDrop = Zotero as typeof Zotero & {
+      DragDrop: {
+        currentOrientation: number;
+        currentDropEffect: string | null;
+      };
+    };
+    // onDrop(-1) explicitly means whitespace; its internal row=0 is not a
+    // tile target. Clear state left by another drop target before handing off.
+    dragDrop.DragDrop.currentOrientation = -1;
+    dragDrop.DragDrop.currentDropEffect = null;
+    await this.itemsView.onDrop!(event, -1);
   }
 
   focus(): void {

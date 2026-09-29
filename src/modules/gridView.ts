@@ -61,6 +61,8 @@ export class GridView {
     this.ui.host.addEventListener("wheel", this.handleWheel, {
       passive: false,
     });
+    this.ui.host.addEventListener("dragover", this.handleFileDragOver);
+    this.ui.host.addEventListener("drop", this.handleFileDrop);
     this.tree.onItemsChanged(this.scheduleSync);
     this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
       this.tree.refreshRows();
@@ -201,6 +203,8 @@ export class GridView {
     this.win.clearInterval(this.selectionTimer);
     this.win.document.removeEventListener("focusin", this.trackFocus);
     this.ui.host.removeEventListener("wheel", this.handleWheel);
+    this.ui.host.removeEventListener("dragover", this.handleFileDragOver);
+    this.ui.host.removeEventListener("drop", this.handleFileDrop);
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
@@ -322,6 +326,45 @@ export class GridView {
       event.preventDefault();
       ztoolkit.log("Failed to start grid item drag", itemID, error);
     }
+  };
+
+  private isWhitespaceDrop(event: DragEvent): boolean {
+    const target = event.target as Element | null;
+    return (
+      !this.ui.host.hidden &&
+      this.win.Zotero_Tabs.selectedType === "library" &&
+      !!target &&
+      this.ui.host.contains(target) &&
+      !target.closest(".grid-view-item")
+    );
+  }
+
+  private readonly handleFileDragOver = (event: DragEvent): void => {
+    if (!this.isWhitespaceDrop(event)) return;
+    if (!this.tree.canDropFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const transfer = event.dataTransfer!;
+    if (this.win.navigator.platform.startsWith("Mac")) {
+      // Gecko doesn't expose Mac modifiers during dragover; onDrop resolves them.
+      transfer.dropEffect = "move";
+    } else {
+      transfer.dropEffect = event.shiftKey
+        ? event.ctrlKey
+          ? "link"
+          : "move"
+        : "copy";
+    }
+  };
+
+  private readonly handleFileDrop = (event: DragEvent): void => {
+    if (!this.isWhitespaceDrop(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!this.tree.canDropFiles(event.dataTransfer)) return;
+    void this.tree.dropFiles(event).catch((error) => {
+      ztoolkit.log("Failed to import files into grid", error);
+    });
   };
 
   private readonly openClickedItemMenu = (
