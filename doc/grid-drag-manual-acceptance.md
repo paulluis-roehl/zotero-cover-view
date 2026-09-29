@@ -3,19 +3,32 @@
 The integration test covers Zotero's installed item payload helper and collection
 drop handler. Real OS drag sessions cannot be exercised by synthetic DOM events.
 
-- On Windows, macOS, and Linux, drag a standalone PDF attachment from a grid tile
-  into the file manager. Verify the file is copied and the original Zotero file
-  remains available. On Windows, verify a file in Zotero storage is not moved out
-  of storage. On macOS, verify promise-based file drags work; on Linux, verify
-  file URL drags work.
-- Drag a parent item with a child PDF: it should carry the item and Quick Copy,
-  not silently export the child's file. Drag the standalone attachment separately
-  to verify file export.
-- Drag selected and unselected tiles onto another collection, the source
-  collection, a library root, a read-only collection, and (where available) a
-  collection in another library. Zotero's native drop feedback and add/move/copy
-  rules should match a drag from the list view, including modifier keys.
-- Drag a book tile into a text editor or citation-capable target: confirm Quick
-  Copy text (and rich text if supported) matches a native list-view drag.
+## Verified manually on Linux
 
-No OS/file-manager or cross-library drag session has been manually accepted yet.
+- A standalone PDF tile drags into the file manager and an email program; the
+  original PDF remains available in Zotero after the file-manager drag.
+  Zotero supplies the Linux file-URL drag flavor; the email check confirms an
+  additional compatible external file target, not the flavor in isolation.
+- A parent book tile drags into LibreOffice and inserts a reference. Child
+  attachments do not have grid tiles, so dragging a child file from its parent
+  is not supported (intended for now). The integration test confirms a parent
+  payload does not silently include its child's file.
+- Selected and unselected tiles drag into another collection; move/copy modifier
+  keys work.
+- Dropping an item back into its source collection is rejected.
+- A same-library drop onto the library root is rejected, as expected for items
+  already in that library. A cross-library drop onto a library root is a
+  different case.
+- A book tile drags into LibreOffice and inserts a reference (Quick Copy). The
+  formatting matches a list-view drag, including RTF.
+
+## Still to verify
+
+- Windows: drag a standalone attachment into the file manager and confirm a
+  file stored in Zotero is copied rather than moved out of storage.
+- macOS: verify standalone attachment file-manager export via file promises.
+- Collection targets not covered by the Linux report: a read-only group
+  collection (only if you have access to a group library without edit
+  permissions), and a collection in another library (if available). These are
+  target *types*, not every individual collection. Cross-library drop onto a
+  library root is also unverified.
