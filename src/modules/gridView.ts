@@ -341,7 +341,7 @@ export class GridView {
 
   private readonly handleFileDragOver = (event: DragEvent): void => {
     if (!this.isWhitespaceDrop(event)) return;
-    if (!this.tree.canDropFiles(event.dataTransfer)) return;
+    if (!this.tree.canHoverFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
     const transfer = event.dataTransfer!;
@@ -361,7 +361,6 @@ export class GridView {
     if (!this.isWhitespaceDrop(event)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (!this.tree.canDropFiles(event.dataTransfer)) return;
     void this.tree.dropFiles(event).catch((error) => {
       ztoolkit.log("Failed to import files into grid", error);
     });

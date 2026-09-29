@@ -40,6 +40,67 @@ describe("grid whitespace file drops", function () {
     } as unknown as DataTransfer;
   }
 
+  it("accepts a file drag whose contents are hidden until drop, but validates before import", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const toggle = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const view = pane.itemsView as typeof pane.itemsView & {
+      onDrop: (event: DragEvent, row: number) => Promise<void>;
+    };
+    const originalDrop = view.onDrop;
+    const path = PathUtils.join(
+      Zotero.DataDirectory.dir,
+      `cover-view-protected-${Zotero.Utilities.randomString()}.pdf`,
+    );
+    let available = false;
+    let calls = 0;
+    try {
+      await IOUtils.write(path, new TextEncoder().encode("%PDF-1.4\n"));
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
+      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      const transfer = Object.assign(fileTransfer(path), {
+        types: ["application/x-moz-file", "text/x-moz-url", "Files"],
+        mozGetDataAt: (type: string) => {
+          if (!available) throw new Error("file inaccessible during dragover");
+          return type === "application/x-moz-file"
+            ? fileTransfer(path).mozGetDataAt(type, 0)
+            : null;
+        },
+      });
+      view.onDrop = async (_event, row) => {
+        assert.equal(row, -1);
+        calls++;
+      };
+      assert.isTrue(
+        drag(win, grid, "dragover", transfer).defaultPrevented,
+        "the grid must opt in to the drop before file objects are exposed",
+      );
+      available = true;
+      assert.isTrue(drag(win, grid, "drop", transfer).defaultPrevented);
+      assert.equal(calls, 1, "verified local file reaches native importer");
+
+      available = false;
+      drag(win, grid, "dragover", transfer);
+      available = true;
+      const directory = Object.assign({}, transfer, {
+        mozGetDataAt: () =>
+          fileTransfer(Zotero.DataDirectory.dir).mozGetDataAt(
+            "application/x-moz-file",
+            0,
+          ),
+      }) as DataTransfer;
+      drag(win, grid, "drop", directory);
+      assert.equal(calls, 1, "a directory must not reach native importer");
+    } finally {
+      view.onDrop = originalDrop;
+      if (grid.hidden !== originallyHidden)
+        toggle.dispatchEvent(new win.Event("command"));
+      await IOUtils.remove(path, { ignoreAbsent: true });
+    }
+  });
+
   it("imports a file as a standalone attachment into the selected collection via Zotero", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
@@ -63,6 +124,7 @@ describe("grid whitespace file drops", function () {
     const originalRecognize = recognize.autoRecognizeItems;
     let recognized: Zotero.Item[] = [];
     let imported: Zotero.Item | undefined;
+    let importedWrapped: Zotero.Item | undefined;
     try {
       // A minimal PDF so Zotero detects the document type for recognition.
       const content =
@@ -105,6 +167,36 @@ describe("grid whitespace file drops", function () {
       assert.isNotOk(imported.parentItemID);
       assert.isTrue(collection.hasItem(imported.id));
       assert.isTrue(await IOUtils.exists(path), "copy retains the source");
+
+      // External Gecko drags can expose an nsISupports wrapper with no path
+      // until the native file interface is requested.
+      const wrapped = {
+        QueryInterface: (_iface: typeof Ci.nsIFile) => {
+          Object.assign(wrapped, {
+            path: file.path,
+            isFile: () => true,
+            isDirectory: () => false,
+          });
+          return file;
+        },
+      };
+      const wrappedTransfer = {
+        types: ["application/x-moz-file", "text/x-moz-url", "Files"],
+        mozItemCount: 1,
+        mozGetDataAt: () => wrapped,
+        getData: () => "",
+        dropEffect: "copy",
+      } as unknown as DataTransfer;
+      assert.isTrue(bridge.canDropFiles(wrappedTransfer));
+      completed = undefined;
+      drag(win, grid, "dragover", wrappedTransfer);
+      drag(win, grid, "drop", wrappedTransfer);
+      assert.isDefined(completed);
+      await completed;
+      importedWrapped = recognized[0];
+      assert.isTrue(importedWrapped.isPDFAttachment());
+      assert.isTrue(collection.hasItem(importedWrapped.id));
+      assert.notEqual(importedWrapped.id, imported.id);
     } finally {
       nativeItemsView.onDrop = originalOnDrop;
       recognize.autoRecognizeItems = originalRecognize;
@@ -113,6 +205,7 @@ describe("grid whitespace file drops", function () {
         toggle.dispatchEvent(new win.Event("command"));
       await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
       if (imported?.id) await imported.eraseTx();
+      if (importedWrapped?.id) await importedWrapped.eraseTx();
       if (collection.id) await collection.eraseTx();
       await IOUtils.remove(path, { ignoreAbsent: true });
     }

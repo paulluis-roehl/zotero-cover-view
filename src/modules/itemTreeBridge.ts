@@ -81,7 +81,7 @@ export class ItemTreeBridge {
   }
 
   /** Delegate whitespace file drops to the same importer as Zotero's item tree. */
-  canDropFiles(transfer: DataTransfer | null): boolean {
+  canHoverFiles(transfer: DataTransfer | null): boolean {
     if (!transfer || !this.itemsView.onDrop || !this.itemsView.canDropCheck)
       return false;
     const rows = this.itemsView.collectionTreeRows;
@@ -93,29 +93,44 @@ export class ItemTreeBridge {
     if (!library || !library.editable) return false;
     if (!rows.every((row) => row.isCollection() || row.isLibrary(true)))
       return false;
-    // Dolphin advertises a URL flavor along with native files. Accept it only
-    // when every entry also has a verified local file for native onDrop.
+    // Gecko may not expose file objects during dragover; check flavors here
+    // and defer file validation and Zotero's native check until the drop.
     try {
-      if (
-        !transfer.types?.includes("application/x-moz-file") ||
-        transfer.types.some(
+      return (
+        !!transfer.types?.includes("application/x-moz-file") &&
+        transfer.mozItemCount > 0 &&
+        typeof transfer.mozGetDataAt === "function" &&
+        !transfer.types.some(
           (type) =>
             type !== "application/x-moz-file" &&
             type !== "text/x-moz-url" &&
             type !== "Files",
-        ) ||
-        !transfer.mozItemCount ||
-        !transfer.mozGetDataAt
-      )
-        return false;
+        )
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  canDropFiles(transfer: DataTransfer | null): boolean {
+    if (!transfer || !this.canHoverFiles(transfer)) return false;
+    try {
       for (let index = 0; index < transfer.mozItemCount; index++) {
-        const file = transfer.mozGetDataAt("application/x-moz-file", index) as {
+        const entry = transfer.mozGetDataAt(
+          "application/x-moz-file",
+          index,
+        ) as {
+          QueryInterface?: (iface: typeof Ci.nsIFile) => {
+            path?: string;
+            isFile?: () => boolean;
+          };
           path?: string;
           isFile?: () => boolean;
         } | null;
+        const file = entry?.QueryInterface?.(Ci.nsIFile) ?? entry;
         if (!file?.path || !file.isFile?.()) return false;
       }
-      return this.itemsView.canDropCheck(-1, -1, transfer);
+      return this.itemsView.canDropCheck!(-1, -1, transfer);
     } catch {
       return false;
     }
