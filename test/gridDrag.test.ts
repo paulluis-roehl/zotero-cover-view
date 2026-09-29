@@ -11,6 +11,7 @@ describe("grid native item drag", function () {
     );
     const parent = new Zotero.Item("book");
     let attachment: Zotero.Item | undefined;
+    let child: Zotero.Item | undefined;
     const dragDrop = (
       Zotero as typeof Zotero & {
         DragDrop: { currentDragSource: unknown };
@@ -22,6 +23,11 @@ describe("grid native item drag", function () {
       parent.setField("title", "Parent without exported child files");
       await parent.saveTx();
       attachment = await Zotero.Attachments.linkFromFile({ file: path });
+      child = await Zotero.Attachments.linkFromFile({
+        file: path,
+        parentItemID: parent.id,
+      });
+      assert.equal(child.parentItemID, parent.id);
       const entries: Array<{ type: string; value: unknown }> = [];
       const data = new Map<string, string>();
       const transfer = {
@@ -61,6 +67,7 @@ describe("grid native item drag", function () {
       dragDrop.currentDragSource = originalSource;
       bridge.destroy();
       if (attachment?.id) await attachment.eraseTx();
+      if (child?.id) await child.eraseTx();
       if (parent.id) await parent.eraseTx();
       await IOUtils.remove(path, { ignoreAbsent: true });
     }
