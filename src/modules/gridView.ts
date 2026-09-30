@@ -43,6 +43,7 @@ export class GridView {
   private selectionWrites: Promise<void> = Promise.resolve();
   private focusOwner?: "grid" | "tree";
   private wheelRemainder = 0;
+  private dropTile?: HTMLElement;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -63,6 +64,8 @@ export class GridView {
     });
     this.ui.host.addEventListener("dragover", this.handleFileDragOver);
     this.ui.host.addEventListener("drop", this.handleFileDrop);
+    this.ui.host.addEventListener("dragleave", this.handleDragLeave);
+    this.win.document.addEventListener("dragend", this.clearDropTile);
     this.tree.onItemsChanged(this.scheduleSync);
     this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
       this.tree.refreshRows();
@@ -103,6 +106,7 @@ export class GridView {
   }
 
   applyEnabledPreference(): void {
+    this.clearDropTile();
     const enabled = !!getPref("enableGridView");
     const active = this.win.document.activeElement;
     const outgoingOwner = this.ui.ownsGridFocus(active)
@@ -205,6 +209,9 @@ export class GridView {
     this.ui.host.removeEventListener("wheel", this.handleWheel);
     this.ui.host.removeEventListener("dragover", this.handleFileDragOver);
     this.ui.host.removeEventListener("drop", this.handleFileDrop);
+    this.ui.host.removeEventListener("dragleave", this.handleDragLeave);
+    this.win.document.removeEventListener("dragend", this.clearDropTile);
+    this.clearDropTile();
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
@@ -328,20 +335,31 @@ export class GridView {
     }
   };
 
-  private isWhitespaceDrop(event: DragEvent): boolean {
+  private isGridDrop(event: DragEvent): boolean {
     const target = event.target as Element | null;
     return (
       !this.ui.host.hidden &&
       this.win.Zotero_Tabs.selectedType === "library" &&
       !!target &&
-      this.ui.host.contains(target) &&
-      !target.closest(".grid-view-item")
+      this.ui.host.contains(target)
     );
   }
 
   private readonly handleFileDragOver = (event: DragEvent): void => {
-    if (!this.isWhitespaceDrop(event)) return;
-    if (!this.tree.canHoverFiles(event.dataTransfer)) return;
+    this.clearDropTile();
+    if (!this.isGridDrop(event)) return;
+    const tile = (event.target as Element).closest(
+      ".grid-view-item",
+    ) as HTMLElement | null;
+    const itemID = tile ? Number(tile.dataset.itemId) : undefined;
+    const hoverItems =
+      tile && this.tree.canHoverItems(event.dataTransfer, itemID!);
+    const hoverFiles = this.tree.canHoverFiles(event.dataTransfer, itemID);
+    if (tile && (hoverItems || hoverFiles)) {
+      this.dropTile = tile;
+      tile.classList.add("drop-target");
+    }
+    if (!hoverFiles) return;
     event.preventDefault();
     event.stopPropagation();
     const transfer = event.dataTransfer!;
@@ -358,12 +376,29 @@ export class GridView {
   };
 
   private readonly handleFileDrop = (event: DragEvent): void => {
-    if (!this.isWhitespaceDrop(event)) return;
+    this.clearDropTile();
+    if (!this.isGridDrop(event)) return;
+    const tile = (event.target as Element).closest(
+      ".grid-view-item",
+    ) as HTMLElement | null;
+    const itemID = tile ? Number(tile.dataset.itemId) : undefined;
+    if (tile && !this.tree.canDropFiles(event.dataTransfer, itemID)) return;
     event.preventDefault();
     event.stopPropagation();
-    void this.tree.dropFiles(event).catch((error) => {
+    void this.tree.dropFiles(event, itemID).catch((error) => {
       ztoolkit.log("Failed to import files into grid", error);
     });
+  };
+
+  private readonly clearDropTile = (): void => {
+    this.dropTile?.classList.remove("drop-target");
+    this.dropTile = undefined;
+  };
+
+  private readonly handleDragLeave = (event: DragEvent): void => {
+    const next = event.relatedTarget as Node | null;
+    if (next && this.dropTile?.contains(next)) return;
+    this.clearDropTile();
   };
 
   private readonly openClickedItemMenu = (

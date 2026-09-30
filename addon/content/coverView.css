@@ -60,6 +60,15 @@
   outline-offset: 1px;
 }
 
+#cover-view-grid > .grid-view-item.drop-target {
+  background: var(--fill-secondary);
+  color: var(--material-background);
+}
+
+#cover-view-grid > .grid-view-item.drop-target .grid-view-authors {
+  color: inherit;
+}
+
 .grid-view-sentinel {
   grid-column: 1 / -1;
   height: 1px;

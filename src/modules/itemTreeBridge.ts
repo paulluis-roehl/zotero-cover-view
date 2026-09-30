@@ -80,8 +80,8 @@ export class ItemTreeBridge {
     }
   }
 
-  /** Delegate whitespace file drops to the same importer as Zotero's item tree. */
-  canHoverFiles(transfer: DataTransfer | null): boolean {
+  /** File flavors may be visible before Gecko exposes the actual files. */
+  canHoverFiles(transfer: DataTransfer | null, itemID?: number): boolean {
     if (!transfer || !this.itemsView.onDrop || !this.itemsView.canDropCheck)
       return false;
     const rows = this.itemsView.collectionTreeRows;
@@ -93,6 +93,16 @@ export class ItemTreeBridge {
     if (!library || !library.editable) return false;
     if (!rows.every((row) => row.isCollection() || row.isLibrary(true)))
       return false;
+    if (itemID !== undefined) {
+      const item = this.getItems().find((item) => item.id === itemID);
+      if (
+        !item?.isRegularItem() ||
+        item.deleted ||
+        item.libraryID !== libraryID
+      )
+        return false;
+      if (!library.filesEditable) return false;
+    }
     // Gecko may not expose file objects during dragover; check flavors here
     // and defer file validation and Zotero's native check until the drop.
     try {
@@ -112,8 +122,8 @@ export class ItemTreeBridge {
     }
   }
 
-  canDropFiles(transfer: DataTransfer | null): boolean {
-    if (!transfer || !this.canHoverFiles(transfer)) return false;
+  canDropFiles(transfer: DataTransfer | null, itemID?: number): boolean {
+    if (!transfer || !this.canHoverFiles(transfer, itemID)) return false;
     try {
       for (let index = 0; index < transfer.mozItemCount; index++) {
         const entry = transfer.mozGetDataAt(
@@ -130,14 +140,47 @@ export class ItemTreeBridge {
         const file = entry?.QueryInterface?.(Ci.nsIFile) ?? entry;
         if (!file?.path || !file.isFile?.()) return false;
       }
-      return this.itemsView.canDropCheck!(-1, -1, transfer);
+      return (
+        itemID !== undefined || this.itemsView.canDropCheck!(-1, -1, transfer)
+      );
     } catch {
       return false;
     }
   }
 
-  async dropFiles(event: DragEvent): Promise<void> {
-    if (!this.canDropFiles(event.dataTransfer)) return;
+  /** Hover feedback only; internal-item mutations are handled separately. */
+  canHoverItems(transfer: DataTransfer | null, itemID: number): boolean {
+    if (!transfer?.types?.includes("zotero/item")) return false;
+    const item = this.getItems().find((item) => item.id === itemID);
+    if (!item?.isRegularItem() || item.deleted) return false;
+    const library = Zotero.Libraries.get(item.libraryID);
+    if (!library || !library.editable) return false;
+    const rows = this.itemsView.collectionTreeRows;
+    if (
+      !rows?.length ||
+      !rows.every(
+        (row) =>
+          row.ref?.libraryID === item.libraryID &&
+          (row.isCollection() || row.isLibrary(true)),
+      )
+    )
+      return false;
+    const row = this.itemsView.getRowIndexByID(String(itemID));
+    if (row === false) return false;
+    try {
+      return !!this.itemsView.canDropCheck?.(row, 0, transfer);
+    } catch {
+      return false;
+    }
+  }
+
+  async dropFiles(event: DragEvent, itemID?: number): Promise<void> {
+    if (!this.canDropFiles(event.dataTransfer, itemID)) return;
+    if (itemID !== undefined) {
+      const parent = Zotero.Items.get(itemID);
+      if (parent) await this.attachFiles(event, parent);
+      return;
+    }
     const dragDrop = Zotero as typeof Zotero & {
       DragDrop: {
         currentOrientation: number;
@@ -149,6 +192,97 @@ export class ItemTreeBridge {
     dragDrop.DragDrop.currentOrientation = -1;
     dragDrop.DragDrop.currentDropEffect = null;
     await this.itemsView.onDrop!(event, -1);
+  }
+
+  private async attachFiles(
+    event: DragEvent,
+    parent: Zotero.Item,
+  ): Promise<void> {
+    const transfer = event.dataTransfer!;
+    const isMac = this.win.navigator.platform.startsWith("Mac");
+    const move = isMac ? event.metaKey : event.shiftKey;
+    const link = move && (isMac ? event.altKey : event.ctrlKey);
+    const library = Zotero.Libraries.get(parent.libraryID);
+    if (
+      !library ||
+      (link ? library.libraryType !== "user" : !library.filesEditable)
+    )
+      return;
+    const notifier = Zotero.Notifier as typeof Zotero.Notifier & {
+      Queue: new () => _ZoteroTypes.Notifier.Queue;
+    };
+    const queue = new notifier.Queue();
+    const saveOptions = {
+      notifierQueue: queue,
+    } as Zotero.DataObject.SaveOptions;
+    const attachments = Zotero.Attachments as typeof Zotero.Attachments & {
+      shouldAutoRenameFile(isLink: boolean, libraryID: number): boolean;
+    };
+    const added: Zotero.Item[] = [];
+    try {
+      const rename =
+        transfer.mozItemCount === 1 &&
+        attachments.shouldAutoRenameFile(link, parent.libraryID) &&
+        !parent.numNonHTMLFileAttachments();
+      const delayTitle = transfer.mozItemCount > 1;
+      for (let index = 0; index < transfer.mozItemCount; index++) {
+        const entry = transfer.mozGetDataAt("application/x-moz-file", index);
+        let file = (entry.QueryInterface?.(Ci.nsIFile) ?? entry).path as string;
+        if (!link && file.endsWith(".lnk")) continue;
+        const fileBaseName = rename
+          ? await Zotero.Attachments.getRenamedFileBaseNameIfAllowedType(
+              parent,
+              file,
+            )
+          : undefined;
+        if (link && fileBaseName) {
+          try {
+            const ext = Zotero.File.getExtension(file);
+            const name = await Zotero.File.rename(
+              file,
+              fileBaseName + (ext ? `.${ext}` : ""),
+              { unique: true },
+            );
+            if (name) file = PathUtils.join(PathUtils.parent(file)!, name);
+          } catch (error) {
+            ztoolkit.log("Failed to rename linked drop file", error);
+          }
+        }
+        const options = {
+          file,
+          parentItemID: parent.id,
+          title: delayTitle ? "" : undefined,
+          saveOptions,
+        };
+        const item = link
+          ? await Zotero.Attachments.linkFromFile(options)
+          : await Zotero.Attachments.importFromFile({
+              ...options,
+              libraryID: parent.libraryID,
+              fileBaseName,
+            });
+        if (item) {
+          added.push(item);
+          if (move && !link) {
+            try {
+              await IOUtils.remove(file);
+            } catch (error) {
+              ztoolkit.log("Failed to remove moved drop file", error);
+            }
+          }
+        }
+      }
+      if (delayTitle) {
+        for (const item of added) {
+          (
+            item as Zotero.Item & { setAutoAttachmentTitle(): void }
+          ).setAutoAttachmentTitle();
+          await item.saveTx(saveOptions);
+        }
+      }
+    } finally {
+      await Zotero.Notifier.commit(queue);
+    }
   }
 
   focus(): void {

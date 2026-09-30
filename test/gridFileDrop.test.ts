@@ -1,7 +1,7 @@
 import { assert } from "chai";
 import { ItemTreeBridge } from "../src/modules/itemTreeBridge";
 
-describe("grid whitespace file drops", function () {
+describe("grid file drops", function () {
   this.timeout(120000);
 
   function drag(
@@ -39,6 +39,401 @@ describe("grid whitespace file drops", function () {
       dropEffect: "copy",
     } as unknown as DataTransfer;
   }
+
+  it("attaches a direct tile drop without recognition, but imports a gap drop as standalone", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const toggle = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const collection = new Zotero.Collection();
+    const parent = new Zotero.Item("book");
+    const path = PathUtils.join(
+      Zotero.DataDirectory.dir,
+      `cover-view-child-${Zotero.Utilities.randomString()}.pdf`,
+    );
+    const recognize =
+      Zotero.RecognizeDocument as typeof Zotero.RecognizeDocument & {
+        autoRecognizeItems: (items: Zotero.Item[]) => void;
+      };
+    const originalRecognize = recognize.autoRecognizeItems;
+    let recognitionCalls = 0;
+    let standalone: Zotero.Item | undefined;
+    const view = pane.itemsView as typeof pane.itemsView & {
+      onDrop: (event: DragEvent, row: number) => Promise<void>;
+    };
+    const originalDrop = view.onDrop;
+    try {
+      await IOUtils.write(path, new TextEncoder().encode("%PDF-1.4\n"));
+      collection.name = `Tile attachment ${Date.now()}`;
+      await collection.saveTx();
+      parent.setField("title", "File drop parent");
+      parent.addToCollection(collection.id);
+      await parent.saveTx();
+      await pane.collectionsView!.selectByID(`C${collection.id}`);
+      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      await Zotero.Promise.delay(300);
+      const tile = grid.querySelector<HTMLElement>(
+        `[data-item-id="${parent.id}"]`,
+      )!;
+      assert.isOk(tile);
+      recognize.autoRecognizeItems = (items) => {
+        recognitionCalls++;
+        standalone = items[0];
+      };
+      const transfer = fileTransfer(path);
+      assert.isTrue(
+        drag(win, tile.querySelector("figcaption")!, "dragover", transfer)
+          .defaultPrevented,
+      );
+      assert.isTrue(drag(win, tile, "drop", transfer).defaultPrevented);
+      for (let i = 0; i < 100 && !parent.getAttachments().length; i++) {
+        await Zotero.Promise.delay(50);
+      }
+      assert.lengthOf(parent.getAttachments(), 1);
+      const child = Zotero.Items.get(parent.getAttachments()[0]);
+      assert.equal(child.parentItemID, parent.id);
+      assert.equal(child.libraryID, parent.libraryID);
+      assert.equal(
+        child.attachmentLinkMode,
+        Zotero.Attachments.LINK_MODE_IMPORTED_FILE,
+      );
+      assert.isEmpty(child.getCollections());
+      assert.equal(recognitionCalls, 0);
+      assert.isTrue(await IOUtils.exists(path));
+
+      // A grid gap hits the host itself, not the nearest tile.
+      let completed: Promise<void> | undefined;
+      view.onDrop = (event, row) => {
+        completed = originalDrop.call(view, event, row);
+        return completed;
+      };
+      drag(win, grid, "dragover", transfer);
+      drag(win, grid, "drop", transfer);
+      assert.isDefined(completed);
+      await completed;
+      assert.equal(recognitionCalls, 1);
+      assert.isDefined(standalone);
+      assert.isNotOk(standalone!.parentItemID);
+      assert.isTrue(collection.hasItem(standalone!.id));
+      assert.lengthOf(parent.getAttachments(), 1);
+    } finally {
+      view.onDrop = originalDrop;
+      recognize.autoRecognizeItems = originalRecognize;
+      if (grid.hidden !== originallyHidden)
+        toggle.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
+      if (standalone?.id) await standalone.eraseTx();
+      if (parent.id) await parent.eraseTx();
+      if (collection.id) await collection.eraseTx();
+      await IOUtils.remove(path, { ignoreAbsent: true });
+    }
+  });
+
+  it("uses native drag-hover colors regardless of selection, and clears them on leaving or dropping", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const toggle = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const collection = new Zotero.Collection();
+    const parent = new Zotero.Item("book");
+    const note = new Zotero.Item("note");
+    const probe = win.document.createElement("div");
+    probe.className = "virtualized-table";
+    probe.innerHTML = '<div class="row drop">Native drop color</div>';
+    try {
+      collection.name = `Hover ${Date.now()}`;
+      await collection.saveTx();
+      parent.setField("title", "Hover parent");
+      parent.addToCollection(collection.id);
+      await parent.saveTx();
+      note.setNote("Hover source");
+      note.addToCollection(collection.id);
+      await note.saveTx();
+      await pane.collectionsView!.selectByID(`C${collection.id}`);
+      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      await Zotero.Promise.delay(300);
+      win.document.documentElement.append(probe);
+      const nativeStyle = win.getComputedStyle(probe.firstElementChild!);
+      const transfer = {
+        types: ["zotero/item", "application/x-moz-file"],
+        getData: (type: string) =>
+          type === "zotero/item" ? String(note.id) : "",
+        dropEffect: "move",
+      } as unknown as DataTransfer;
+      for (const selected of [false, true]) {
+        if (selected) await pane.selectItems([parent.id]);
+        else pane.itemsView.selection.clearSelection();
+        await Zotero.Promise.delay(250);
+        const tile = grid.querySelector<HTMLElement>(
+          `[data-item-id="${parent.id}"]`,
+        )!;
+        grid.focus();
+        const baseline = win.getComputedStyle(tile).backgroundColor;
+        drag(win, tile.querySelector("figcaption")!, "dragover", transfer);
+        assert.equal(
+          win.getComputedStyle(tile).backgroundColor,
+          nativeStyle.backgroundColor,
+        );
+        assert.equal(win.getComputedStyle(tile).color, nativeStyle.color);
+        assert.notEqual(win.getComputedStyle(tile).backgroundColor, baseline);
+        const leave = new win.Event("dragleave", { bubbles: true });
+        Object.defineProperty(leave, "relatedTarget", {
+          value: tile.querySelector("figcaption"),
+        });
+        tile.dispatchEvent(leave);
+        assert.equal(
+          win.getComputedStyle(tile).backgroundColor,
+          nativeStyle.backgroundColor,
+          "moving within a tile keeps its hover color",
+        );
+        drag(win, grid, "dragover", transfer);
+        assert.equal(win.getComputedStyle(tile).backgroundColor, baseline);
+        drag(win, tile, "dragover", transfer);
+        drag(win, tile, "drop", transfer);
+        assert.equal(win.getComputedStyle(tile).backgroundColor, baseline);
+        assert.isNotOk(
+          note.parentItemID,
+          "internal drop implementation belongs to the next ticket",
+        );
+        drag(win, tile, "dragover", transfer);
+        tile.dispatchEvent(new win.Event("dragleave", { bubbles: true }));
+        assert.equal(win.getComputedStyle(tile).backgroundColor, baseline);
+      }
+    } finally {
+      probe.remove();
+      if (grid.hidden !== originallyHidden)
+        toggle.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
+      if (note.id) await note.eraseTx();
+      if (parent.id) await parent.eraseTx();
+      if (collection.id) await collection.eraseTx();
+    }
+  });
+
+  it("honors move/link modifiers on tiles and preserves a source after a failed child import", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const toggle = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const collection = new Zotero.Collection();
+    const parent = new Zotero.Item("book");
+    const paths: string[] = [];
+    const originalImport = Zotero.Attachments.importFromFile;
+    let importAttempt: Promise<Zotero.Item> | undefined;
+    try {
+      collection.name = `Child modifiers ${Date.now()}`;
+      await collection.saveTx();
+      parent.setField("title", "Modifier parent");
+      parent.addToCollection(collection.id);
+      await parent.saveTx();
+      await pane.collectionsView!.selectByID(`C${collection.id}`);
+      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      await Zotero.Promise.delay(300);
+      for (const action of ["move", "link", "failure"] as const) {
+        const path = PathUtils.join(
+          Zotero.DataDirectory.dir,
+          `cover-view-child-${action}-${Zotero.Utilities.randomString()}.txt`,
+        );
+        paths.push(path);
+        await IOUtils.write(path, new TextEncoder().encode(action));
+        const beforeIDs = parent.getAttachments();
+        const before = beforeIDs.length;
+        const tile = grid.querySelector<HTMLElement>(
+          `[data-item-id="${parent.id}"]`,
+        )!;
+        const modifiers = win.navigator.platform.startsWith("Mac")
+          ? { metaKey: true, altKey: action === "link" }
+          : { shiftKey: true, ctrlKey: action === "link" };
+        if (action === "failure") {
+          Zotero.Attachments.importFromFile = (options) => {
+            importAttempt = Promise.reject(new Error("child import failure"));
+            return importAttempt;
+          };
+        }
+        const transfer = fileTransfer(path);
+        assert.isTrue(
+          drag(win, tile, "dragover", transfer, modifiers).defaultPrevented,
+        );
+        drag(win, tile, "drop", transfer, modifiers);
+        if (action === "failure") {
+          assert.isDefined(importAttempt);
+          await importAttempt!.catch(() => {});
+          await Zotero.Promise.delay(100);
+          assert.lengthOf(parent.getAttachments(), before);
+          assert.isTrue(await IOUtils.exists(path));
+        } else {
+          for (
+            let i = 0;
+            i < 100 && parent.getAttachments().length === before;
+            i++
+          )
+            await Zotero.Promise.delay(50);
+          assert.lengthOf(parent.getAttachments(), before + 1);
+          const child = Zotero.Items.get(
+            parent.getAttachments().find((id) => !beforeIDs.includes(id))!,
+          );
+          assert.equal(child.parentItemID, parent.id);
+          assert.equal(
+            child.attachmentLinkMode,
+            action === "link"
+              ? Zotero.Attachments.LINK_MODE_LINKED_FILE
+              : Zotero.Attachments.LINK_MODE_IMPORTED_FILE,
+          );
+          for (
+            let i = 0;
+            i < 100 && action === "move" && (await IOUtils.exists(path));
+            i++
+          )
+            await Zotero.Promise.delay(50);
+          assert.equal(await IOUtils.exists(path), action === "link");
+        }
+      }
+    } finally {
+      Zotero.Attachments.importFromFile = originalImport;
+      if (grid.hidden !== originallyHidden)
+        toggle.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
+      if (parent.id) await parent.eraseTx();
+      if (collection.id) await collection.eraseTx();
+      for (const path of paths)
+        await IOUtils.remove(path, { ignoreAbsent: true });
+    }
+  });
+
+  it("rejects non-regular tiles, internal file flavors, restricted contexts, and libraries without file permission", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const toggle = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const collection = new Zotero.Collection();
+    const parent = new Zotero.Item("book");
+    const note = new Zotero.Item("note");
+    const path = PathUtils.join(
+      Zotero.DataDirectory.dir,
+      `cover-view-invalid-child-${Zotero.Utilities.randomString()}.txt`,
+    );
+    let attachment: Zotero.Item | undefined;
+    const originalImport = Zotero.Attachments.importFromFile;
+    const originalLink = Zotero.Attachments.linkFromFile;
+    const view = pane.itemsView;
+    const rowsDescriptor = Object.getOwnPropertyDescriptor(
+      view,
+      "collectionTreeRows",
+    );
+    const library = Zotero.Libraries.get(Zotero.Libraries.userLibraryID)!;
+    const filesDescriptor = Object.getOwnPropertyDescriptor(
+      library,
+      "filesEditable",
+    );
+    const editableDescriptor = Object.getOwnPropertyDescriptor(
+      library,
+      "editable",
+    );
+    let calls = 0;
+    try {
+      await IOUtils.write(
+        path,
+        new TextEncoder().encode("invalid destinations"),
+      );
+      collection.name = `Rejected tiles ${Date.now()}`;
+      await collection.saveTx();
+      parent.setField("title", "Invalid drop parent");
+      parent.addToCollection(collection.id);
+      await parent.saveTx();
+      note.setNote("Cannot attach to a note");
+      note.addToCollection(collection.id);
+      await note.saveTx();
+      attachment = await originalImport.call(Zotero.Attachments, {
+        file: path,
+        collections: [collection.id],
+      });
+      await pane.collectionsView!.selectByID(`C${collection.id}`);
+      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      await Zotero.Promise.delay(300);
+      Zotero.Attachments.importFromFile = async () => {
+        calls++;
+        throw new Error("Unexpected import");
+      };
+      Zotero.Attachments.linkFromFile = async () => {
+        calls++;
+        throw new Error("Unexpected link");
+      };
+      const valid = fileTransfer(path);
+      const tileFor = (id: number) =>
+        grid.querySelector<HTMLElement>(`[data-item-id="${id}"]`)!;
+      for (const tile of [tileFor(note.id), tileFor(attachment.id)]) {
+        assert.isFalse(drag(win, tile, "dragover", valid).defaultPrevented);
+        drag(win, tile, "drop", valid);
+      }
+      const tile = tileFor(parent.id);
+      for (const transfer of [
+        Object.assign({}, valid, {
+          types: ["zotero/item", "application/x-moz-file"],
+          getData: () => String(attachment.id),
+        }),
+        fileTransfer(Zotero.DataDirectory.dir),
+        {} as DataTransfer,
+      ])
+        drag(win, tile, "drop", transfer);
+      Object.defineProperty(view, "collectionTreeRows", {
+        configurable: true,
+        value: [
+          {
+            ref: { libraryID: parent.libraryID },
+            isCollection: () => false,
+            isLibrary: () => false,
+          },
+        ],
+      });
+      assert.isFalse(drag(win, tile, "dragover", valid).defaultPrevented);
+      drag(win, tile, "drop", valid);
+      if (rowsDescriptor)
+        Object.defineProperty(view, "collectionTreeRows", rowsDescriptor);
+      else delete (view as { collectionTreeRows?: unknown }).collectionTreeRows;
+      for (const property of ["editable", "filesEditable"] as const) {
+        const descriptor = Object.getOwnPropertyDescriptor(library, property);
+        Object.defineProperty(library, property, {
+          configurable: true,
+          value: false,
+        });
+        assert.isFalse(
+          drag(win, tile, "dragover", valid).defaultPrevented,
+          property,
+        );
+        drag(win, tile, "drop", valid);
+        if (descriptor) Object.defineProperty(library, property, descriptor);
+        else delete (library as unknown as Record<string, unknown>)[property];
+      }
+      assert.equal(calls, 0);
+      assert.isEmpty(parent.getAttachments());
+      assert.isTrue(await IOUtils.exists(path));
+    } finally {
+      Zotero.Attachments.importFromFile = originalImport;
+      Zotero.Attachments.linkFromFile = originalLink;
+      for (const [property, descriptor] of [
+        ["editable", editableDescriptor],
+        ["filesEditable", filesDescriptor],
+      ] as const) {
+        if (descriptor) Object.defineProperty(library, property, descriptor);
+        else delete (library as unknown as Record<string, unknown>)[property];
+      }
+      if (rowsDescriptor)
+        Object.defineProperty(view, "collectionTreeRows", rowsDescriptor);
+      else delete (view as { collectionTreeRows?: unknown }).collectionTreeRows;
+      if (grid.hidden !== originallyHidden)
+        toggle.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
+      if (attachment?.id) await attachment.eraseTx();
+      if (note.id) await note.eraseTx();
+      if (parent.id) await parent.eraseTx();
+      if (collection.id) await collection.eraseTx();
+      await IOUtils.remove(path, { ignoreAbsent: true });
+    }
+  });
 
   it("accepts a file drag whose contents are hidden until drop, but validates before import", async function () {
     const win = Zotero.getMainWindow()!;
