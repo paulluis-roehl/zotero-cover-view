@@ -359,11 +359,13 @@ export class GridView {
       this.dropTile = tile;
       tile.classList.add("drop-target");
     }
-    if (!hoverFiles) return;
+    if (!hoverItems && !hoverFiles) return;
     event.preventDefault();
     event.stopPropagation();
     const transfer = event.dataTransfer!;
-    if (this.win.navigator.platform.startsWith("Mac")) {
+    if (hoverItems) {
+      this.tree.setItemDropEffect(event);
+    } else if (this.win.navigator.platform.startsWith("Mac")) {
       // Gecko doesn't expose Mac modifiers during dragover; onDrop resolves them.
       transfer.dropEffect = "move";
     } else {
@@ -382,6 +384,16 @@ export class GridView {
       ".grid-view-item",
     ) as HTMLElement | null;
     const itemID = tile ? Number(tile.dataset.itemId) : undefined;
+    if (event.dataTransfer?.types?.includes("zotero/item")) {
+      if (!tile || !this.tree.canHoverItems(event.dataTransfer, itemID!))
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      void this.tree.dropItems(event, itemID!).catch((error) => {
+        ztoolkit.log("Failed to reparent items in grid", error);
+      });
+      return;
+    }
     if (tile && !this.tree.canDropFiles(event.dataTransfer, itemID)) return;
     event.preventDefault();
     event.stopPropagation();

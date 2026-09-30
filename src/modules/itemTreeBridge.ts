@@ -12,6 +12,7 @@ type ItemsView = _ZoteroTypes.ItemTree & {
     transfer: DataTransfer,
   ) => boolean;
   onDrop?: (event: DragEvent, row: number) => Promise<void>;
+  setDropEffect?: (event: DragEvent, effect: string) => void;
 };
 type CollectionDropRow = {
   ref: { libraryID: number; id?: number };
@@ -148,9 +149,14 @@ export class ItemTreeBridge {
     }
   }
 
-  /** Hover feedback only; internal-item mutations are handled separately. */
+  /** Validate direct item drops using the native target row and restrictions. */
   canHoverItems(transfer: DataTransfer | null, itemID: number): boolean {
-    if (!transfer?.types?.includes("zotero/item")) return false;
+    if (
+      !transfer?.types?.includes("zotero/item") ||
+      !this.itemsView.onDrop ||
+      !this.itemsView.setDropEffect
+    )
+      return false;
     const item = this.getItems().find((item) => item.id === itemID);
     if (!item?.isRegularItem() || item.deleted) return false;
     const library = Zotero.Libraries.get(item.libraryID);
@@ -172,6 +178,33 @@ export class ItemTreeBridge {
     } catch {
       return false;
     }
+  }
+
+  setItemDropEffect(event: DragEvent): void {
+    // Native file drags may allow only copy at the OS level. Zotero's helper
+    // negotiates a permitted cursor effect while recording the internal move.
+    this.itemsView.setDropEffect!(event, "move");
+  }
+
+  async dropItems(event: DragEvent, itemID: number): Promise<void> {
+    if (
+      !this.itemsView.onDrop ||
+      !this.canHoverItems(event.dataTransfer, itemID)
+    )
+      return;
+    const row = this.itemsView.getRowIndexByID(String(itemID));
+    if (row === false) return;
+    const { DragDrop } = Zotero as typeof Zotero & {
+      DragDrop: {
+        currentOrientation: number;
+        currentDropEffect: string | null;
+      };
+    };
+    // Ignore orientation/effect left by another view. A tile is always a
+    // direct-on-parent move, never a between-row or whitespace drop.
+    DragDrop.currentOrientation = 0;
+    DragDrop.currentDropEffect = "move";
+    await this.itemsView.onDrop(event, row);
   }
 
   async dropFiles(event: DragEvent, itemID?: number): Promise<void> {

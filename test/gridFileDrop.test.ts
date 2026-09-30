@@ -198,13 +198,21 @@ describe("grid file drops", function () {
         drag(win, tile, "dragover", transfer);
         drag(win, tile, "drop", transfer);
         assert.equal(win.getComputedStyle(tile).backgroundColor, baseline);
-        assert.isNotOk(
-          note.parentItemID,
-          "internal drop implementation belongs to the next ticket",
+        for (let i = 0; i < 100 && note.parentItemID !== parent.id; i++)
+          await Zotero.Promise.delay(50);
+        assert.equal(note.parentItemID, parent.id);
+        note.parentID = false;
+        note.addToCollection(collection.id);
+        await note.saveTx();
+        await Zotero.Promise.delay(250);
+        const currentTile = grid.querySelector<HTMLElement>(
+          `[data-item-id="${parent.id}"]`,
+        )!;
+        drag(win, currentTile, "dragover", transfer);
+        currentTile.dispatchEvent(
+          new win.Event("dragleave", { bubbles: true }),
         );
-        drag(win, tile, "dragover", transfer);
-        tile.dispatchEvent(new win.Event("dragleave", { bubbles: true }));
-        assert.equal(win.getComputedStyle(tile).backgroundColor, baseline);
+        assert.isFalse(currentTile.classList.contains("drop-target"));
       }
     } finally {
       probe.remove();
@@ -308,7 +316,7 @@ describe("grid file drops", function () {
     }
   });
 
-  it("rejects non-regular tiles, internal file flavors, restricted contexts, and libraries without file permission", async function () {
+  it("rejects non-regular tiles, restricted contexts, and libraries without file permission", async function () {
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
     const grid = win.document.getElementById("cover-view-grid")!;
@@ -376,10 +384,6 @@ describe("grid file drops", function () {
       }
       const tile = tileFor(parent.id);
       for (const transfer of [
-        Object.assign({}, valid, {
-          types: ["zotero/item", "application/x-moz-file"],
-          getData: () => String(attachment.id),
-        }),
         fileTransfer(Zotero.DataDirectory.dir),
         {} as DataTransfer,
       ])
