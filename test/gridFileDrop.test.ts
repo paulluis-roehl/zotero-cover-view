@@ -166,10 +166,15 @@ describe("grid file drops", function () {
         if (selected) await pane.selectItems([parent.id]);
         else pane.itemsView.selection.clearSelection();
         await Zotero.Promise.delay(250);
+        grid.focus();
+        // The scaffold's test window can keep OS focus; exercise the grid's
+        // focus event explicitly and then resolve the current rendered tile.
+        grid.dispatchEvent(new win.FocusEvent("focus"));
         const tile = grid.querySelector<HTMLElement>(
           `[data-item-id="${parent.id}"]`,
         )!;
-        grid.focus();
+        assert.isTrue(grid.classList.contains("owns-focus"));
+        assert.equal(tile.classList.contains("selected"), selected);
         const baseline = win.getComputedStyle(tile).backgroundColor;
         drag(win, tile.querySelector("figcaption")!, "dragover", transfer);
         assert.equal(

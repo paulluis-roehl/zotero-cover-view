@@ -60,7 +60,8 @@
   outline-offset: 1px;
 }
 
-#cover-view-grid > .grid-view-item.drop-target {
+#cover-view-grid > .grid-view-item.drop-target,
+#cover-view-grid.owns-focus > .grid-view-item.drop-target {
   background: var(--fill-secondary);
   color: var(--material-background);
 }
