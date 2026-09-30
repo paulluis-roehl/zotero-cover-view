@@ -30,5 +30,5 @@ drop handler. Real OS drag sessions cannot be exercised by synthetic DOM events.
 - Collection targets not covered by the Linux report: a read-only group
   collection (only if you have access to a group library without edit
   permissions), and a collection in another library (if available). These are
-  target *types*, not every individual collection. Cross-library drop onto a
+  target _types_, not every individual collection. Cross-library drop onto a
   library root is also unverified.
