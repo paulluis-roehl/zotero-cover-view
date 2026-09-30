@@ -379,7 +379,8 @@ describe("grid file drops", function () {
       const tileFor = (id: number) =>
         grid.querySelector<HTMLElement>(`[data-item-id="${id}"]`)!;
       for (const tile of [tileFor(note.id), tileFor(attachment.id)]) {
-        assert.isFalse(drag(win, tile, "dragover", valid).defaultPrevented);
+        assert.isTrue(drag(win, tile, "dragover", valid).defaultPrevented);
+        assert.equal(valid.dropEffect, "none");
         drag(win, tile, "drop", valid);
       }
       const tile = tileFor(parent.id);
@@ -398,7 +399,8 @@ describe("grid file drops", function () {
           },
         ],
       });
-      assert.isFalse(drag(win, tile, "dragover", valid).defaultPrevented);
+      assert.isTrue(drag(win, tile, "dragover", valid).defaultPrevented);
+      assert.equal(valid.dropEffect, "none");
       drag(win, tile, "drop", valid);
       if (rowsDescriptor)
         Object.defineProperty(view, "collectionTreeRows", rowsDescriptor);
@@ -409,10 +411,11 @@ describe("grid file drops", function () {
           configurable: true,
           value: false,
         });
-        assert.isFalse(
+        assert.isTrue(
           drag(win, tile, "dragover", valid).defaultPrevented,
           property,
         );
+        assert.equal(valid.dropEffect, "none");
         drag(win, tile, "drop", valid);
         if (descriptor) Object.defineProperty(library, property, descriptor);
         else delete (library as unknown as Record<string, unknown>)[property];

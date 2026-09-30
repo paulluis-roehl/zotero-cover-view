@@ -143,6 +143,21 @@ describe("grid item drops", function () {
           transfer.effectAllowed.toLowerCase().includes(transfer.dropEffect),
         "Gecko must allow the operation requested by a parent tile",
       );
+      const invalidTarget = grid.querySelector(
+        `[data-item-id="${standalone.id}"]`,
+      )!;
+      assert.isTrue(
+        drag(win, invalidTarget, "dragover", transfer).defaultPrevented,
+      );
+      assert.equal(
+        transfer.dropEffect,
+        "none",
+        "Moving from a valid parent to an invalid tile must show the prohibit cursor",
+      );
+      assert.isFalse(target().classList.contains("drop-target"));
+      assert.isFalse(invalidTarget.classList.contains("drop-target"));
+      assert.isTrue(drag(win, target(), "dragover", transfer).defaultPrevented);
+      assert.notEqual(transfer.dropEffect, "none");
       // State from another native target must not turn this into a gap drop.
       dragDrop.currentOrientation = -1;
       dragDrop.currentDropEffect = "copy";
@@ -297,9 +312,10 @@ describe("grid item drops", function () {
           "https://example.com/not-an-import.pdf",
         );
         transfer.setData("zotero/item", ids.join(","));
-        assert.isFalse(
+        assert.isTrue(
           drag(win, destination, "dragover", transfer).defaultPrevented,
         );
+        assert.equal(transfer.dropEffect, "none");
         assert.isFalse(destination.classList.contains("drop-target"));
         assert.isFalse(
           drag(win, destination, "drop", transfer).defaultPrevented,

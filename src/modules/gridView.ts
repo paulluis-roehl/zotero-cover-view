@@ -359,7 +359,13 @@ export class GridView {
       this.dropTile = tile;
       tile.classList.add("drop-target");
     }
-    if (!hoverItems && !hoverFiles) return;
+    if (!hoverItems && !hoverFiles) {
+      // Cancel even rejected hover events so Gecko applies the prohibit effect.
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     const transfer = event.dataTransfer!;
