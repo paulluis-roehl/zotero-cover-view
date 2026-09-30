@@ -62,8 +62,8 @@ export class GridView {
     this.ui.host.addEventListener("wheel", this.handleWheel, {
       passive: false,
     });
-    this.ui.host.addEventListener("dragover", this.handleFileDragOver);
-    this.ui.host.addEventListener("drop", this.handleFileDrop);
+    this.ui.host.addEventListener("dragover", this.handleDragOver);
+    this.ui.host.addEventListener("drop", this.handleDrop);
     this.ui.host.addEventListener("dragleave", this.handleDragLeave);
     this.win.document.addEventListener("dragend", this.clearDropTile);
     this.tree.onItemsChanged(this.scheduleSync);
@@ -207,8 +207,8 @@ export class GridView {
     this.win.clearInterval(this.selectionTimer);
     this.win.document.removeEventListener("focusin", this.trackFocus);
     this.ui.host.removeEventListener("wheel", this.handleWheel);
-    this.ui.host.removeEventListener("dragover", this.handleFileDragOver);
-    this.ui.host.removeEventListener("drop", this.handleFileDrop);
+    this.ui.host.removeEventListener("dragover", this.handleDragOver);
+    this.ui.host.removeEventListener("drop", this.handleDrop);
     this.ui.host.removeEventListener("dragleave", this.handleDragLeave);
     this.win.document.removeEventListener("dragend", this.clearDropTile);
     this.clearDropTile();
@@ -345,7 +345,7 @@ export class GridView {
     );
   }
 
-  private readonly handleFileDragOver = (event: DragEvent): void => {
+  private readonly handleDragOver = (event: DragEvent): void => {
     this.clearDropTile();
     if (!this.isGridDrop(event)) return;
     const tile = (event.target as Element).closest(
@@ -353,7 +353,7 @@ export class GridView {
     ) as HTMLElement | null;
     const itemID = tile ? Number(tile.dataset.itemId) : undefined;
     const hoverItems =
-      tile && this.tree.canHoverItems(event.dataTransfer, itemID!);
+      tile && this.tree.canDropItems(event.dataTransfer, itemID!);
     const hoverFiles = this.tree.canHoverFiles(event.dataTransfer, itemID);
     if (tile && (hoverItems || hoverFiles)) {
       this.dropTile = tile;
@@ -377,7 +377,7 @@ export class GridView {
     }
   };
 
-  private readonly handleFileDrop = (event: DragEvent): void => {
+  private readonly handleDrop = (event: DragEvent): void => {
     this.clearDropTile();
     if (!this.isGridDrop(event)) return;
     const tile = (event.target as Element).closest(
@@ -385,8 +385,7 @@ export class GridView {
     ) as HTMLElement | null;
     const itemID = tile ? Number(tile.dataset.itemId) : undefined;
     if (event.dataTransfer?.types?.includes("zotero/item")) {
-      if (!tile || !this.tree.canHoverItems(event.dataTransfer, itemID!))
-        return;
+      if (!tile || !this.tree.canDropItems(event.dataTransfer, itemID!)) return;
       event.preventDefault();
       event.stopPropagation();
       void this.tree.dropItems(event, itemID!).catch((error) => {

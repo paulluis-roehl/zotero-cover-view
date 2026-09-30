@@ -150,7 +150,7 @@ export class ItemTreeBridge {
   }
 
   /** Validate direct item drops using the native target row and restrictions. */
-  canHoverItems(transfer: DataTransfer | null, itemID: number): boolean {
+  canDropItems(transfer: DataTransfer | null, itemID: number): boolean {
     if (
       !transfer?.types?.includes("zotero/item") ||
       !this.itemsView.onDrop ||
@@ -189,7 +189,7 @@ export class ItemTreeBridge {
   async dropItems(event: DragEvent, itemID: number): Promise<void> {
     if (
       !this.itemsView.onDrop ||
-      !this.canHoverItems(event.dataTransfer, itemID)
+      !this.canDropItems(event.dataTransfer, itemID)
     )
       return;
     const row = this.itemsView.getRowIndexByID(String(itemID));
