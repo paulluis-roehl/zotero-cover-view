@@ -364,6 +364,26 @@ export class ItemTreeBridge {
     await this.win.ZoteroPane.deleteSelectedItems(force);
   }
 
+  /** Forward only the native coloured-tag shortcut, preserving Zotero-version
+   * specific mixed-selection toggling, transactions, and undo behavior. */
+  async toggleSelectedItemsTag(number: number): Promise<void> {
+    if (!Number.isInteger(number) || number < 0 || number > 9) return;
+    const items = this.win.ZoteroPane.getSelectedItems();
+    if (!items.length || items.some((item) => !item.isEditable())) return;
+    const rows = this.itemsView.collectionTreeRows;
+    if (rows && new Set(rows.map((row) => row.ref?.libraryID)).size > 1) return;
+    const nativeView = this.itemsView as ItemsView & {
+      handleKeyDown?: (event: KeyboardEvent) => boolean;
+    };
+    if (!nativeView.handleKeyDown) return;
+    nativeView.handleKeyDown(
+      new this.win.KeyboardEvent("keydown", {
+        key: String(number),
+        code: `Digit${number}`,
+      }),
+    );
+  }
+
   /** Build Zotero's native item menu, then let Gecko flip it before display. */
   async openSelectedItemsMenu(anchor: HTMLElement): Promise<void> {
     const rect = anchor.getBoundingClientRect();

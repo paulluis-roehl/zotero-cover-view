@@ -113,8 +113,98 @@
 }
 
 .grid-view-title {
+  min-width: 0;
   font-size: 13px;
   line-height: 1.35;
+}
+
+.grid-view-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.grid-view-tags {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: none;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.grid-view-tag {
+  flex: none;
+}
+
+.grid-view-tag[hidden] {
+  display: none;
+}
+
+.grid-view-tag-swatch {
+  /* Match Zotero's _item-tree.scss and reuse its circle/crescent assets. */
+  -moz-context-properties: fill, fill-opacity, stroke, stroke-opacity;
+  width: 0.92307692em;
+  height: 0.92307692em;
+  fill: currentColor;
+  background: url("chrome://zotero/skin/tag-circle.svg") no-repeat center/100%;
+}
+
+.grid-view-tag-swatch + .grid-view-tag-swatch {
+  background-image: url("chrome://zotero/skin/tag-crescent.svg");
+  margin-inline-start: -0.38461538em;
+}
+
+.grid-view-tag-emoji + .grid-view-tag,
+.grid-view-tag-swatch + .grid-view-tag-emoji,
+.grid-view-tag + .grid-view-tag-overflow {
+  margin-inline-start: 4px;
+}
+
+:root:-moz-locale-dir(rtl) .grid-view-tag-swatch {
+  transform: scaleX(-1);
+}
+
+#cover-view-grid.owns-focus .selected .grid-view-tag-swatch {
+  background-image: url("chrome://zotero/skin/tag-circle-border.svg");
+  stroke: HighlightText;
+}
+
+#cover-view-grid.owns-focus
+  .selected
+  .grid-view-tag-swatch
+  + .grid-view-tag-swatch {
+  background-image: url("chrome://zotero/skin/tag-crescent-border.svg");
+}
+
+.grid-view-tag-swatch[data-color="#ff6666"] {
+  fill: var(--tag-red-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#ff8c19"] {
+  fill: var(--tag-orange-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#999999"] {
+  fill: var(--tag-gray-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#5fb236"] {
+  fill: var(--tag-green-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#009980"] {
+  fill: var(--tag-teal-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#2ea8e5"] {
+  fill: var(--tag-blue-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#576dd9"] {
+  fill: var(--tag-indigo-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#a28ae5"] {
+  fill: var(--tag-purple-opaque, currentColor);
+}
+.grid-view-tag-swatch[data-color="#a6507b"] {
+  fill: var(--tag-plum-opaque, currentColor);
 }
 
 .grid-view-metadata {

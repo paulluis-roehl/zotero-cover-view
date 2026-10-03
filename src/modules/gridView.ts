@@ -91,17 +91,29 @@ export class GridView {
     win.document.addEventListener("focusin", this.trackFocus);
     this.tabObserverID = Zotero.Notifier.registerObserver(
       {
-        notify: (event, _type, ids) => {
-          if (event === "select" && ids.some((id) => id === "zotero-pane")) {
+        notify: (event, type, ids) => {
+          if (
+            type === "item-tag" ||
+            (type === "setting" &&
+              ids.some((id) => String(id).endsWith("/tagColors")))
+          ) {
+            this.scheduleSync();
+          }
+          if (
+            type === "tab" &&
+            event === "select" &&
+            ids.some((id) => id === "zotero-pane")
+          ) {
             for (const itemID of this.pendingCoverIDs) {
               if (getPref("enableGridView")) this.renderer.refreshCover(itemID);
             }
             this.pendingCoverIDs.clear();
             this.renderer.refreshLayout();
+            this.scheduleSync();
           }
         },
       },
-      ["tab"],
+      ["tab", "item-tag", "setting"],
       "cover-view-grid",
     );
     this.applyEnabledPreference();
@@ -486,6 +498,13 @@ export class GridView {
     options: GridItemCommandOptions,
   ): void => {
     switch (command) {
+      case "toggle-tag":
+        if (options.tagNumber === undefined) return;
+        this.runSelectedItemCommand(
+          () => this.tree.toggleSelectedItemsTag(options.tagNumber!),
+          "Failed to toggle coloured tag on selected grid items",
+        );
+        return;
       case "activate":
         this.runSelectedItemCommand(
           () => this.tree.activateSelectedItems(),

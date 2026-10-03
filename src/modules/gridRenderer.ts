@@ -1,6 +1,7 @@
 import { CoverProvider } from "./coverProvider";
 import { getString } from "../utils/locale";
 import { getPref } from "../utils/prefs";
+import { getTagIndicators, TagIndicator } from "./tagIndicators";
 
 const CHUNK_SIZE = 120;
 
@@ -8,10 +9,16 @@ export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end" | "page-up" | "page-down";
 
 export type GridItemCommand =
-  "activate" | "toggle-selection" | "select-all" | "delete" | "context-menu";
+  | "activate"
+  | "toggle-selection"
+  | "select-all"
+  | "delete"
+  | "context-menu"
+  | "toggle-tag";
 
 export interface GridItemCommandOptions {
   forceDelete?: boolean;
+  tagNumber?: number;
 }
 
 export interface GridSelectionModifiers {
@@ -31,6 +38,7 @@ interface GridRenderItem {
   creators: string;
   captionTitle: string;
   year: string;
+  tags: TagIndicator[];
 }
 
 export class GridRenderer {
@@ -41,6 +49,7 @@ export class GridRenderer {
   private renderedCount = 0;
   private readonly chunkObserver: IntersectionObserver;
   private readonly coverObserver: IntersectionObserver;
+  private readonly captionObserver: ResizeObserver;
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
   private focusedItemID?: number;
@@ -108,6 +117,14 @@ export class GridRenderer {
         }
       },
       { root: this.host, rootMargin: "200px" },
+    );
+    this.captionObserver = new doc.defaultView!.ResizeObserver(
+      (entries: ResizeObserverEntry[]) => {
+        for (const { target } of entries) {
+          if (this.host.contains(target))
+            this.updateTagOverflow(target as HTMLElement);
+        }
+      },
     );
   }
 
@@ -192,6 +209,19 @@ export class GridRenderer {
   private getItemCommand(
     event: KeyboardEvent,
   ): { command: GridItemCommand; options: GridItemCommandOptions } | undefined {
+    const tagKey = /^(?:Digit|Numpad)([0-9])$/.exec(event.code);
+    if (
+      tagKey &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      return {
+        command: "toggle-tag",
+        options: { tagNumber: Number(tagKey[1]) },
+      };
+    }
     if (
       (event.key === "ContextMenu" ||
         (event.key === "F10" && event.shiftKey)) &&
@@ -273,7 +303,8 @@ export class GridRenderer {
         if (
           rendered.captionTitle === previous.captionTitle &&
           rendered.creators === previous.creators &&
-          rendered.year === previous.year
+          rendered.year === previous.year &&
+          JSON.stringify(rendered.tags) === JSON.stringify(previous.tags)
         )
           continue;
         const entry = this.entries.get(rendered.item.id);
@@ -291,6 +322,7 @@ export class GridRenderer {
     ++this.renderVersion;
     this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
+    this.captionObserver.disconnect();
     this.entries.clear();
     this.host.replaceChildren();
     this.renderChunk();
@@ -324,6 +356,7 @@ export class GridRenderer {
       captionTitle: options.showTitles === false ? "" : title,
       creators: options.showCreators ? item.firstCreator : "",
       year,
+      tags: options.showTitles === false ? [] : getTagIndicators(item),
     };
   }
 
@@ -342,6 +375,7 @@ export class GridRenderer {
     const oldEntry = this.entries.get(itemID);
     if (!oldEntry) return;
     this.coverObserver.unobserve(oldEntry);
+    this.captionObserver.unobserve(oldEntry);
     const replacement = this.buildTile(this.renderItems[index], index);
     oldEntry.replaceWith(replacement);
     this.updateActiveDescendant();
@@ -407,6 +441,7 @@ export class GridRenderer {
     entry.appendChild(coverFrame);
     this.updateCaption(entry, rendered);
     this.coverObserver.observe(entry);
+    this.captionObserver.observe(entry);
 
     return entry;
   }
@@ -421,20 +456,72 @@ export class GridRenderer {
     entry.querySelector("figcaption")?.remove();
     const caption = this.buildCaption(rendered);
     if (caption) entry.appendChild(caption);
+    this.updateTagOverflow(entry);
+  }
+
+  private updateTagOverflow(entry: HTMLElement): void {
+    const row = entry.querySelector<HTMLElement>(".grid-view-title-row");
+    const group = row?.querySelector<HTMLElement>(".grid-view-tags");
+    if (!row || !group || !row.clientWidth) return;
+    group.querySelector(".grid-view-tag-overflow")?.remove();
+    const indicators: HTMLElement[] = Array.from(
+      group.querySelectorAll<HTMLElement>(".grid-view-tag"),
+    );
+    for (const indicator of indicators) indicator.hidden = false;
+    // Leave more than half the line for the title, including the inter-group gap.
+    const budget = row.clientWidth * 0.45;
+    if (group.getBoundingClientRect().width <= budget) return;
+    const overflow = this.doc.createElement("span");
+    overflow.className = "grid-view-tag-overflow";
+    group.appendChild(overflow);
+    let visible = indicators.length;
+    do {
+      indicators[--visible].hidden = true;
+      overflow.textContent = `+${indicators.length - visible}`;
+    } while (visible > 0 && group.getBoundingClientRect().width > budget);
+    overflow.title = indicators
+      .slice(visible)
+      .map((indicator) => indicator.title)
+      .join("\n");
+    overflow.setAttribute("aria-label", overflow.title);
   }
 
   private buildCaption({
     captionTitle,
     creators,
     year,
+    tags,
   }: GridRenderItem): HTMLElement | undefined {
     const caption = this.doc.createElement("figcaption");
     if (captionTitle) {
+      const titleRow = this.doc.createElement("span");
+      titleRow.className = "grid-view-title-row";
+      if (tags.length) {
+        const indicators = this.doc.createElement("span");
+        indicators.className = "grid-view-tags";
+        for (const { tag, color, emoji } of tags) {
+          const indicator = this.doc.createElement("span");
+          indicator.className = "grid-view-tag";
+          indicator.title = tag;
+          indicator.setAttribute("aria-label", tag);
+          if (emoji) {
+            indicator.classList.add("grid-view-tag-emoji");
+            indicator.textContent = emoji;
+          } else if (color) {
+            indicator.classList.add("grid-view-tag-swatch");
+            indicator.style.color = color;
+            indicator.dataset.color = color.toLowerCase();
+          }
+          indicators.appendChild(indicator);
+        }
+        titleRow.appendChild(indicators);
+      }
       const titleLine = this.doc.createElement("span");
       titleLine.className = "grid-view-title";
       titleLine.textContent = captionTitle;
       titleLine.title = captionTitle;
-      caption.appendChild(titleLine);
+      titleRow.appendChild(titleLine);
+      caption.appendChild(titleRow);
     }
 
     if (creators || year) {
@@ -709,6 +796,7 @@ export class GridRenderer {
     this.doc.defaultView!.removeEventListener("focus", this.handleWindowFocus);
     this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
+    this.captionObserver.disconnect();
     this.renderItems = [];
     this.renderedCount = 0;
     this.entries.clear();
