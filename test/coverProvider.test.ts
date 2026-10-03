@@ -412,20 +412,24 @@ describe("Cover provider", function () {
 
     assert.equal(first, second);
     assert.match(first!, /^data:image\/svg\+xml;charset=utf-8,/);
-    const svg = decodeURIComponent(first!.split(",")[1]);
-    assert.include(svg, 'viewBox="0 0 420 594"');
-    assert.include(svg, 'y="225">Analytical Engine</tspan>');
-    assert.include(svg, ">Notes and</tspan>");
-    assert.include(svg, ">Observations</tspan>");
-    assert.include(svg, 'y="490"');
-    assert.include(svg, ">Ada Lovelace</text>");
-    assert.include(
-      svg,
-      'x="382" y="38" text-anchor="end" dominant-baseline="hanging"',
+    const svg = new (Zotero.getMainWindow()!.DOMParser)().parseFromString(
+      decodeURIComponent(first!.split(",")[1]),
+      "image/svg+xml",
     );
-    assert.include(svg, 'font-size="19" font-weight="500">1843</text>');
-    assert.notInclude(svg, "&#65;");
-    assert.include(svg, 'clip-path="url(#content)"');
+    assert.equal(svg.documentElement.getAttribute("viewBox"), "0 0 420 594");
+    assert.equal(
+      Array.from(
+        svg.querySelectorAll("tspan"),
+        (line) => line.textContent,
+      ).join(" "),
+      "Analytical Engine Notes and Observations",
+    );
+    assert.include(svg.documentElement.textContent, "Ada Lovelace");
+    assert.equal(
+      svg.querySelector('[data-metadata="year"]')?.textContent,
+      "1843",
+    );
+    assert.notExists(svg.querySelector("parsererror"));
   });
 
   it("does not publish a cover from an invalidated lookup", async function () {

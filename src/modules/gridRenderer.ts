@@ -1,6 +1,7 @@
 import { CoverProvider } from "./coverProvider";
 import { getString } from "../utils/locale";
 import { getPref } from "../utils/prefs";
+import { getItemYear } from "../utils/itemYear";
 import { getTagIndicators, TagIndicator } from "./tagIndicators";
 
 const CHUNK_SIZE = 120;
@@ -349,13 +350,7 @@ export class GridRenderer {
     options: GridRenderOptions,
   ): GridRenderItem {
     const title = item.getDisplayTitle();
-    // Match the native Year column: normalized date, unknown-year suppression,
-    // and no leading zeros for years before 1000.
-    const rawYear =
-      options.showYears === false
-        ? ""
-        : String(item.getField?.("date", true, true) || "").slice(0, 4);
-    const year = rawYear && rawYear !== "0000" ? String(Number(rawYear)) : "";
+    const year = options.showYears === false ? "" : getItemYear(item);
     const iconName =
       options.showItemTypeIcon === false
         ? ""
