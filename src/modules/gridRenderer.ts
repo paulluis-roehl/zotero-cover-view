@@ -28,7 +28,7 @@ export interface GridRenderOptions {
 interface GridRenderItem {
   item: Zotero.Item;
   title: string;
-  authors: string;
+  creators: string;
   captionTitle: string;
   year: string;
 }
@@ -272,15 +272,13 @@ export class GridRenderer {
         const previous = this.renderItems[index];
         if (
           rendered.captionTitle === previous.captionTitle &&
-          rendered.authors === previous.authors &&
+          rendered.creators === previous.creators &&
           rendered.year === previous.year
         )
           continue;
         const entry = this.entries.get(rendered.item.id);
         if (entry) {
-          entry.querySelector("figcaption")?.remove();
-          const caption = this.buildCaption(rendered);
-          if (caption) entry.appendChild(caption);
+          this.updateCaption(entry, rendered);
         }
       }
       this.renderItems = renderItems;
@@ -324,7 +322,7 @@ export class GridRenderer {
       item,
       title,
       captionTitle: options.showTitles === false ? "" : title,
-      authors: options.showCreators ? item.firstCreator : "",
+      creators: options.showCreators ? item.firstCreator : "",
       year,
     };
   }
@@ -392,7 +390,6 @@ export class GridRenderer {
     entry.classList.toggle("focused", this.focusedItemID === item.id);
     entry.id = `${this.host.id || "cover-view-grid"}-item-${item.id}`;
     entry.setAttribute("role", "option");
-    entry.setAttribute("aria-label", title);
     entry.draggable = true;
     entry.setAttribute("aria-selected", String(this.selectedIDs.has(item.id)));
     this.entries.set(item.id, entry);
@@ -408,16 +405,27 @@ export class GridRenderer {
     coverFrame.appendChild(image);
 
     entry.appendChild(coverFrame);
-    const caption = this.buildCaption(rendered);
-    if (caption) entry.appendChild(caption);
+    this.updateCaption(entry, rendered);
     this.coverObserver.observe(entry);
 
     return entry;
   }
 
+  private updateCaption(entry: HTMLElement, rendered: GridRenderItem): void {
+    entry.setAttribute(
+      "aria-label",
+      [rendered.title, rendered.creators, rendered.year]
+        .filter(Boolean)
+        .join(" · "),
+    );
+    entry.querySelector("figcaption")?.remove();
+    const caption = this.buildCaption(rendered);
+    if (caption) entry.appendChild(caption);
+  }
+
   private buildCaption({
     captionTitle,
-    authors,
+    creators,
     year,
   }: GridRenderItem): HTMLElement | undefined {
     const caption = this.doc.createElement("figcaption");
@@ -429,17 +437,17 @@ export class GridRenderer {
       caption.appendChild(titleLine);
     }
 
-    if (authors || year) {
+    if (creators || year) {
       const metadataLine = this.doc.createElement("span");
       metadataLine.className = "grid-view-metadata";
-      metadataLine.title = [authors, year].filter(Boolean).join(" · ");
-      if (authors) {
+      metadataLine.title = [creators, year].filter(Boolean).join(" · ");
+      if (creators) {
         const creator = this.doc.createElement("span");
-        creator.className = "grid-view-authors";
-        creator.textContent = authors;
+        creator.className = "grid-view-creators";
+        creator.textContent = creators;
         metadataLine.appendChild(creator);
       }
-      if (authors && year) {
+      if (creators && year) {
         const separator = this.doc.createElement("span");
         separator.className = "grid-view-separator";
         separator.textContent = " · ";

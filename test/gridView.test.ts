@@ -1168,7 +1168,7 @@ describe("grid view", function () {
     }
   });
 
-  it("renders the title and authors on separate caption lines", function () {
+  it("renders the title and creators on separate caption lines", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
     const renderer = new GridRenderer(host, () => {});
@@ -1190,7 +1190,7 @@ describe("grid view", function () {
         "Analytical Engine Notes",
       );
       assert.equal(
-        host.querySelector(".grid-view-authors")?.textContent,
+        host.querySelector(".grid-view-creators")?.textContent,
         "Ada Lovelace and Charles Babbage",
       );
       assert.equal(
@@ -1202,7 +1202,7 @@ describe("grid view", function () {
         showCreators: false,
         fetchISBNCover: false,
       });
-      assert.notExists(host.querySelector(".grid-view-authors"));
+      assert.notExists(host.querySelector(".grid-view-creators"));
     } finally {
       renderer.destroy();
     }
@@ -1213,12 +1213,12 @@ describe("grid view", function () {
     const pane = win.ZoteroPane;
     const button = win.document.getElementById("cover-view-toggle")!;
     const grid = win.document.getElementById("cover-view-grid")!;
-    const originalShowAuthors = getPref("showCreators");
+    const originalShowCreators = getPref("showCreators");
     const originallyHidden = grid.hidden;
     const item = new Zotero.Item("book");
     const toggle = () => button.dispatchEvent(new win.Event("command"));
-    const authorLine = () =>
-      grid.querySelector(`[data-item-id="${item.id}"] .grid-view-authors`);
+    const creatorLine = () =>
+      grid.querySelector(`[data-item-id="${item.id}"] .grid-view-creators`);
     const waitFor = async (condition: () => boolean) => {
       const deadline = Date.now() + 2000;
       while (!condition() && Date.now() < deadline) {
@@ -1236,13 +1236,13 @@ describe("grid view", function () {
       setPref("showCreators", true);
       if (grid.hidden) toggle();
       await pane.selectItems([item.id], true);
-      await waitFor(() => !!authorLine());
+      await waitFor(() => !!creatorLine());
 
       setPref("showCreators", false);
-      await waitFor(() => !authorLine());
+      await waitFor(() => !creatorLine());
       assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
       setPref("showCreators", true);
-      await waitFor(() => !!authorLine());
+      await waitFor(() => !!creatorLine());
 
       toggle();
       const previousTile = grid.querySelector(`[data-item-id="${item.id}"]`);
@@ -1253,10 +1253,10 @@ describe("grid view", function () {
         previousTile,
       );
       toggle();
-      assert.notExists(authorLine());
+      assert.notExists(creatorLine());
       assert.exists(grid.querySelector(`[data-item-id="${item.id}"].selected`));
     } finally {
-      setPref("showCreators", originalShowAuthors);
+      setPref("showCreators", originalShowCreators);
       if (grid.hidden !== originallyHidden) toggle();
       if (item.id) await item.eraseTx();
     }

@@ -45,6 +45,12 @@ describe("independent tile captions", function () {
             assert.equal(line?.textContent ?? "", expected);
             if (line) assert.equal(line.title, expected);
             assert.equal(
+              host.firstElementChild!.getAttribute("aria-label"),
+              expected
+                ? `Analytical Engine Notes · ${expected}`
+                : "Analytical Engine Notes",
+            );
+            assert.equal(
               host.querySelector("img")?.alt,
               "Cover for Analytical Engine Notes",
             );
@@ -74,6 +80,10 @@ describe("independent tile captions", function () {
       renderer.setSelection([item.id]);
       renderer.setFocusedItem(item.id);
       const tile = host.firstElementChild!;
+      assert.equal(
+        tile.getAttribute("aria-label"),
+        "Unchanged cover text · 2020",
+      );
       const image = tile.querySelector("img")!;
       image.src =
         "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><text>Unchanged cover text</text></svg>";
@@ -133,7 +143,7 @@ describe("independent tile captions", function () {
         `[data-item-id="${item.id}"]`,
       )!;
       assert.exists(tile);
-      const creator = tile.querySelector<HTMLElement>(".grid-view-authors")!;
+      const creator = tile.querySelector<HTMLElement>(".grid-view-creators")!;
       const year = tile.querySelector<HTMLElement>(".grid-view-year")!;
       assert.exists(year);
       assert.equal(
@@ -184,7 +194,7 @@ describe("independent tile captions", function () {
         item.setField("date", date);
         renderer.setItems([item], { showCreators: true });
         assert.notExists(host.querySelector(".grid-view-title"));
-        assert.notExists(host.querySelector(".grid-view-authors"));
+        assert.notExists(host.querySelector(".grid-view-creators"));
         assert.notExists(host.querySelector(".grid-view-separator"));
         assert.equal(
           host.querySelector(".grid-view-year")?.textContent ?? "",
@@ -222,7 +232,7 @@ describe("independent tile captions", function () {
         await item.saveTx();
         renderer.setItems([item], { showCreators: true });
         assert.equal(
-          host.querySelector(".grid-view-authors")?.textContent,
+          host.querySelector(".grid-view-creators")?.textContent,
           name,
         );
         assert.equal(
@@ -335,7 +345,7 @@ describe("independent tile captions", function () {
       for (const key of ["showTitles", "showCreators", "showYears"] as const) {
         const selector = {
           showTitles: ".grid-view-title",
-          showCreators: ".grid-view-authors",
+          showCreators: ".grid-view-creators",
           showYears: ".grid-view-year",
         }[key];
         setPref(key, false);
