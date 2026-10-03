@@ -29,7 +29,7 @@ export class GridView {
   private readonly tree: ItemTreeBridge;
   private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
-  private readonly tabObserverID: string;
+  private readonly presentationObserverID: string;
   private readonly stopCoverChanges: () => void;
   private readonly pendingCoverIDs = new Set<number>();
   private syncTimer?: number;
@@ -89,7 +89,7 @@ export class GridView {
       }
     }, 150);
     win.document.addEventListener("focusin", this.trackFocus);
-    this.tabObserverID = Zotero.Notifier.registerObserver(
+    this.presentationObserverID = Zotero.Notifier.registerObserver(
       {
         notify: (event, type, ids) => {
           if (
@@ -229,7 +229,7 @@ export class GridView {
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
-    Zotero.Notifier.unregisterObserver(this.tabObserverID);
+    Zotero.Notifier.unregisterObserver(this.presentationObserverID);
 
     this.renderer.destroy();
     this.ui.destroy();

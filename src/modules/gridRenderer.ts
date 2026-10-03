@@ -183,6 +183,14 @@ export class GridRenderer {
       (event.metaKey && !this.isMacOS())
     )
       return;
+    // Zotero matches physical number keys even when NumLock changes their key
+    // value to End, arrows, etc. Resolve these before grid navigation.
+    const tagKey = /^(?:Digit|Numpad)([0-9])$/.exec(event.code);
+    if (tagKey && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      this.onItemCommand?.("toggle-tag", { tagNumber: Number(tagKey[1]) });
+      return;
+    }
     const navigationCommand = {
       ArrowLeft: "left",
       ArrowRight: "right",
@@ -209,19 +217,6 @@ export class GridRenderer {
   private getItemCommand(
     event: KeyboardEvent,
   ): { command: GridItemCommand; options: GridItemCommandOptions } | undefined {
-    const tagKey = /^(?:Digit|Numpad)([0-9])$/.exec(event.code);
-    if (
-      tagKey &&
-      !event.shiftKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.altKey
-    ) {
-      return {
-        command: "toggle-tag",
-        options: { tagNumber: Number(tagKey[1]) },
-      };
-    }
     if (
       (event.key === "ContextMenu" ||
         (event.key === "F10" && event.shiftKey)) &&

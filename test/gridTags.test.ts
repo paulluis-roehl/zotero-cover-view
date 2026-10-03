@@ -321,6 +321,14 @@ describe("native grid tag indicators", function () {
         win.ZoteroPane.getSelectedItems(true),
         items.map((item) => item.id),
       );
+      // The native selection write starts asynchronously; the tag command must
+      // wait and operate on the newly clicked item, not the previous selection.
+      grid
+        .querySelector(`[data-item-id="${items[1].id}"]`)!
+        .dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      press("Digit1");
+      await waitFor(() => items[1].hasTag("cv-number-one"));
+      assert.isFalse(items[0].hasTag("cv-number-one"));
     } finally {
       setPref("enableGridView", enabled);
       for (const item of items) if (item.id) await item.eraseTx();
@@ -482,6 +490,44 @@ describe("native grid tag indicators", function () {
       await Zotero.DB.executeTransaction(async () => {
         for (const item of items) await item.erase();
       });
+    }
+  });
+
+  it("treats numpad physical keys as tag shortcuts even with NumLock off", function () {
+    const win = Zotero.getMainWindow()!;
+    const host = win.document.createElement("div");
+    const commands: string[] = [];
+    const navigation: string[] = [];
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      undefined,
+      (command) => navigation.push(command),
+      undefined,
+      (command, options) => commands.push(`${command}:${options.tagNumber}`),
+    );
+    try {
+      for (const [code, key] of [
+        ["Numpad1", "End"],
+        ["Numpad2", "ArrowDown"],
+        ["Numpad3", "PageDown"],
+        ["Numpad7", "Home"],
+        ["Numpad0", "Insert"],
+      ]) {
+        host.dispatchEvent(
+          new win.KeyboardEvent("keydown", { code, key, cancelable: true }),
+        );
+      }
+      assert.deepEqual(commands, [
+        "toggle-tag:1",
+        "toggle-tag:2",
+        "toggle-tag:3",
+        "toggle-tag:7",
+        "toggle-tag:0",
+      ]);
+      assert.isEmpty(navigation);
+    } finally {
+      renderer.destroy();
     }
   });
 });
