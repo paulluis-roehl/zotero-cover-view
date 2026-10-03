@@ -559,7 +559,7 @@ describe("grid view", function () {
     } as unknown as Zotero.Item;
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       const entry = host.firstElementChild!;
@@ -570,7 +570,7 @@ describe("grid view", function () {
       assert.strictEqual(host.firstElementChild, entry);
       assert.isFalse(entry.classList.contains("selected"));
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       assert.strictEqual(host.firstElementChild, entry);
@@ -595,7 +595,7 @@ describe("grid view", function () {
     );
 
     try {
-      renderer.setItems(items, { showAuthors: true });
+      renderer.setItems(items, { showCreators: true });
       renderer.setSelection([-1]);
       renderer.setFocusedItem(-2);
 
@@ -1007,7 +1007,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems(items, {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
 
@@ -1080,7 +1080,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       assert.isEmpty(cachedItemIDs);
@@ -1124,7 +1124,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       host
@@ -1156,7 +1156,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       host
@@ -1182,7 +1182,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       assert.equal(
@@ -1199,7 +1199,7 @@ describe("grid view", function () {
       );
 
       renderer.setItems([displayItem], {
-        showAuthors: false,
+        showCreators: false,
         fetchISBNCover: false,
       });
       assert.notExists(host.querySelector(".grid-view-authors"));
@@ -1213,7 +1213,7 @@ describe("grid view", function () {
     const pane = win.ZoteroPane;
     const button = win.document.getElementById("cover-view-toggle")!;
     const grid = win.document.getElementById("cover-view-grid")!;
-    const originalShowAuthors = getPref("showAuthors");
+    const originalShowAuthors = getPref("showCreators");
     const originallyHidden = grid.hidden;
     const item = new Zotero.Item("book");
     const toggle = () => button.dispatchEvent(new win.Event("command"));
@@ -1233,20 +1233,20 @@ describe("grid view", function () {
         { firstName: "Ada", lastName: "Lovelace", creatorType: "author" },
       ]);
       await item.saveTx();
-      setPref("showAuthors", true);
+      setPref("showCreators", true);
       if (grid.hidden) toggle();
       await pane.selectItems([item.id], true);
       await waitFor(() => !!authorLine());
 
-      setPref("showAuthors", false);
+      setPref("showCreators", false);
       await waitFor(() => !authorLine());
       assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
-      setPref("showAuthors", true);
+      setPref("showCreators", true);
       await waitFor(() => !!authorLine());
 
       toggle();
       const previousTile = grid.querySelector(`[data-item-id="${item.id}"]`);
-      setPref("showAuthors", false);
+      setPref("showCreators", false);
       await Zotero.Promise.delay(100);
       assert.strictEqual(
         grid.querySelector(`[data-item-id="${item.id}"]`),
@@ -1256,7 +1256,7 @@ describe("grid view", function () {
       assert.notExists(authorLine());
       assert.exists(grid.querySelector(`[data-item-id="${item.id}"].selected`));
     } finally {
-      setPref("showAuthors", originalShowAuthors);
+      setPref("showCreators", originalShowAuthors);
       if (grid.hidden !== originallyHidden) toggle();
       if (item.id) await item.eraseTx();
     }
@@ -2216,7 +2216,7 @@ describe("grid view", function () {
       win.document
         .getElementById("cover-view-grid")!
         .parentElement!.append(host);
-      renderer.setItems(items, { showAuthors: true });
+      renderer.setItems(items, { showCreators: true });
       renderer.setFocusedItem(focusedID);
       assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
 

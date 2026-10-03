@@ -12,7 +12,9 @@ import { getPref, observePrefs, setPref } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
 const GRID_RENDER_PREFS = [
-  "showAuthors",
+  "showCreators",
+  "showTitles",
+  "showYears",
   "fetchISBNCover",
   "fetchMetadataCover",
 ] as const;
@@ -683,7 +685,9 @@ export class GridView {
       this.selectionAnchorID = this.focusedItemID;
     }
     this.renderer.setItems(items, {
-      showAuthors: getPref("showAuthors"),
+      showCreators: getPref("showCreators"),
+      showTitles: getPref("showTitles"),
+      showYears: getPref("showYears"),
     });
     this.renderer.setSelection(selectedIDs);
     if (!this.itemIDs.length) {

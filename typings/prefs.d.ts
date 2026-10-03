@@ -8,7 +8,9 @@ declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
       "enableGridView": boolean;
-      "showAuthors": boolean;
+      "showCreators": boolean;
+      "showTitles": boolean;
+      "showYears": boolean;
       "tileSize": number;
       "fetchISBNCover": boolean;
       "fetchMetadataCover": boolean;

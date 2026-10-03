@@ -621,7 +621,7 @@ describe("opt-in metadata cover lookup", function () {
     try {
       setPref("fetchISBNCover", true);
       setPref(metadataPref, true);
-      renderer.setItems([item], { showAuthors: true });
+      renderer.setItems([item], { showCreators: true });
       assert.isEmpty(requests, "Rendering an offscreen tile must not search");
       const tile = host.querySelector<HTMLElement>(".grid-view-item")!;
       nearViewport?.(

@@ -20,13 +20,17 @@ export interface GridSelectionModifiers {
 }
 
 export interface GridRenderOptions {
-  showAuthors: boolean;
+  showCreators: boolean;
+  showTitles?: boolean;
+  showYears?: boolean;
 }
 
 interface GridRenderItem {
   item: Zotero.Item;
   title: string;
   authors: string;
+  captionTitle: string;
+  year: string;
 }
 
 export class GridRenderer {
@@ -261,11 +265,27 @@ export class GridRenderer {
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
     const scrollTop = this.host.scrollTop;
-    const renderItems = items.map((item) =>
-      this.renderItem(item, options.showAuthors),
-    );
-    const renderKey = this.makeRenderKey(renderItems, options.showAuthors);
-    if (renderKey === this.renderKey) return;
+    const renderItems = items.map((item) => this.renderItem(item, options));
+    const renderKey = this.makeRenderKey(renderItems);
+    if (renderKey === this.renderKey) {
+      for (const [index, rendered] of renderItems.entries()) {
+        const previous = this.renderItems[index];
+        if (
+          rendered.captionTitle === previous.captionTitle &&
+          rendered.authors === previous.authors &&
+          rendered.year === previous.year
+        )
+          continue;
+        const entry = this.entries.get(rendered.item.id);
+        if (entry) {
+          entry.querySelector("figcaption")?.remove();
+          const caption = this.buildCaption(rendered);
+          if (caption) entry.appendChild(caption);
+        }
+      }
+      this.renderItems = renderItems;
+      return;
+    }
     this.renderKey = renderKey;
 
     this.renderItems = renderItems;
@@ -280,24 +300,32 @@ export class GridRenderer {
     this.host.scrollTop = scrollTop;
   }
 
-  private makeRenderKey(items: GridRenderItem[], showAuthors: boolean): string {
+  private makeRenderKey(items: GridRenderItem[]): string {
     return JSON.stringify([
-      showAuthors,
       getPref("fetchISBNCover"),
       getPref("fetchMetadataCover"),
-      items.map(({ item, title, authors }) => [
-        item.id,
-        title,
-        showAuthors ? authors : "",
-      ]),
+      items.map(({ item, title }) => [item.id, title]),
     ]);
   }
 
-  private renderItem(item: Zotero.Item, showAuthors: boolean): GridRenderItem {
+  private renderItem(
+    item: Zotero.Item,
+    options: GridRenderOptions,
+  ): GridRenderItem {
+    const title = item.getDisplayTitle();
+    // Match the native Year column: normalized date, unknown-year suppression,
+    // and no leading zeros for years before 1000.
+    const rawYear =
+      options.showYears === false
+        ? ""
+        : String(item.getField?.("date", true, true) || "").slice(0, 4);
+    const year = rawYear && rawYear !== "0000" ? String(Number(rawYear)) : "";
     return {
       item,
-      title: item.getDisplayTitle(),
-      authors: showAuthors ? item.firstCreator : "",
+      title,
+      captionTitle: options.showTitles === false ? "" : title,
+      authors: options.showCreators ? item.firstCreator : "",
+      year,
     };
   }
 
@@ -307,9 +335,12 @@ export class GridRenderer {
     if (index < 0) return;
     const item = Zotero.Items.get(itemID);
     if (!item || Array.isArray(item)) return;
-    const showAuthors = !!getPref("showAuthors");
-    this.renderItems[index] = this.renderItem(item, showAuthors);
-    this.renderKey = this.makeRenderKey(this.renderItems, showAuthors);
+    this.renderItems[index] = this.renderItem(item, {
+      showCreators: getPref("showCreators"),
+      showTitles: getPref("showTitles"),
+      showYears: getPref("showYears"),
+    });
+    this.renderKey = this.makeRenderKey(this.renderItems);
     const oldEntry = this.entries.get(itemID);
     if (!oldEntry) return;
     this.coverObserver.unobserve(oldEntry);
@@ -349,9 +380,10 @@ export class GridRenderer {
   }
 
   private buildTile(
-    { item, title, authors }: GridRenderItem,
+    rendered: GridRenderItem,
     renderIndex: number,
   ): HTMLElement {
+    const { item, title } = rendered;
     const entry = this.doc.createElement("figure");
     entry.className = "grid-view-item";
     entry.dataset.itemId = String(item.id);
@@ -360,6 +392,7 @@ export class GridRenderer {
     entry.classList.toggle("focused", this.focusedItemID === item.id);
     entry.id = `${this.host.id || "cover-view-grid"}-item-${item.id}`;
     entry.setAttribute("role", "option");
+    entry.setAttribute("aria-label", title);
     entry.draggable = true;
     entry.setAttribute("aria-selected", String(this.selectedIDs.has(item.id)));
     this.entries.set(item.id, entry);
@@ -374,25 +407,54 @@ export class GridRenderer {
     image.draggable = false;
     coverFrame.appendChild(image);
 
-    const caption = this.doc.createElement("figcaption");
-    const titleLine = this.doc.createElement("span");
-    titleLine.className = "grid-view-title";
-    titleLine.textContent = title;
-    titleLine.title = title;
-    caption.appendChild(titleLine);
-
-    if (authors) {
-      const authorLine = this.doc.createElement("span");
-      authorLine.className = "grid-view-authors";
-      authorLine.textContent = authors;
-      authorLine.title = authors;
-      caption.appendChild(authorLine);
-    }
-
-    entry.append(coverFrame, caption);
+    entry.appendChild(coverFrame);
+    const caption = this.buildCaption(rendered);
+    if (caption) entry.appendChild(caption);
     this.coverObserver.observe(entry);
 
     return entry;
+  }
+
+  private buildCaption({
+    captionTitle,
+    authors,
+    year,
+  }: GridRenderItem): HTMLElement | undefined {
+    const caption = this.doc.createElement("figcaption");
+    if (captionTitle) {
+      const titleLine = this.doc.createElement("span");
+      titleLine.className = "grid-view-title";
+      titleLine.textContent = captionTitle;
+      titleLine.title = captionTitle;
+      caption.appendChild(titleLine);
+    }
+
+    if (authors || year) {
+      const metadataLine = this.doc.createElement("span");
+      metadataLine.className = "grid-view-metadata";
+      metadataLine.title = [authors, year].filter(Boolean).join(" · ");
+      if (authors) {
+        const creator = this.doc.createElement("span");
+        creator.className = "grid-view-authors";
+        creator.textContent = authors;
+        metadataLine.appendChild(creator);
+      }
+      if (authors && year) {
+        const separator = this.doc.createElement("span");
+        separator.className = "grid-view-separator";
+        separator.textContent = " · ";
+        metadataLine.appendChild(separator);
+      }
+      if (year) {
+        const yearLine = this.doc.createElement("span");
+        yearLine.className = "grid-view-year";
+        yearLine.textContent = year;
+        metadataLine.appendChild(yearLine);
+      }
+      caption.appendChild(metadataLine);
+    }
+
+    return caption.childElementCount ? caption : undefined;
   }
 
   private async loadCover(entry: HTMLElement): Promise<void> {

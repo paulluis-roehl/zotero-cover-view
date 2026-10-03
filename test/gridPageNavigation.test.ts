@@ -316,7 +316,7 @@ describe("grid page navigation", function () {
       host.style.width = "600px";
       host.style.overflow = "auto";
       win.document.documentElement.append(host);
-      renderer.setItems(items, { showAuthors: true });
+      renderer.setItems(items, { showCreators: true });
       renderer.setFocusedItem(focusedID);
       assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
       const page = new win.KeyboardEvent("keydown", {
