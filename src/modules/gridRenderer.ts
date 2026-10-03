@@ -1,6 +1,8 @@
 import { CoverProvider } from "./coverProvider";
 import { getString } from "../utils/locale";
 import { getPref } from "../utils/prefs";
+import { getItemYear } from "../utils/itemYear";
+import { getTagIndicators, TagIndicator } from "./tagIndicators";
 
 const CHUNK_SIZE = 120;
 
@@ -8,10 +10,16 @@ export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end" | "page-up" | "page-down";
 
 export type GridItemCommand =
-  "activate" | "toggle-selection" | "select-all" | "delete" | "context-menu";
+  | "activate"
+  | "toggle-selection"
+  | "select-all"
+  | "delete"
+  | "context-menu"
+  | "toggle-tag";
 
 export interface GridItemCommandOptions {
   forceDelete?: boolean;
+  tagNumber?: number;
 }
 
 export interface GridSelectionModifiers {
@@ -20,13 +28,22 @@ export interface GridSelectionModifiers {
 }
 
 export interface GridRenderOptions {
-  showAuthors: boolean;
+  showCreators: boolean;
+  showTitles?: boolean;
+  showYears?: boolean;
+  showItemTypeIcon?: boolean;
+  desaturateOnlineCovers?: boolean;
 }
 
 interface GridRenderItem {
   item: Zotero.Item;
   title: string;
-  authors: string;
+  creators: string;
+  captionTitle: string;
+  year: string;
+  tags: TagIndicator[];
+  iconName: string;
+  typeLabel: string;
 }
 
 export class GridRenderer {
@@ -37,6 +54,7 @@ export class GridRenderer {
   private renderedCount = 0;
   private readonly chunkObserver: IntersectionObserver;
   private readonly coverObserver: IntersectionObserver;
+  private readonly captionObserver: ResizeObserver;
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
   private focusedItemID?: number;
@@ -105,6 +123,14 @@ export class GridRenderer {
       },
       { root: this.host, rootMargin: "200px" },
     );
+    this.captionObserver = new doc.defaultView!.ResizeObserver(
+      (entries: ResizeObserverEntry[]) => {
+        for (const { target } of entries) {
+          if (this.host.contains(target))
+            this.updateTagOverflow(target as HTMLElement);
+        }
+      },
+    );
   }
 
   private readonly handleClick = (event: MouseEvent): void => {
@@ -162,6 +188,14 @@ export class GridRenderer {
       (event.metaKey && !this.isMacOS())
     )
       return;
+    // Zotero matches physical number keys even when NumLock changes their key
+    // value to End, arrows, etc. Resolve these before grid navigation.
+    const tagKey = /^(?:Digit|Numpad)([0-9])$/.exec(event.code);
+    if (tagKey && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      this.onItemCommand?.("toggle-tag", { tagNumber: Number(tagKey[1]) });
+      return;
+    }
     const navigationCommand = {
       ArrowLeft: "left",
       ArrowRight: "right",
@@ -260,12 +294,34 @@ export class GridRenderer {
   };
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
-    const scrollTop = this.host.scrollTop;
-    const renderItems = items.map((item) =>
-      this.renderItem(item, options.showAuthors),
+    this.host.classList.toggle(
+      "desaturate-online-covers",
+      options.desaturateOnlineCovers ?? getPref("desaturateOnlineCovers"),
     );
-    const renderKey = this.makeRenderKey(renderItems, options.showAuthors);
-    if (renderKey === this.renderKey) return;
+    const scrollTop = this.host.scrollTop;
+    const renderItems = items.map((item) => this.renderItem(item, options));
+    const renderKey = this.makeRenderKey(renderItems);
+    if (renderKey === this.renderKey) {
+      for (const [index, rendered] of renderItems.entries()) {
+        const previous = this.renderItems[index];
+        if (
+          rendered.captionTitle === previous.captionTitle &&
+          rendered.creators === previous.creators &&
+          rendered.year === previous.year &&
+          rendered.iconName === previous.iconName &&
+          rendered.typeLabel === previous.typeLabel &&
+          JSON.stringify(rendered.tags) === JSON.stringify(previous.tags)
+        )
+          continue;
+        const entry = this.entries.get(rendered.item.id);
+        if (entry) {
+          this.updateCaption(entry, rendered);
+          this.updateItemTypeBadge(entry, rendered);
+        }
+      }
+      this.renderItems = renderItems;
+      return;
+    }
     this.renderKey = renderKey;
 
     this.renderItems = renderItems;
@@ -273,6 +329,7 @@ export class GridRenderer {
     ++this.renderVersion;
     this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
+    this.captionObserver.disconnect();
     this.entries.clear();
     this.host.replaceChildren();
     this.renderChunk();
@@ -280,24 +337,35 @@ export class GridRenderer {
     this.host.scrollTop = scrollTop;
   }
 
-  private makeRenderKey(items: GridRenderItem[], showAuthors: boolean): string {
+  private makeRenderKey(items: GridRenderItem[]): string {
     return JSON.stringify([
-      showAuthors,
       getPref("fetchISBNCover"),
       getPref("fetchMetadataCover"),
-      items.map(({ item, title, authors }) => [
-        item.id,
-        title,
-        showAuthors ? authors : "",
-      ]),
+      items.map(({ item, title }) => [item.id, title]),
     ]);
   }
 
-  private renderItem(item: Zotero.Item, showAuthors: boolean): GridRenderItem {
+  private renderItem(
+    item: Zotero.Item,
+    options: GridRenderOptions,
+  ): GridRenderItem {
+    const title = item.getDisplayTitle();
+    const year = options.showYears === false ? "" : getItemYear(item);
+    const iconName =
+      options.showItemTypeIcon === false
+        ? ""
+        : item.getItemTypeIconName?.() || "";
     return {
       item,
-      title: item.getDisplayTitle(),
-      authors: showAuthors ? item.firstCreator : "",
+      title,
+      captionTitle: options.showTitles === false ? "" : title,
+      creators: options.showCreators ? item.firstCreator : "",
+      year,
+      tags: options.showTitles === false ? [] : getTagIndicators(item),
+      iconName,
+      typeLabel: iconName
+        ? Zotero.ItemTypes.getLocalizedString(item.itemTypeID)
+        : "",
     };
   }
 
@@ -307,12 +375,17 @@ export class GridRenderer {
     if (index < 0) return;
     const item = Zotero.Items.get(itemID);
     if (!item || Array.isArray(item)) return;
-    const showAuthors = !!getPref("showAuthors");
-    this.renderItems[index] = this.renderItem(item, showAuthors);
-    this.renderKey = this.makeRenderKey(this.renderItems, showAuthors);
+    this.renderItems[index] = this.renderItem(item, {
+      showCreators: getPref("showCreators"),
+      showTitles: getPref("showTitles"),
+      showYears: getPref("showYears"),
+      showItemTypeIcon: getPref("showItemTypeIcon"),
+    });
+    this.renderKey = this.makeRenderKey(this.renderItems);
     const oldEntry = this.entries.get(itemID);
     if (!oldEntry) return;
     this.coverObserver.unobserve(oldEntry);
+    this.captionObserver.unobserve(oldEntry);
     const replacement = this.buildTile(this.renderItems[index], index);
     oldEntry.replaceWith(replacement);
     this.updateActiveDescendant();
@@ -349,9 +422,10 @@ export class GridRenderer {
   }
 
   private buildTile(
-    { item, title, authors }: GridRenderItem,
+    rendered: GridRenderItem,
     renderIndex: number,
   ): HTMLElement {
+    const { item, title } = rendered;
     const entry = this.doc.createElement("figure");
     entry.className = "grid-view-item";
     entry.dataset.itemId = String(item.id);
@@ -374,25 +448,139 @@ export class GridRenderer {
     image.draggable = false;
     coverFrame.appendChild(image);
 
-    const caption = this.doc.createElement("figcaption");
-    const titleLine = this.doc.createElement("span");
-    titleLine.className = "grid-view-title";
-    titleLine.textContent = title;
-    titleLine.title = title;
-    caption.appendChild(titleLine);
-
-    if (authors) {
-      const authorLine = this.doc.createElement("span");
-      authorLine.className = "grid-view-authors";
-      authorLine.textContent = authors;
-      authorLine.title = authors;
-      caption.appendChild(authorLine);
-    }
-
-    entry.append(coverFrame, caption);
+    entry.appendChild(coverFrame);
+    this.updateItemTypeBadge(entry, rendered);
+    this.updateCaption(entry, rendered);
     this.coverObserver.observe(entry);
+    this.captionObserver.observe(entry);
 
     return entry;
+  }
+
+  private updateItemTypeBadge(
+    entry: HTMLElement,
+    rendered: GridRenderItem,
+  ): void {
+    entry.querySelector(".grid-view-item-type-badge")?.remove();
+    entry.removeAttribute("aria-description");
+    if (!rendered.iconName) return;
+    const badge = this.doc.createElement("span");
+    badge.className = "grid-view-item-type-badge";
+    badge.title = rendered.typeLabel;
+    badge.setAttribute("aria-hidden", "true");
+    // Use the same CSS icon and variant name as Zotero's native item tree.
+    const icon = this.doc.createElement("span");
+    icon.className = "icon icon-css icon-item-type";
+    icon.dataset.itemType = rendered.iconName;
+    badge.appendChild(icon);
+    entry.querySelector(".grid-view-cover")!.appendChild(badge);
+    entry.setAttribute("aria-description", rendered.typeLabel);
+  }
+
+  private updateCaption(entry: HTMLElement, rendered: GridRenderItem): void {
+    entry.setAttribute(
+      "aria-label",
+      [rendered.title, rendered.creators, rendered.year]
+        .filter(Boolean)
+        .join(" · "),
+    );
+    entry.querySelector("figcaption")?.remove();
+    const caption = this.buildCaption(rendered);
+    if (caption) entry.appendChild(caption);
+    this.updateTagOverflow(entry);
+  }
+
+  private updateTagOverflow(entry: HTMLElement): void {
+    const row = entry.querySelector<HTMLElement>(".grid-view-title-row");
+    const group = row?.querySelector<HTMLElement>(".grid-view-tags");
+    if (!row || !group || !row.clientWidth) return;
+    group.querySelector(".grid-view-tag-overflow")?.remove();
+    const indicators: HTMLElement[] = Array.from(
+      group.querySelectorAll<HTMLElement>(".grid-view-tag"),
+    );
+    for (const indicator of indicators) indicator.hidden = false;
+    // Leave more than half the line for the title, including the inter-group gap.
+    const budget = row.clientWidth * 0.45;
+    if (group.getBoundingClientRect().width <= budget) return;
+    const overflow = this.doc.createElement("span");
+    overflow.className = "grid-view-tag-overflow";
+    group.appendChild(overflow);
+    let visible = indicators.length;
+    do {
+      indicators[--visible].hidden = true;
+      overflow.textContent = `+${indicators.length - visible}`;
+    } while (visible > 0 && group.getBoundingClientRect().width > budget);
+    overflow.title = indicators
+      .slice(visible)
+      .map((indicator) => indicator.title)
+      .join("\n");
+    overflow.setAttribute("aria-label", overflow.title);
+  }
+
+  private buildCaption({
+    captionTitle,
+    creators,
+    year,
+    tags,
+  }: GridRenderItem): HTMLElement | undefined {
+    const caption = this.doc.createElement("figcaption");
+    if (captionTitle) {
+      const titleRow = this.doc.createElement("span");
+      titleRow.className = "grid-view-title-row";
+      if (tags.length) {
+        const indicators = this.doc.createElement("span");
+        indicators.className = "grid-view-tags";
+        for (const { tag, color, emoji } of tags) {
+          const indicator = this.doc.createElement("span");
+          indicator.className = "grid-view-tag";
+          indicator.title = tag;
+          indicator.setAttribute("aria-label", tag);
+          if (emoji) {
+            indicator.classList.add("grid-view-tag-emoji");
+            indicator.textContent = emoji;
+          } else if (color) {
+            indicator.classList.add("grid-view-tag-swatch");
+            indicator.style.color = color;
+            indicator.dataset.color = color.toLowerCase();
+          }
+          indicators.appendChild(indicator);
+        }
+        titleRow.appendChild(indicators);
+      }
+      const titleLine = this.doc.createElement("span");
+      titleLine.className = "grid-view-title";
+      titleLine.textContent = captionTitle;
+      titleLine.title = captionTitle;
+      titleRow.appendChild(titleLine);
+      caption.appendChild(titleRow);
+    }
+
+    if (creators || year) {
+      const metadataLine = this.doc.createElement("span");
+      metadataLine.className = "grid-view-metadata";
+      metadataLine.title = [creators, year].filter(Boolean).join(" · ");
+      if (creators) {
+        const creator = this.doc.createElement("span");
+        creator.className = "grid-view-creators";
+        creator.textContent = creators;
+        metadataLine.appendChild(creator);
+      }
+      if (creators && year) {
+        const separator = this.doc.createElement("span");
+        separator.className = "grid-view-separator";
+        separator.textContent = " · ";
+        metadataLine.appendChild(separator);
+      }
+      if (year) {
+        const yearLine = this.doc.createElement("span");
+        yearLine.className = "grid-view-year";
+        yearLine.textContent = year;
+        metadataLine.appendChild(yearLine);
+      }
+      caption.appendChild(metadataLine);
+    }
+
+    return caption.childElementCount ? caption : undefined;
   }
 
   private async loadCover(entry: HTMLElement): Promise<void> {
@@ -404,7 +592,7 @@ export class GridRenderer {
 
     const renderVersion = this.renderVersion;
     CoverProvider.cacheCover(item);
-    const cover = await CoverProvider.getCover(item.id);
+    const cover = await CoverProvider.getCoverResult(item.id);
     if (
       !cover ||
       renderVersion !== this.renderVersion ||
@@ -424,7 +612,17 @@ export class GridRenderer {
       },
       { once: true },
     );
-    image.src = cover;
+    image.dataset.coverSource = cover.source;
+    const frame = entry.querySelector<HTMLElement>(".grid-view-cover")!;
+    if (cover.source === "online") {
+      frame.style.setProperty(
+        "--cover-view-online-cover",
+        `url(${JSON.stringify(cover.uri)})`,
+      );
+    } else {
+      frame.style.removeProperty("--cover-view-online-cover");
+    }
+    image.src = cover.uri;
   }
 
   /** Update selection presentation without rebuilding tiles or reloading covers. */
@@ -639,6 +837,7 @@ export class GridRenderer {
     this.doc.defaultView!.removeEventListener("focus", this.handleWindowFocus);
     this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
+    this.captionObserver.disconnect();
     this.renderItems = [];
     this.renderedCount = 0;
     this.entries.clear();

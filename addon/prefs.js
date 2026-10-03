@@ -1,5 +1,9 @@
 pref("enableGridView", true);
-pref("showAuthors", true);
+pref("showCreators", true);
+pref("showTitles", true);
+pref("showYears", true);
+pref("showItemTypeIcon", true);
+pref("desaturateOnlineCovers", false);
 pref("tileSize", 180);
 pref("fetchISBNCover", false);
 pref("fetchMetadataCover", false);

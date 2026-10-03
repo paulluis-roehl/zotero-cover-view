@@ -4,21 +4,21 @@ import { getPref, observePrefs, setPref } from "../src/utils/prefs";
 
 describe("preferences", function () {
   it("observes a key and stops notifying after cleanup", function () {
-    const originalShowAuthors = getPref("showAuthors");
+    const originalShowCreators = getPref("showCreators");
     let calls = 0;
-    const stop = observePrefs(["showAuthors"], () => calls++);
+    const stop = observePrefs(["showCreators"], () => calls++);
 
     try {
-      setPref("showAuthors", !originalShowAuthors);
+      setPref("showCreators", !originalShowCreators);
       assert.equal(calls, 1);
 
       stop();
       stop();
-      setPref("showAuthors", originalShowAuthors);
+      setPref("showCreators", originalShowCreators);
       assert.equal(calls, 1);
     } finally {
       stop();
-      setPref("showAuthors", originalShowAuthors);
+      setPref("showCreators", originalShowCreators);
     }
   });
 });

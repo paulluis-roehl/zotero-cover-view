@@ -13,6 +13,11 @@ import {
   isPDFAttachment,
 } from "./covers/pdfCover";
 
+export interface CoverResult {
+  uri: string;
+  source: "attachment" | "online" | "placeholder";
+}
+
 export class CoverProvider {
   private static cache = new Map<
     number,
@@ -21,7 +26,8 @@ export class CoverProvider {
       fetchISBNCover: boolean;
       fetchMetadataCover: boolean;
       metadata: string;
-      promise: Promise<string | null>;
+      promise: Promise<CoverResult | null>;
+      uriPromise: Promise<string | null>;
     }
   >();
   private static generations = new Map<number, number>();
@@ -48,7 +54,7 @@ export class CoverProvider {
         this.generations.set(item.id, this.currentGeneration(item.id) + 1);
       }
       const generation = this.currentGeneration(item.id);
-      const cover = this.findCover(
+      const cover = this.findCoverResult(
         item,
         undefined,
         undefined,
@@ -72,6 +78,7 @@ export class CoverProvider {
         fetchMetadataCover,
         metadata,
         promise: cover,
+        uriPromise: cover.then((result) => result?.uri ?? null),
       });
       // Native row rendering may observe the edited item before its notifier
       // callback. Still refresh the grid when this happens first.
@@ -81,6 +88,10 @@ export class CoverProvider {
   }
 
   static getCover(itemID: number): Promise<string | null> {
+    return this.cache.get(itemID)?.uriPromise ?? Promise.resolve(null);
+  }
+
+  static getCoverResult(itemID: number): Promise<CoverResult | null> {
     return this.cache.get(itemID)?.promise ?? Promise.resolve(null);
   }
 
@@ -93,6 +104,12 @@ export class CoverProvider {
   }
 
   static async findCover(
+    ...args: Parameters<typeof CoverProvider.findCoverResult>
+  ): Promise<string | null> {
+    return (await this.findCoverResult(...args))?.uri ?? null;
+  }
+
+  static async findCoverResult(
     item: Zotero.Item,
     findEPUBCover: typeof findEPUBCoverURI = findEPUBCoverURI,
     findPDFCover: typeof findPDFCoverURI = findPDFCoverURI,
@@ -102,7 +119,7 @@ export class CoverProvider {
     fetchISBNCover = this.shouldFetchISBNCover(),
     findMetadataCover: typeof findMetadataCoverURI = findMetadataCoverURI,
     fetchMetadataCover = this.shouldFetchMetadataCover(),
-  ): Promise<string | null> {
+  ): Promise<CoverResult | null> {
     for (const attachment of this.findAttachments(item, isImgAttachment)) {
       this.rememberParent(attachment, item);
       try {
@@ -110,7 +127,7 @@ export class CoverProvider {
         if (!filePath) continue;
 
         const cover = await findImgCover(filePath);
-        if (cover) return cover;
+        if (cover) return { uri: cover, source: "attachment" };
       } catch (error) {
         ztoolkit.log("Failed to find image cover", attachment.id, error);
       }
@@ -123,7 +140,7 @@ export class CoverProvider {
         if (!filePath) continue;
 
         const cover = await findEPUBCover(filePath);
-        if (cover) return cover;
+        if (cover) return { uri: cover, source: "attachment" };
       } catch (error) {
         ztoolkit.log("Failed to find EPUB cover", attachment.id, error);
       }
@@ -149,7 +166,7 @@ export class CoverProvider {
         ) {
           await cachePDFCover(item.id, signature, cover);
         }
-        if (cover) return cover;
+        if (cover) return { uri: cover, source: "attachment" };
       } catch (error) {
         ztoolkit.log("Failed to find PDF cover", attachment.id, error);
       }
@@ -159,7 +176,7 @@ export class CoverProvider {
       for (const isbn of extractISBNs(item.getField("ISBN"))) {
         try {
           const cover = await findISBNCover(isbn);
-          if (cover) return cover;
+          if (cover) return { uri: cover, source: "online" };
         } catch (error) {
           ztoolkit.log("Failed to find ISBN cover", isbn, error);
         }
@@ -191,7 +208,7 @@ export class CoverProvider {
             surname && surname !== author ? [author, surname] : [author];
           for (const queryAuthor of authors) {
             const cover = await findMetadataCover(title, queryAuthor);
-            if (cover) return cover;
+            if (cover) return { uri: cover, source: "online" };
           }
         } catch (error) {
           ztoolkit.log("Failed to find metadata cover", item.id, error);
@@ -199,7 +216,7 @@ export class CoverProvider {
       }
     }
 
-    return createPlaceholderCoverURI(item);
+    return { uri: createPlaceholderCoverURI(item), source: "placeholder" };
   }
 
   static clearCache(): void {

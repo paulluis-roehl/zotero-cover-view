@@ -12,7 +12,11 @@ import { getPref, observePrefs, setPref } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
 const GRID_RENDER_PREFS = [
-  "showAuthors",
+  "showCreators",
+  "showTitles",
+  "showYears",
+  "showItemTypeIcon",
+  "desaturateOnlineCovers",
   "fetchISBNCover",
   "fetchMetadataCover",
 ] as const;
@@ -27,7 +31,7 @@ export class GridView {
   private readonly tree: ItemTreeBridge;
   private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
-  private readonly tabObserverID: string;
+  private readonly presentationObserverID: string;
   private readonly stopCoverChanges: () => void;
   private readonly pendingCoverIDs = new Set<number>();
   private syncTimer?: number;
@@ -87,19 +91,31 @@ export class GridView {
       }
     }, 150);
     win.document.addEventListener("focusin", this.trackFocus);
-    this.tabObserverID = Zotero.Notifier.registerObserver(
+    this.presentationObserverID = Zotero.Notifier.registerObserver(
       {
-        notify: (event, _type, ids) => {
-          if (event === "select" && ids.some((id) => id === "zotero-pane")) {
+        notify: (event, type, ids) => {
+          if (
+            type === "item-tag" ||
+            (type === "setting" &&
+              ids.some((id) => String(id).endsWith("/tagColors")))
+          ) {
+            this.scheduleSync();
+          }
+          if (
+            type === "tab" &&
+            event === "select" &&
+            ids.some((id) => id === "zotero-pane")
+          ) {
             for (const itemID of this.pendingCoverIDs) {
               if (getPref("enableGridView")) this.renderer.refreshCover(itemID);
             }
             this.pendingCoverIDs.clear();
             this.renderer.refreshLayout();
+            this.scheduleSync();
           }
         },
       },
-      ["tab"],
+      ["tab", "item-tag", "setting"],
       "cover-view-grid",
     );
     this.applyEnabledPreference();
@@ -215,7 +231,7 @@ export class GridView {
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
-    Zotero.Notifier.unregisterObserver(this.tabObserverID);
+    Zotero.Notifier.unregisterObserver(this.presentationObserverID);
 
     this.renderer.destroy();
     this.ui.destroy();
@@ -484,6 +500,13 @@ export class GridView {
     options: GridItemCommandOptions,
   ): void => {
     switch (command) {
+      case "toggle-tag":
+        if (options.tagNumber === undefined) return;
+        this.runSelectedItemCommand(
+          () => this.tree.toggleSelectedItemsTag(options.tagNumber!),
+          "Failed to toggle coloured tag on selected grid items",
+        );
+        return;
       case "activate":
         this.runSelectedItemCommand(
           () => this.tree.activateSelectedItems(),
@@ -683,7 +706,11 @@ export class GridView {
       this.selectionAnchorID = this.focusedItemID;
     }
     this.renderer.setItems(items, {
-      showAuthors: getPref("showAuthors"),
+      showCreators: getPref("showCreators"),
+      showTitles: getPref("showTitles"),
+      showYears: getPref("showYears"),
+      showItemTypeIcon: getPref("showItemTypeIcon"),
+      desaturateOnlineCovers: getPref("desaturateOnlineCovers"),
     });
     this.renderer.setSelection(selectedIDs);
     if (!this.itemIDs.length) {
