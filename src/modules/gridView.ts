@@ -15,6 +15,7 @@ const GRID_RENDER_PREFS = [
   "showCreators",
   "showTitles",
   "showYears",
+  "showItemTypeIcon",
   "fetchISBNCover",
   "fetchMetadataCover",
 ] as const;
@@ -707,6 +708,7 @@ export class GridView {
       showCreators: getPref("showCreators"),
       showTitles: getPref("showTitles"),
       showYears: getPref("showYears"),
+      showItemTypeIcon: getPref("showItemTypeIcon"),
     });
     this.renderer.setSelection(selectedIDs);
     if (!this.itemIDs.length) {

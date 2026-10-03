@@ -76,6 +76,7 @@
 }
 
 .grid-view-cover {
+  position: relative;
   display: flex;
   aspect-ratio: 210 / 297;
   align-items: center;
@@ -85,6 +86,21 @@
   border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
   border-radius: 6px;
   box-shadow: 0 2px 8px color-mix(in srgb, black 14%, transparent);
+}
+
+.grid-view-item-type-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: var(--material-background, Canvas);
+  color: CanvasText;
+  box-shadow: 0 1px 3px color-mix(in srgb, black 25%, transparent);
 }
 
 .grid-view-cover img {

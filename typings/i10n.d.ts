@@ -11,6 +11,7 @@ export type FluentMessageId =
   | 'pref-fetch-metadata-cover'
   | 'pref-help'
   | 'pref-show-creators'
+  | 'pref-show-item-type-icon'
   | 'pref-show-titles'
   | 'pref-show-years'
   | 'pref-tile-size'

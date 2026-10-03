@@ -30,6 +30,7 @@ export interface GridRenderOptions {
   showCreators: boolean;
   showTitles?: boolean;
   showYears?: boolean;
+  showItemTypeIcon?: boolean;
 }
 
 interface GridRenderItem {
@@ -39,6 +40,8 @@ interface GridRenderItem {
   captionTitle: string;
   year: string;
   tags: TagIndicator[];
+  iconName: string;
+  typeLabel: string;
 }
 
 export class GridRenderer {
@@ -299,12 +302,15 @@ export class GridRenderer {
           rendered.captionTitle === previous.captionTitle &&
           rendered.creators === previous.creators &&
           rendered.year === previous.year &&
+          rendered.iconName === previous.iconName &&
+          rendered.typeLabel === previous.typeLabel &&
           JSON.stringify(rendered.tags) === JSON.stringify(previous.tags)
         )
           continue;
         const entry = this.entries.get(rendered.item.id);
         if (entry) {
           this.updateCaption(entry, rendered);
+          this.updateItemTypeBadge(entry, rendered);
         }
       }
       this.renderItems = renderItems;
@@ -345,6 +351,10 @@ export class GridRenderer {
         ? ""
         : String(item.getField?.("date", true, true) || "").slice(0, 4);
     const year = rawYear && rawYear !== "0000" ? String(Number(rawYear)) : "";
+    const iconName =
+      options.showItemTypeIcon === false
+        ? ""
+        : item.getItemTypeIconName?.() || "";
     return {
       item,
       title,
@@ -352,6 +362,10 @@ export class GridRenderer {
       creators: options.showCreators ? item.firstCreator : "",
       year,
       tags: options.showTitles === false ? [] : getTagIndicators(item),
+      iconName,
+      typeLabel: iconName
+        ? Zotero.ItemTypes.getLocalizedString(item.itemTypeID)
+        : "",
     };
   }
 
@@ -365,6 +379,7 @@ export class GridRenderer {
       showCreators: getPref("showCreators"),
       showTitles: getPref("showTitles"),
       showYears: getPref("showYears"),
+      showItemTypeIcon: getPref("showItemTypeIcon"),
     });
     this.renderKey = this.makeRenderKey(this.renderItems);
     const oldEntry = this.entries.get(itemID);
@@ -434,11 +449,32 @@ export class GridRenderer {
     coverFrame.appendChild(image);
 
     entry.appendChild(coverFrame);
+    this.updateItemTypeBadge(entry, rendered);
     this.updateCaption(entry, rendered);
     this.coverObserver.observe(entry);
     this.captionObserver.observe(entry);
 
     return entry;
+  }
+
+  private updateItemTypeBadge(
+    entry: HTMLElement,
+    rendered: GridRenderItem,
+  ): void {
+    entry.querySelector(".grid-view-item-type-badge")?.remove();
+    entry.removeAttribute("aria-description");
+    if (!rendered.iconName) return;
+    const badge = this.doc.createElement("span");
+    badge.className = "grid-view-item-type-badge";
+    badge.title = rendered.typeLabel;
+    badge.setAttribute("aria-hidden", "true");
+    // Use the same CSS icon and variant name as Zotero's native item tree.
+    const icon = this.doc.createElement("span");
+    icon.className = "icon icon-css icon-item-type";
+    icon.dataset.itemType = rendered.iconName;
+    badge.appendChild(icon);
+    entry.querySelector(".grid-view-cover")!.appendChild(badge);
+    entry.setAttribute("aria-description", rendered.typeLabel);
   }
 
   private updateCaption(entry: HTMLElement, rendered: GridRenderItem): void {
