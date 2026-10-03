@@ -53,7 +53,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] right click menu
 - [x] general keyboard input and shortcuts
   - [x] adjust arrow keys for grid navigation
-- [ ] drag and drop files into grid view
+- [x] drag and drop files into grid view
 
 **Settings**
 
