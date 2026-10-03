@@ -1044,7 +1044,7 @@ describe("grid view", function () {
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
     const originalCacheCover = CoverProvider.cacheCover;
-    const originalGetCover = CoverProvider.getCover;
+    const originalGetCover = CoverProvider.getCoverResult;
     let notify: IntersectionObserverCallback | undefined;
     const cachedItemIDs: number[] = [];
     const requestedItemIDs: number[] = [];
@@ -1064,7 +1064,7 @@ describe("grid view", function () {
     win.IntersectionObserver =
       FakeIntersectionObserver as unknown as typeof IntersectionObserver;
     CoverProvider.cacheCover = (item) => cachedItemIDs.push(item.id);
-    CoverProvider.getCover = (itemID) => {
+    CoverProvider.getCoverResult = (itemID) => {
       requestedItemIDs.push(itemID);
       return Promise.resolve(null);
     };
@@ -1103,7 +1103,7 @@ describe("grid view", function () {
     } finally {
       renderer.destroy();
       CoverProvider.cacheCover = originalCacheCover;
-      CoverProvider.getCover = originalGetCover;
+      CoverProvider.getCoverResult = originalGetCover;
       win.IntersectionObserver = originalIntersectionObserver;
     }
   });
@@ -1322,7 +1322,7 @@ describe("grid view", function () {
     const originallyHidden = grid.hidden;
     const originalISBN = getPref("fetchISBNCover");
     const originalMetadata = getPref("fetchMetadataCover");
-    const originalFindCover = CoverProvider.findCover;
+    const originalFindCover = CoverProvider.findCoverResult;
     const tree = win.ZoteroPane.itemsView!.tree!;
     const originalInvalidate = tree.invalidate;
     const item = new Zotero.Item("book");
@@ -1338,8 +1338,10 @@ describe("grid view", function () {
         "Cover preference change should refresh both views",
       );
     };
-    CoverProvider.findCover = (async () =>
-      `data:image/svg+xml,${getPref("fetchISBNCover")}-${getPref("fetchMetadataCover")}`) as typeof CoverProvider.findCover;
+    CoverProvider.findCoverResult = async () => ({
+      uri: `data:image/svg+xml,${getPref("fetchISBNCover")}-${getPref("fetchMetadataCover")}`,
+      source: "online",
+    });
     tree.invalidate = function (...args) {
       rowRefreshes++;
       return originalInvalidate.apply(this, args);
@@ -1369,7 +1371,7 @@ describe("grid view", function () {
       );
     } finally {
       tree.invalidate = originalInvalidate;
-      CoverProvider.findCover = originalFindCover;
+      CoverProvider.findCoverResult = originalFindCover;
       setPref("fetchISBNCover", originalISBN);
       setPref("fetchMetadataCover", originalMetadata);
       if (grid.hidden !== originallyHidden) toggle();
@@ -2161,7 +2163,7 @@ describe("grid view", function () {
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
     const requestedItemIDs: number[] = [];
-    const originalGetCover = CoverProvider.getCover;
+    const originalGetCover = CoverProvider.getCoverResult;
 
     class FakeIntersectionObserver {
       constructor(
@@ -2174,7 +2176,7 @@ describe("grid view", function () {
     }
     win.IntersectionObserver =
       FakeIntersectionObserver as unknown as typeof IntersectionObserver;
-    CoverProvider.getCover = (itemID) => {
+    CoverProvider.getCoverResult = (itemID) => {
       requestedItemIDs.push(itemID);
       return Promise.resolve(null);
     };
@@ -2258,7 +2260,7 @@ describe("grid view", function () {
     } finally {
       renderer.destroy();
       host.remove();
-      CoverProvider.getCover = originalGetCover;
+      CoverProvider.getCoverResult = originalGetCover;
       win.IntersectionObserver = originalIntersectionObserver;
     }
   });

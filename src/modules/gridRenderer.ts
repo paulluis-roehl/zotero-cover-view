@@ -31,6 +31,7 @@ export interface GridRenderOptions {
   showTitles?: boolean;
   showYears?: boolean;
   showItemTypeIcon?: boolean;
+  desaturateOnlineCovers?: boolean;
 }
 
 interface GridRenderItem {
@@ -292,6 +293,10 @@ export class GridRenderer {
   };
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
+    this.host.classList.toggle(
+      "desaturate-online-covers",
+      options.desaturateOnlineCovers ?? getPref("desaturateOnlineCovers"),
+    );
     const scrollTop = this.host.scrollTop;
     const renderItems = items.map((item) => this.renderItem(item, options));
     const renderKey = this.makeRenderKey(renderItems);
@@ -592,7 +597,7 @@ export class GridRenderer {
 
     const renderVersion = this.renderVersion;
     CoverProvider.cacheCover(item);
-    const cover = await CoverProvider.getCover(item.id);
+    const cover = await CoverProvider.getCoverResult(item.id);
     if (
       !cover ||
       renderVersion !== this.renderVersion ||
@@ -612,7 +617,17 @@ export class GridRenderer {
       },
       { once: true },
     );
-    image.src = cover;
+    image.dataset.coverSource = cover.source;
+    const frame = entry.querySelector<HTMLElement>(".grid-view-cover")!;
+    if (cover.source === "online") {
+      frame.style.setProperty(
+        "--cover-view-online-cover",
+        `url(${JSON.stringify(cover.uri)})`,
+      );
+    } else {
+      frame.style.removeProperty("--cover-view-online-cover");
+    }
+    image.src = cover.uri;
   }
 
   /** Update selection presentation without rebuilding tiles or reloading covers. */

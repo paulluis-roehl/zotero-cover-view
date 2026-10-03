@@ -254,7 +254,7 @@ describe("grid page navigation", function () {
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
     const originalCacheCover = CoverProvider.cacheCover;
-    const originalGetCover = CoverProvider.getCover;
+    const originalGetCover = CoverProvider.getCoverResult;
     const requestedIDs: number[] = [];
     const cachedIDs: number[] = [];
     const observed = new Set<Element>();
@@ -281,7 +281,7 @@ describe("grid page navigation", function () {
     CoverProvider.cacheCover = (item) => {
       cachedIDs.push(item.id);
     };
-    CoverProvider.getCover = (id) => {
+    CoverProvider.getCoverResult = (id) => {
       requestedIDs.push(id);
       return Promise.resolve(null);
     };
@@ -360,7 +360,7 @@ describe("grid page navigation", function () {
       renderer.destroy();
       host.remove();
       CoverProvider.cacheCover = originalCacheCover;
-      CoverProvider.getCover = originalGetCover;
+      CoverProvider.getCoverResult = originalGetCover;
       win.IntersectionObserver = originalIntersectionObserver;
     }
   });

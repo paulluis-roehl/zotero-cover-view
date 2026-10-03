@@ -16,6 +16,7 @@ const GRID_RENDER_PREFS = [
   "showTitles",
   "showYears",
   "showItemTypeIcon",
+  "desaturateOnlineCovers",
   "fetchISBNCover",
   "fetchMetadataCover",
 ] as const;
@@ -709,6 +710,7 @@ export class GridView {
       showTitles: getPref("showTitles"),
       showYears: getPref("showYears"),
       showItemTypeIcon: getPref("showItemTypeIcon"),
+      desaturateOnlineCovers: getPref("desaturateOnlineCovers"),
     });
     this.renderer.setSelection(selectedIDs);
     if (!this.itemIDs.length) {

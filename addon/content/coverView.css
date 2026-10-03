@@ -90,6 +90,7 @@
 
 .grid-view-item-type-badge {
   position: absolute;
+  z-index: 1;
   top: 4px;
   left: 4px;
   display: flex;
@@ -104,10 +105,30 @@
 }
 
 .grid-view-cover img {
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.desaturate-online-covers
+  .grid-view-cover:has(img[data-cover-source="online"])::before {
+  /* Back only the image footprint; letterboxing keeps selection visible. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, CanvasText 7%, Canvas);
+  mask-image: var(--cover-view-online-cover);
+  mask-size: contain;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.desaturate-online-covers .grid-view-cover img[data-cover-source="online"] {
+  filter: saturate(0.65);
+  opacity: 0.5;
 }
 
 .grid-view-cover img[hidden] {

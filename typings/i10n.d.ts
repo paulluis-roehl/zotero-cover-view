@@ -6,6 +6,7 @@ export type FluentMessageId =
   | 'cover-view-image-alt'
   | 'cover-view-switch-to-grid'
   | 'cover-view-switch-to-list'
+  | 'pref-desaturate-online-covers'
   | 'pref-enable-grid-view'
   | 'pref-fetch-isbn-cover'
   | 'pref-fetch-metadata-cover'

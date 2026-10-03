@@ -12,6 +12,7 @@ declare namespace _ZoteroTypes {
       "showTitles": boolean;
       "showYears": boolean;
       "showItemTypeIcon": boolean;
+      "desaturateOnlineCovers": boolean;
       "tileSize": number;
       "fetchISBNCover": boolean;
       "fetchMetadataCover": boolean;
