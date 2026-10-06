@@ -4,7 +4,7 @@
 
 - Drag-and-drop files in grid view
 - Enhance grid view display options
-- Add cover to item info
+- Enhance settings
 
 ## 0.4.1
 
