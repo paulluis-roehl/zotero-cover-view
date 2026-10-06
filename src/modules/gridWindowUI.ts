@@ -1,4 +1,5 @@
 import { getString } from "../utils/locale";
+import { version } from "../../package.json";
 
 type StylableElement = Element & { style: CSSStyleDeclaration };
 
@@ -36,7 +37,8 @@ export class GridWindowUI {
       properties: {
         type: "text/css",
         rel: "stylesheet",
-        href: `chrome://${addon.data.config.addonRef}/content/coverView.css`,
+        // Gecko can reuse pre-update chrome CSS even after the link is removed.
+        href: `chrome://${addon.data.config.addonRef}/content/coverView.css?version=${version}`,
       },
     });
     win.document.documentElement?.appendChild(this.stylesheet);
