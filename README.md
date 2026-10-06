@@ -46,6 +46,7 @@ Switch between the default list view and grid view using a toggle button in the 
 - Based on the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) by [@windingwind](https://github.com/windingwind).
 - Inspired by [this](https://forums.zotero.org/discussion/121736/feature-request-cover-flow-or-book-jacket-image-display-view) discussion on the Zotero forum.
 - ISBN and metadata-based cover images for books are provided by [Open Library](https://openlibrary.org/) through its [Covers API](https://openlibrary.org/dev/docs/api/covers).
+- Some performance improvements based on [ZoteroThumbLibrary](https://github.com/gchapron/ZoteroThumbLibrary)
 
 ## Disclaimer
 

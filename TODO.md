@@ -38,7 +38,7 @@
 - [ ] fix: when selecting book through grid view and then disabling plugin, only two items above the book render in list view (rest is white space)
   - when selecting that same book through list view, then switching to grid view and doing the same, everything works as intended
   - just switching to list view and back fixes it as well
-- [ ] fix: when lazy-loading grid view, scrollbar does not account for all items
+- [x] fix: when lazy-loading grid view, scrollbar does not account for all items
   - (maybe items themselves shouldn't be lazy-loaded, only covers)
 
 <br/>
