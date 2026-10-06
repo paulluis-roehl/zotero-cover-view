@@ -1,4 +1,6 @@
 pref-title = General
+pref-tile-appearance = Appearance
+pref-cover-sources = Cover sources
 pref-enable-grid-view =
     .label = Enable grid view
 pref-show-titles =
