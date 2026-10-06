@@ -3,20 +3,29 @@
 [![zotero target version](https://img.shields.io/badge/Zotero-10-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![Using Zotero Plugin Template](https://img.shields.io/badge/Using-Zotero%20Plugin%20Template-blue?style=flat-square&logo=github)](https://github.com/windingwind/zotero-plugin-template)
 
-Cover View is an extension for [Zotero](https://www.zotero.org) that offers an alternative cover grid view next to the default list view for Zotero items.
-This makes it more visually appealing especially for books (as opposed to academic papers).
+Cover View is a [Zotero](https://www.zotero.org) extension that displays the covers of items more prominently.
+Switch between the default list view and grid view using a toggle button in the toolbar or preview thumbnails directly in list view with the 'Cover' column.
+
+<p align="center">
+  <img src="screenshots/grid-view.png" alt="Zotero cover grid view" height="280" />
+  &emsp;&emsp;&emsp;&emsp;
+  <img src="screenshots/list-view.png" alt="Zotero list view with cover thumbnails" height="280" />
+</p>
 
 ## Features
 
-- **Cover extraction options**
-  - image attachment
-  - first page of `.epub` or `.pdf` attachment
-  - settings option: fetch missing covers through ISBN
-  - settings option: fetch missing covers through metadata
 - **Grid view**
   - display items in a grid instead of a list
-  - adds a button to the main item bar to switch between grid view and list view
+  - switch between grid view and list view with a button in the toolbar
 - **List view**: provides 'Cover' column with thumbnail of cover
+- **Cover extraction options**
+  - from image attachments (including `.jpg` and `.png`)
+  - first page of `.epub` or `.pdf` attachment
+  - optional: fetch missing covers from web using ISBN
+  - optional: fetch missing covers from web using metadata (may yield the wrong cover)
+- **Settings**
+  - customize the appearance of the grid tiles
+  - change the grid size
 
 ## Installation
 
@@ -36,7 +45,6 @@ This makes it more visually appealing especially for books (as opposed to academ
 
 - Based on the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) by [@windingwind](https://github.com/windingwind).
 - Inspired by [this](https://forums.zotero.org/discussion/121736/feature-request-cover-flow-or-book-jacket-image-display-view) discussion on the Zotero forum.
-- Implementation also inspired by [zotero-lib-view](https://github.com/reiherj/zotero-lib-view).
 - ISBN and metadata-based cover images for books are provided by [Open Library](https://openlibrary.org/) through its [Covers API](https://openlibrary.org/dev/docs/api/covers).
 
 ## Disclaimer
