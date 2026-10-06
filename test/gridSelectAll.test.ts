@@ -1,7 +1,7 @@
 import { assert } from "chai";
 
 describe("grid select all", function () {
-  it("selects displayed items beyond the first chunk without moving focus or anchor", async function () {
+  it("selects unmounted items without moving focus or anchor", async function () {
     this.timeout(120000);
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
@@ -55,10 +55,11 @@ describe("grid select all", function () {
       await pane.collectionsView!.selectByID(`C${collection.id}`);
       if (grid.hidden) toggle();
       await waitFor(
-        () => grid.querySelectorAll(".grid-view-item").length === 120,
-        `Initial chunk: ${grid.querySelectorAll(".grid-view-item").length} tiles, ${pane.getSelectedCollection(true)} selected`,
+        () => !!grid.querySelector(`[data-item-id="${items[2].id}"]`),
+        "Initial viewport mounted",
       );
-      assert.exists(grid.querySelector(".grid-view-sentinel"));
+      const mounted = grid.querySelectorAll(".grid-view-item").length;
+      assert.isBelow(mounted, 121);
       assert.notExists(grid.querySelector(`[data-item-id="${items[120].id}"]`));
 
       const entries = Array.from(
@@ -92,7 +93,7 @@ describe("grid select all", function () {
       assert.notInclude(selected(), childNote.id);
       assert.equal(grid.getAttribute("aria-activedescendant"), entries[2].id);
       assert.strictEqual(grid.querySelector(".grid-view-item"), firstTile);
-      assert.lengthOf(grid.querySelectorAll(".grid-view-item"), 120);
+      assert.lengthOf(grid.querySelectorAll(".grid-view-item"), mounted);
       assert.notExists(grid.querySelector(`[data-item-id="${ids[120]}"]`));
       assert.equal(entries[0].getAttribute("aria-selected"), "true");
 
@@ -106,6 +107,33 @@ describe("grid select all", function () {
         ids.slice(2, 4),
         "Select all preserves the anchor",
       );
+
+      press("End", primaryKey);
+      await waitFor(
+        () =>
+          grid.getAttribute("aria-activedescendant") ===
+          `cover-view-grid-item-${ids.at(-1)}`,
+        "Primary-End reveals offscreen focus",
+      );
+      assert.deepEqual(
+        selected(),
+        ids.slice(2, 4),
+        "Focus navigation does not change selection",
+      );
+      press("Home", { shiftKey: true });
+      await waitFor(
+        () => selected().length === 121,
+        "Range extends from the independently moved anchor",
+      );
+      assert.deepEqual(selected(), ids);
+      press("End", { shiftKey: true });
+      await waitFor(
+        () => selected().length === 1,
+        "Range contracts back to the offscreen anchor",
+      );
+      assert.deepEqual(selected(), [ids.at(-1)]);
+      assert.isBelow(grid.querySelectorAll(".grid-view-item").length, 60);
+      assert.notExists(grid.querySelector(`[data-item-id="${ids[60]}"]`));
 
       pane.itemsView!.selection.clearSelection();
       await waitFor(() => selected().length === 0, "Clear selection");

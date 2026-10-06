@@ -172,6 +172,7 @@ export class GridView {
       "--cover-view-tile-size",
       `${Number.isFinite(size) ? Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, size)) : 180}px`,
     );
+    this.renderer.refreshLayout();
   }
 
   private readonly handleWheel = (event: WheelEvent): void => {

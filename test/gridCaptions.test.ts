@@ -1,4 +1,5 @@
 import { assert } from "chai";
+import { createRendererHost } from "./helpers/rendererHost";
 import { GridRenderer } from "../src/modules/gridRenderer";
 import { clearPref, getPref, setPref } from "../src/utils/prefs";
 import { config } from "../package.json";
@@ -16,7 +17,7 @@ describe("independent tile captions", function () {
   });
 
   it("independently shows title, creator, and year in all eight combinations", async function () {
-    const host = Zotero.getMainWindow()!.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const item = new Zotero.Item("book");
     item.setField("title", "Analytical Engine Notes");
@@ -69,7 +70,7 @@ describe("independent tile captions", function () {
 
   it("keeps the cover, selection, focus, and tile identity when captions change", async function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const item = new Zotero.Item("book");
     item.setField("title", "Unchanged cover text");
@@ -177,7 +178,7 @@ describe("independent tile captions", function () {
   });
 
   it("omits missing caption fields and uses normalized native years, including early and unknown years", function () {
-    const host = Zotero.getMainWindow()!.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const item = new Zotero.Item("book");
     const cases = [
@@ -217,7 +218,7 @@ describe("independent tile captions", function () {
   });
 
   it("uses Zotero's primary creator summary for directors, artists, and editors", async function () {
-    const host = Zotero.getMainWindow()!.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const items: Zotero.Item[] = [];
     try {

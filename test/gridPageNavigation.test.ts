@@ -68,6 +68,8 @@ describe("grid page navigation", function () {
       );
       if (grid.hidden) toggle();
       grid.style.gridTemplateColumns = "repeat(3, 150px)";
+      grid.style.flex = "none";
+      grid.style.height = "1200px";
       await waitFor(
         () => grid.querySelectorAll(".grid-view-item").length === 13,
         "Collection tiles rendered",
@@ -98,6 +100,7 @@ describe("grid page navigation", function () {
       // offsetTop row spacing. Cover layout and padding can change that spacing.
       for (const padding of ["0", ""]) {
         grid.style.padding = padding;
+        await Zotero.Promise.delay(20);
         grid.scrollTop = 0;
         const fourthRowTop =
           entries[10].getBoundingClientRect().top -
@@ -187,7 +190,10 @@ describe("grid page navigation", function () {
       grid.style.height = `${rowHeight * 2 - 8}px`;
       grid.scrollTop = 0;
       grid.style.gridTemplateColumns = "repeat(2, 150px)";
-      assert.notEqual(entries[1].offsetTop, entries[2].offsetTop);
+      await waitFor(
+        () => entries[1].offsetTop !== entries[2].offsetTop,
+        "Mounted rows follow changed column styles",
+      );
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(
         () => selected()[0] === ids[1] && selected().length === 1,
@@ -249,7 +255,7 @@ describe("grid page navigation", function () {
     }
   });
 
-  it("pages across rendering chunks without requesting covers outside the viewport", async function () {
+  it("pages to unmounted rows without requesting covers outside the viewport", async function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
@@ -310,7 +316,8 @@ describe("grid page navigation", function () {
     );
     try {
       host.style.display = "grid";
-      host.style.gridTemplateColumns = "repeat(120, 5px)";
+      host.style.gridTemplateColumns = "repeat(3, 150px)";
+      host.style.setProperty("--cover-view-tile-size", "150px");
       host.style.alignContent = "start";
       host.style.height = "500px";
       host.style.width = "600px";
@@ -318,7 +325,9 @@ describe("grid page navigation", function () {
       win.document.documentElement.append(host);
       renderer.setItems(items, { showCreators: true });
       renderer.setFocusedItem(focusedID);
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
+      assert.isBelow(host.querySelectorAll(".grid-view-item").length, 20);
+      renderer.setFocusedItem(items[118].id);
+      focusedID = items[118].id;
       const page = new win.KeyboardEvent("keydown", {
         key: "PageDown",
         bubbles: true,
@@ -329,7 +338,7 @@ describe("grid page navigation", function () {
       assert.isAbove(
         Math.abs(focusedID),
         120,
-        "Destination exceeds initial chunk",
+        "Destination is in an unvisited row",
       );
       assert.isAtMost(Math.abs(focusedID), 361);
       assert.equal(

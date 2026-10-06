@@ -1,5 +1,6 @@
 import { assert } from "chai";
 import { ItemTreeBridge } from "../src/modules/itemTreeBridge";
+import { createRendererHost } from "./helpers/rendererHost";
 
 describe("grid item menu", function () {
   it("uses native selection and the last visible selected tile, waiting for pending writes", async function () {
@@ -78,6 +79,8 @@ describe("grid item menu", function () {
       await pane.collectionsView!.selectByID(`C${collection.id}`);
       if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
       grid.style.gridTemplateColumns = "repeat(1, 150px)";
+      grid.style.height = "1500px";
+      grid.style.flex = "none";
       await waitFor(
         () => grid.querySelectorAll(".grid-view-item").length === 5,
       );
@@ -352,7 +355,7 @@ describe("grid item menu", function () {
       "buildItemContextMenu",
     );
     const getElementById = doc.getElementById.bind(doc);
-    const host = doc.createElement("div");
+    const host = createRendererHost();
     const anchor = doc.createElement("figure");
     host.style.cssText =
       "position: fixed; left: 50px; top: 50px; width: 150px; height: 100px; overflow: hidden";

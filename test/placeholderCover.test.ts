@@ -1,4 +1,5 @@
 import { assert } from "chai";
+import { createRendererHost } from "./helpers/rendererHost";
 import { createPlaceholderCoverURI } from "../src/modules/covers/placeholderCover";
 import { CoverProvider } from "../src/modules/coverProvider";
 import { GridRenderer } from "../src/modules/gridRenderer";
@@ -49,12 +50,9 @@ describe("placeholder families", function () {
       configurable: true,
       value: Zotero.CoverView,
     });
-    const host = win.document.createElement("div");
-    host.style.cssText =
-      "position:fixed;left:0;top:0;width:180px;--cover-view-tile-size:180px";
-    win.document
-      .getElementById("cover-view-grid")!
-      .parentElement!.appendChild(host);
+    const host = createRendererHost();
+    host.style.cssText +=
+      ";width:180px;grid-template-columns:180px;--cover-view-tile-size:180px";
     const renderer = new GridRenderer(host, () => {});
     try {
       const item = new Zotero.Item("book");
@@ -157,7 +155,7 @@ describe("placeholder families", function () {
     Zotero.ItemTreeManager.registerColumns = (async (options: unknown) => {
       column = options as typeof column;
     }) as typeof register;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const items: Zotero.Item[] = [];
     try {

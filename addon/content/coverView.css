@@ -70,11 +70,6 @@
   color: inherit;
 }
 
-.grid-view-sentinel {
-  grid-column: 1 / -1;
-  height: 1px;
-}
-
 .grid-view-cover {
   position: relative;
   display: flex;

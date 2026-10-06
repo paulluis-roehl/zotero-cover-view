@@ -73,7 +73,7 @@ describe("grid native item drag", function () {
     }
   });
 
-  it("uses displayed order, native source context, and the native payload helper without changing selection", async function () {
+  it("drags mounted and unmounted selected items in native order without changing selection", async function () {
     this.timeout(120000);
     const win = Zotero.getMainWindow()!;
     const pane = win.ZoteroPane;
@@ -121,9 +121,9 @@ describe("grid native item drag", function () {
       destination.name = `Grid drag destination ${Date.now()}`;
       destination.libraryID = collection.libraryID;
       await destination.saveTx();
-      for (let index = 0; index < 3; index++) {
+      for (let index = 0; index < 121; index++) {
         const item = new Zotero.Item("book");
-        item.setField("title", `Grid drag ${index}`);
+        item.setField("title", `Grid drag ${String(index).padStart(3, "0")}`);
         item.addToCollection(collection.id);
         await item.saveTx();
         items.push(item);
@@ -131,13 +131,14 @@ describe("grid native item drag", function () {
       await pane.collectionsView!.selectByID(`C${collection.id}`);
       if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
       await waitFor(
-        () => grid.querySelectorAll(".grid-view-item").length === 3,
+        () => !!grid.querySelector(`[data-item-id="${items[1].id}"]`),
       );
       const tiles = Array.from(
         grid.querySelectorAll<HTMLElement>(".grid-view-item"),
       );
-      const ids = tiles.map((tile) => Number(tile.dataset.itemId));
-      await pane.selectItems([ids[2], ids[0]]);
+      const ids = items.map((item) => item.id);
+      await pane.selectItems([ids[120], ids[60], ids[0]]);
+      assert.notExists(grid.querySelector(`[data-item-id="${ids[60]}"]`));
       const source = (
         pane.itemsView as typeof pane.itemsView & {
           collectionTreeRows: unknown[];
@@ -160,14 +161,14 @@ describe("grid native item drag", function () {
         assert.isFalse(event.defaultPrevented);
       };
       drag(tiles[0]);
-      assert.deepEqual(calls[0].ids, [ids[0], ids[2]]);
+      assert.deepEqual(calls[0].ids, [ids[0], ids[60], ids[120]]);
       assert.strictEqual(calls[0].source, source);
       assert.strictEqual(calls[0].image, tiles[0]);
       drag(tiles[1]);
       assert.deepEqual(calls[1].ids, [ids[1]]);
       assert.deepEqual(
         pane.getSelectedItems(true).sort(),
-        [ids[0], ids[2]].sort(),
+        [ids[0], ids[60], ids[120]].sort(),
       );
       assert.isTrue(tiles[0].draggable);
       assert.isFalse(tiles[0].querySelector("img")!.draggable);
@@ -192,7 +193,7 @@ describe("grid native item drag", function () {
       }) as DragEvent;
       Object.defineProperty(event, "dataTransfer", { value: transfer });
       tiles[0].dispatchEvent(event);
-      assert.equal(data.get("zotero/item"), `${ids[0]},${ids[2]}`);
+      assert.equal(data.get("zotero/item"), `${ids[0]},${ids[60]},${ids[120]}`);
       assert.isTrue(
         data.has("text/plain"),
         "Native Quick Copy text is exposed",
@@ -233,7 +234,8 @@ describe("grid native item drag", function () {
         targetIndex as number,
       );
       assert.isTrue(destination.hasItem(ids[0]));
-      assert.isTrue(destination.hasItem(ids[2]));
+      assert.isTrue(destination.hasItem(ids[60]));
+      assert.isTrue(destination.hasItem(ids[120]));
       assert.isTrue(
         collection.hasItem(ids[0]),
         "Copy keeps source collection membership",

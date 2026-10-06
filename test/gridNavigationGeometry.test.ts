@@ -31,7 +31,8 @@ describe("grid navigation geometry", function () {
     );
     try {
       renderer.setItems(items, { showCreators: false, showYears: false });
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
+      const mounted = host.querySelectorAll(".grid-view-item").length;
+      assert.isBelow(mounted, 20);
       assert.equal(renderer.getVerticalDestination(-128, 1), -131);
       assert.equal(renderer.getVerticalDestination(-128, -1), -125);
       assert.equal(renderer.getVerticalDestination(-131, 1), -133);
@@ -42,12 +43,12 @@ describe("grid navigation geometry", function () {
       assert.equal(renderer.getPageDestination(-133, 1), -133);
       assert.lengthOf(
         host.querySelectorAll(".grid-view-item"),
-        120,
+        mounted,
         "Destination queries do not mount tiles",
       );
       host.style.gridTemplateColumns = "repeat(2,150px)";
       assert.equal(renderer.getVerticalDestination(-128, 1), -130);
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
+      assert.lengthOf(host.querySelectorAll(".grid-view-item"), mounted);
     } finally {
       renderer.destroy();
       host.remove();
@@ -77,6 +78,8 @@ describe("grid navigation geometry", function () {
         for (const showCreators of [false, true]) {
           for (const showYears of [false, true]) {
             renderer.setItems(items, { showTitles, showCreators, showYears });
+            for (const item of items) renderer.setFocusedItem(item.id);
+            renderer.setFocusedItem(undefined);
             const entries =
               host.querySelectorAll<HTMLElement>(".grid-view-item");
             assert.equal(renderer.getVerticalDestination(-2, 1), -5);
@@ -101,6 +104,7 @@ describe("grid navigation geometry", function () {
             // Gecko's scrollTop is integer-valued. Align the row edge to a
             // whole pixel so zero versus one visible pixel is unambiguous.
             host.style.paddingTop = `${19 + Math.ceil(secondRowBottom) - secondRowBottom}px`;
+            renderer.refreshLayout();
             for (const visiblePixels of [0, 1]) {
               host.scrollTop = Math.ceil(secondRowBottom) - visiblePixels;
               assert.closeTo(

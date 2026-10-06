@@ -2,6 +2,7 @@ import { assert } from "chai";
 import { CoverProvider } from "../src/modules/coverProvider";
 import { GridRenderer } from "../src/modules/gridRenderer";
 import { getPref, setPref } from "../src/utils/prefs";
+import { createRendererHost } from "./helpers/rendererHost";
 
 describe("grid view", function () {
   before(function () {
@@ -546,7 +547,7 @@ describe("grid view", function () {
 
   it("updates selection without replacing tiles and ignores undisplayed IDs", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const item = new Zotero.Item("book");
     item.setField("title", "Selection presentation");
@@ -581,7 +582,7 @@ describe("grid view", function () {
 
   it("exposes one focusable listbox with independently focused options", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const items = [-1, -2].map(
       (id) =>
@@ -620,7 +621,7 @@ describe("grid view", function () {
 
   it("passes native selection modifiers with grid navigation keys", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const commands: Array<{
       command: string;
       primary: boolean;
@@ -750,7 +751,7 @@ describe("grid view", function () {
 
   it("interprets grid item commands without consuming unrelated shortcuts", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const commands: Array<{ command: string; forceDelete?: boolean }> = [];
     const renderer = new GridRenderer(
       host,
@@ -858,10 +859,10 @@ describe("grid view", function () {
       if (grid.hidden) toggle();
       await waitFor(
         () =>
-          items.every((item) =>
-            grid.querySelector(`[data-item-id="${item.id}"]`),
-          ),
-        "Command test items should be rendered",
+          items
+            .slice(0, 2)
+            .every((item) => grid.querySelector(`[data-item-id="${item.id}"]`)),
+        "Starting command tiles should be rendered",
       );
       paneActions.viewItems = async (selected) => {
         activations.push(selected.map((item) => item.id));
@@ -870,7 +871,18 @@ describe("grid view", function () {
         deletions.push(force);
       };
 
+      await pane.selectItems([items[2].id], true);
+      await waitFor(
+        () => !!grid.querySelector(`[data-item-id="${items[2].id}"]`),
+        "External selection reveals its tile",
+      );
       await pane.selectItems([items[0].id, items[1].id], true);
+      await waitFor(
+        () =>
+          grid.getAttribute("aria-activedescendant") ===
+          `cover-view-grid-item-${items[1].id}`,
+        "External selection presentation has settled",
+      );
       const focused = grid.querySelector<HTMLElement>(
         `[data-item-id="${items[2].id}"]`,
       )!;
@@ -973,75 +985,9 @@ describe("grid view", function () {
     }
   });
 
-  it("renders tiles in finite chunks and appends the next chunk at the sentinel", function () {
-    const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
-    const OriginalIntersectionObserver = win.IntersectionObserver;
-    let notify: IntersectionObserverCallback | undefined;
-    class FakeIntersectionObserver {
-      constructor(
-        callback: IntersectionObserverCallback,
-        options?: IntersectionObserverInit,
-      ) {
-        if (options?.rootMargin === "400px") notify = callback;
-      }
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
-    }
-    win.IntersectionObserver =
-      FakeIntersectionObserver as unknown as typeof IntersectionObserver;
-
-    const items = Array.from(
-      { length: 121 },
-      (_, index) =>
-        ({
-          id: -(index + 1),
-          firstCreator: "",
-          getDisplayTitle: () => `Chunk item ${index}`,
-          isFileAttachment: () => false,
-          isRegularItem: () => false,
-        }) as unknown as Zotero.Item,
-    );
-    const renderer = new GridRenderer(host, () => {});
-
-    try {
-      renderer.setItems(items, {
-        showCreators: true,
-        fetchISBNCover: false,
-      });
-
-      const firstChunk = host.querySelectorAll<HTMLElement>(".grid-view-item");
-      assert.lengthOf(firstChunk, 120);
-      assert.equal(firstChunk[0].dataset.renderIndex, "0");
-      assert.equal(firstChunk[119].dataset.renderIndex, "119");
-      assert.lengthOf(host.querySelectorAll(".grid-view-sentinel"), 1);
-      const sentinel = host.querySelector(".grid-view-sentinel")!;
-      notify?.(
-        [
-          {
-            isIntersecting: true,
-            target: sentinel,
-          } as IntersectionObserverEntry,
-        ],
-        {} as IntersectionObserver,
-      );
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 121);
-      assert.equal(
-        host.querySelectorAll<HTMLElement>(".grid-view-item")[120].dataset
-          .renderIndex,
-        "120",
-      );
-      assert.lengthOf(host.querySelectorAll(".grid-view-sentinel"), 0);
-    } finally {
-      renderer.destroy();
-      win.IntersectionObserver = OriginalIntersectionObserver;
-    }
-  });
-
   it("starts cover loading only when a tile approaches the viewport", async function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const originalIntersectionObserver = win.IntersectionObserver;
     const originalCacheCover = CoverProvider.cacheCover;
     const originalGetCover = CoverProvider.getCoverResult;
@@ -1110,7 +1056,7 @@ describe("grid view", function () {
 
   it("passes a tile click to the renderer selection callback", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     let selectedID: number | undefined;
     const renderer = new GridRenderer(host, (itemID) => {
       selectedID = itemID;
@@ -1138,7 +1084,7 @@ describe("grid view", function () {
 
   it("passes a tile double-click to the renderer activation callback", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     let activatedID: number | undefined;
     const renderer = new GridRenderer(
       host,
@@ -1170,7 +1116,7 @@ describe("grid view", function () {
 
   it("renders the title and creators on separate caption lines", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const displayItem = {
       id: -1,
@@ -2137,6 +2083,7 @@ describe("grid view", function () {
 
       grid.style.gridTemplateColumns = "repeat(2, 150px)";
       assert.equal(entries[0].offsetTop, entries[1].offsetTop);
+      await Zotero.Promise.delay(50);
       assert.notEqual(entries[1].offsetTop, entries[2].offsetTop);
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitForSelection(Number(entries[1].dataset.itemId));
@@ -2160,7 +2107,7 @@ describe("grid view", function () {
 
   it("navigates Home and End while preserving finite lazy rendering", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const originalIntersectionObserver = win.IntersectionObserver;
     const requestedItemIDs: number[] = [];
     const originalGetCover = CoverProvider.getCoverResult;
@@ -2215,12 +2162,9 @@ describe("grid view", function () {
     try {
       host.style.display = "grid";
       host.style.gridTemplateColumns = "repeat(3, 150px)";
-      win.document
-        .getElementById("cover-view-grid")!
-        .parentElement!.append(host);
       renderer.setItems(items, { showCreators: true });
       renderer.setFocusedItem(focusedID);
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
+      assert.isBelow(host.querySelectorAll(".grid-view-item").length, 30);
 
       host.dispatchEvent(
         new win.KeyboardEvent("keydown", {
@@ -2230,7 +2174,7 @@ describe("grid view", function () {
         }),
       );
       assert.equal(focusedID, items[120].id);
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 240);
+      assert.isBelow(host.querySelectorAll(".grid-view-item").length, 50);
       assert.isEmpty(requestedItemIDs);
 
       host.dispatchEvent(
@@ -2241,7 +2185,7 @@ describe("grid view", function () {
         }),
       );
       assert.equal(focusedID, items.at(-1)!.id);
-      assert.lengthOf(host.querySelectorAll(".grid-view-item"), 241);
+      assert.isBelow(host.querySelectorAll(".grid-view-item").length, 70);
       assert.equal(
         host.getAttribute("aria-activedescendant"),
         host.querySelector<HTMLElement>(`[data-item-id="${focusedID}"]`)!.id,

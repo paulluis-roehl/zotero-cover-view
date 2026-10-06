@@ -5,7 +5,9 @@ import { getItemYear } from "../utils/itemYear";
 import { getTagIndicators, TagIndicator } from "./tagIndicators";
 import { getPageRow, GridRowGeometry } from "./gridLayout";
 
-const CHUNK_SIZE = 120;
+// Mount intersecting rows within 400 CSS pixels of either viewport edge.
+// Visited tiles deliberately remain mounted until tile retirement lands.
+const TILE_OVERSCAN = 400;
 
 export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end" | "page-up" | "page-down";
@@ -49,11 +51,17 @@ interface GridRenderItem {
 
 export class GridRenderer {
   private readonly doc: Document;
+  private readonly originalPosition: string;
+  private readonly spacer: HTMLElement;
   private renderVersion = 0;
   private renderKey?: string;
   private renderItems: GridRenderItem[] = [];
-  private renderedCount = 0;
-  private readonly chunkObserver: IntersectionObserver;
+  private readonly layoutObserver: ResizeObserver;
+  private readonly styleObserver: MutationObserver;
+  private layoutKey?: string;
+  private layoutRows: (GridRowGeometry & { margin: number })[] = [];
+  private layoutColumns = 1;
+  private layoutWidths: number[] = [];
   private readonly coverObserver: IntersectionObserver;
   private readonly captionObserver: ResizeObserver;
   private readonly entries = new Map<number, HTMLElement>();
@@ -86,6 +94,12 @@ export class GridRenderer {
     const doc = host.ownerDocument;
     if (!doc) throw new Error("Cannot create grid renderer without a document");
     this.doc = doc;
+    this.originalPosition = this.host.style.position;
+    this.host.style.position = "relative";
+    this.spacer = doc.createElement("div");
+    this.spacer.className = "grid-view-spacer";
+    this.spacer.setAttribute("aria-hidden", "true");
+    this.spacer.style.gridColumn = "1 / -1";
     this.host.tabIndex = 0;
     this.host.setAttribute("role", "listbox");
     this.host.setAttribute("aria-multiselectable", "true");
@@ -96,23 +110,21 @@ export class GridRenderer {
     this.host.addEventListener("keydown", this.handleKeyDown);
     this.host.addEventListener("focus", this.handleFocus);
     this.host.addEventListener("blur", this.handleBlur);
+    this.host.addEventListener("scroll", this.handleScroll);
     doc.addEventListener("focus", this.handleDocumentFocus, true);
     doc.defaultView!.addEventListener("blur", this.handleWindowBlur);
     doc.defaultView!.addEventListener("focus", this.handleWindowFocus);
-    this.chunkObserver = new doc.defaultView!.IntersectionObserver(
-      (entries: IntersectionObserverEntry[]) => {
-        const sentinel = this.host.querySelector(".grid-view-sentinel");
-        if (
-          sentinel &&
-          entries.some(
-            (entry) => entry.isIntersecting && entry.target === sentinel,
-          )
-        ) {
-          this.renderChunk();
-        }
-      },
-      { root: this.host, rootMargin: "400px" },
+    this.layoutObserver = new doc.defaultView!.ResizeObserver(() =>
+      this.refreshLayout(),
     );
+    this.layoutObserver.observe(this.host);
+    this.styleObserver = new doc.defaultView!.MutationObserver(() =>
+      this.refreshLayout(),
+    );
+    this.styleObserver.observe(this.host, {
+      attributes: true,
+      attributeFilter: ["style", "hidden"],
+    });
     this.coverObserver = new doc.defaultView!.IntersectionObserver(
       (entries: IntersectionObserverEntry[]) => {
         for (const entry of entries) {
@@ -303,6 +315,7 @@ export class GridRenderer {
     const renderItems = items.map((item) => this.renderItem(item, options));
     const renderKey = this.makeRenderKey(renderItems);
     if (renderKey === this.renderKey) {
+      let captionsChanged = false;
       for (const [index, rendered] of renderItems.entries()) {
         const previous = this.renderItems[index];
         if (
@@ -314,6 +327,7 @@ export class GridRenderer {
           JSON.stringify(rendered.tags) === JSON.stringify(previous.tags)
         )
           continue;
+        captionsChanged = true;
         const entry = this.entries.get(rendered.item.id);
         if (entry) {
           this.updateCaption(entry, rendered);
@@ -321,21 +335,23 @@ export class GridRenderer {
         }
       }
       this.renderItems = renderItems;
+      if (captionsChanged) this.layoutKey = undefined;
+      this.refreshLayout();
       return;
     }
     this.renderKey = renderKey;
 
     this.renderItems = renderItems;
-    this.renderedCount = 0;
+    this.layoutKey = undefined;
     ++this.renderVersion;
-    this.chunkObserver.disconnect();
     this.coverObserver.disconnect();
     this.captionObserver.disconnect();
     this.entries.clear();
     this.host.replaceChildren();
-    this.renderChunk();
+    this.refreshLayout();
     this.updateActiveDescendant();
     this.host.scrollTop = scrollTop;
+    this.mountViewport();
   }
 
   private makeRenderKey(items: GridRenderItem[]): string {
@@ -383,43 +399,100 @@ export class GridRenderer {
       showItemTypeIcon: getPref("showItemTypeIcon"),
     });
     this.renderKey = this.makeRenderKey(this.renderItems);
+    this.layoutKey = undefined;
     const oldEntry = this.entries.get(itemID);
-    if (!oldEntry) return;
+    if (!oldEntry) {
+      this.refreshLayout();
+      return;
+    }
     this.coverObserver.unobserve(oldEntry);
     this.captionObserver.unobserve(oldEntry);
     const replacement = this.buildTile(this.renderItems[index], index);
     oldEntry.replaceWith(replacement);
+    this.refreshLayout();
     this.updateActiveDescendant();
   }
 
-  private renderChunk(): void {
-    const previousSentinel = this.host.querySelector(".grid-view-sentinel");
-    if (previousSentinel) {
-      this.chunkObserver.unobserve(previousSentinel);
-      previousSentinel.remove();
-    }
+  private readonly handleScroll = (): void => this.mountViewport();
 
-    const end = Math.min(
-      this.renderedCount + CHUNK_SIZE,
-      this.renderItems.length,
+  private isVisible(): boolean {
+    return this.host.clientWidth > 0 && this.host.clientHeight > 0;
+  }
+
+  private mountViewport(): void {
+    if (!this.isVisible()) return;
+    const top = this.host.scrollTop - TILE_OVERSCAN;
+    const bottom = this.host.scrollTop + this.host.clientHeight + TILE_OVERSCAN;
+    for (let row = 0; row < this.layoutRows.length; row++) {
+      const geometry = this.layoutRows[row];
+      if (geometry.top > bottom) break;
+      if (geometry.top + geometry.height < top) continue;
+      const end = Math.min(
+        (row + 1) * this.layoutColumns,
+        this.renderItems.length,
+      );
+      for (let index = row * this.layoutColumns; index < end; index++)
+        this.mountItem(index);
+    }
+    this.updateActiveDescendant();
+  }
+
+  private positionTile(entry: HTMLElement, index: number): void {
+    const row = this.layoutRows[Math.floor(index / this.layoutColumns)];
+    if (!row) return;
+    const column = index % this.layoutColumns;
+    const trackWidth = this.layoutWidths[column];
+    const style = this.doc.defaultView!.getComputedStyle(this.host)!;
+    const tileSize = parseFloat(
+      style.getPropertyValue("--cover-view-tile-size"),
     );
-    const fragment = this.doc.createDocumentFragment();
+    const width = Math.min(tileSize || trackWidth, trackWidth);
+    const gap = parseFloat(style.columnGap) || 0;
+    const rtl = style.direction === "rtl";
+    const preceding =
+      this.layoutWidths.slice(0, column).reduce((sum, size) => sum + size, 0) +
+      column * gap;
+    // The spacer spans the resolved tracks, so its rectangle also captures
+    // justify-content and RTL alignment without reproducing CSS track packing.
+    const tracks = this.spacer.getBoundingClientRect();
+    const viewport = this.host.getBoundingClientRect();
+    const trackLeft = rtl
+      ? tracks.right - preceding - trackWidth
+      : tracks.left + preceding;
+    const offset =
+      trackLeft -
+      viewport.left -
+      this.host.clientLeft +
+      this.host.scrollLeft +
+      (trackWidth - width) / 2;
+    entry.style.position = "absolute";
+    entry.style.top = `${row.top - row.margin}px`;
+    entry.style.left = `${offset}px`;
+    entry.style.right = "auto";
+    entry.style.width = `${width}px`;
+    const tileStyle = this.doc.defaultView!.getComputedStyle(entry)!;
+    const inset = [
+      tileStyle.paddingTop,
+      tileStyle.paddingBottom,
+      tileStyle.borderTopWidth,
+      tileStyle.borderBottomWidth,
+    ].reduce((sum, value) => sum + (parseFloat(value) || 0), 0);
+    entry.style.height = `${row.height - inset}px`;
+  }
 
-    for (let index = this.renderedCount; index < end; index++) {
-      fragment.appendChild(this.buildTile(this.renderItems[index], index));
-    }
-    this.renderedCount = end;
-
-    let sentinel: HTMLElement | undefined;
-    if (this.renderedCount < this.renderItems.length) {
-      sentinel = this.doc.createElement("div");
-      sentinel.className = "grid-view-sentinel";
-      sentinel.setAttribute("aria-hidden", "true");
-      fragment.appendChild(sentinel);
-    }
-
-    this.host.appendChild(fragment);
-    if (sentinel) this.chunkObserver.observe(sentinel);
+  private mountItem(index: number): HTMLElement {
+    const rendered = this.renderItems[index];
+    const existing = this.entries.get(rendered.item.id);
+    if (existing) return existing;
+    const entry = this.buildTile(rendered, index);
+    // Keep DOM order (and menu anchoring) consistent with native item order even
+    // when rows are visited out of sequence.
+    const next = Array.from(this.host.children).find(
+      (child) => Number((child as HTMLElement).dataset.renderIndex) > index,
+    );
+    this.host.insertBefore(entry, next ?? this.spacer);
+    this.positionTile(entry, index);
+    return entry;
   }
 
   private buildTile(
@@ -435,6 +508,9 @@ export class GridRenderer {
     entry.classList.toggle("focused", this.focusedItemID === item.id);
     entry.id = `${this.host.id || "cover-view-grid"}-item-${item.id}`;
     entry.setAttribute("role", "option");
+    entry.setAttribute("aria-posinset", String(renderIndex + 1));
+    entry.setAttribute("aria-setsize", String(this.renderItems.length));
+    entry.style.position = "absolute";
     entry.draggable = true;
     entry.setAttribute("aria-selected", String(this.selectedIDs.has(item.id)));
     this.entries.set(item.id, entry);
@@ -639,16 +715,11 @@ export class GridRenderer {
   /** Present grid-owned focus independently from Zotero's selected items. */
   setFocusedItem(itemID: number | undefined, scroll = false): void {
     this.focusedItemID = itemID;
-    if (itemID !== undefined) this.renderThroughItem(itemID);
+    if (itemID !== undefined) this.revealItem(itemID, scroll);
     for (const [entryItemID, entry] of this.entries) {
       entry.classList.toggle("focused", entryItemID === itemID);
     }
     this.updateActiveDescendant();
-    if (scroll && itemID !== undefined) {
-      this.entries
-        .get(itemID)
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    }
   }
 
   /** Choose the last selected tile in grid order that intersects the viewport. */
@@ -658,7 +729,9 @@ export class GridRenderer {
     const selected = new Set(selectedIDs);
     const viewport = this.host.getBoundingClientRect();
     let visible: HTMLElement | undefined;
-    for (const entry of this.entries.values()) {
+    for (const { item } of this.renderItems) {
+      const entry = this.entries.get(item.id);
+      if (!entry) continue;
       if (!selected.has(Number(entry.dataset.itemId))) continue;
       const rect = entry.getBoundingClientRect();
       if (
@@ -674,9 +747,8 @@ export class GridRenderer {
 
     const last = this.renderItems.findLast(({ item }) => selected.has(item.id));
     if (!last) return undefined;
-    this.renderThroughItem(last.item.id);
+    this.revealItem(last.item.id, true);
     const entry = this.entries.get(last.item.id);
-    entry?.scrollIntoView({ block: "nearest", inline: "nearest" });
     return entry;
   }
 
@@ -712,6 +784,7 @@ export class GridRenderer {
     if (index < 0) return undefined;
     const widths = this.getColumnWidths();
     const rows = this.getLayoutRows(widths);
+    if (!rows.length) return undefined;
     const viewportTop = this.host.scrollTop - this.host.clientTop;
     const destinationRow = getPageRow(
       rows,
@@ -728,11 +801,13 @@ export class GridRenderer {
     ].item.id;
   }
 
-  private getLayoutRows(widths: number[]): GridRowGeometry[] {
+  private getLayoutRows(
+    widths: number[],
+  ): (GridRowGeometry & { margin: number })[] {
     const style = this.doc.defaultView!.getComputedStyle(this.host)!;
     const gap = parseFloat(style.rowGap) || 0;
     const heights = new Map<string, { height: number; margin: number }>();
-    const rows: GridRowGeometry[] = [];
+    const rows: (GridRowGeometry & { margin: number })[] = [];
     let top = parseFloat(style.paddingTop) || 0;
 
     for (
@@ -759,7 +834,7 @@ export class GridRenderer {
         rowHeight = Math.max(rowHeight, size.height);
         rowMargin = size.margin;
       }
-      rows.push({ top: top + rowMargin, height: rowHeight });
+      rows.push({ top: top + rowMargin, height: rowHeight, margin: rowMargin });
       // Negative tile margins extend selection decoration, not row spacing.
       top += rowHeight + 2 * rowMargin + gap;
     }
@@ -804,11 +879,18 @@ export class GridRenderer {
     }
   }
 
-  private renderThroughItem(itemID: number): void {
+  private revealItem(itemID: number, scroll: boolean): void {
+    if (!this.isVisible()) return;
+    this.refreshLayout();
     const itemIndex = this.renderItems.findIndex(
       ({ item }) => item.id === itemID,
     );
-    while (itemIndex >= this.renderedCount) this.renderChunk();
+    if (itemIndex < 0) return;
+    const entry = this.mountItem(itemIndex);
+    if (scroll) {
+      entry.scrollIntoView({ block: "nearest", inline: "nearest" });
+      this.mountViewport();
+    }
   }
 
   private updateActiveDescendant(): void {
@@ -825,9 +907,51 @@ export class GridRenderer {
 
   /** Refresh Gecko's scroll-frame layout after the grid becomes visible again. */
   refreshLayout(): void {
+    // Hidden tabs report zero dimensions: retain the last valid geometry until
+    // Zotero restores the library tab and calls us again.
+    if (!this.isVisible()) return;
     const scrollTop = this.host.scrollTop;
+    if (!this.host.contains(this.spacer)) this.host.append(this.spacer);
+    // A spacer avoids Gecko's 10,000 explicit-grid-row limit. A second pass
+    // accounts for the scrollbar reducing auto-fill widths after setting height.
+    for (let pass = 0; pass < 2; pass++) {
+      const widths = this.getColumnWidths();
+      const style = this.doc.defaultView!.getComputedStyle(this.host)!;
+      const key = JSON.stringify([
+        widths,
+        style.rowGap,
+        style.columnGap,
+        style.paddingTop,
+        style.paddingBottom,
+        style.paddingLeft,
+        style.paddingRight,
+        style.direction,
+        style.justifyContent,
+        style.getPropertyValue("--cover-view-tile-size"),
+        style.font,
+        style.lineHeight,
+      ]);
+      if (key === this.layoutKey) break;
+      this.layoutRows = this.getLayoutRows(widths);
+      this.layoutColumns = widths.length;
+      this.layoutWidths = widths;
+      this.layoutKey = key;
+      const lastRow = this.layoutRows.at(-1);
+      const paddingTop = parseFloat(style.paddingTop) || 0;
+      this.spacer.style.height = `${lastRow ? lastRow.top + lastRow.height + lastRow.margin - paddingTop : 0}px`;
+      for (const entry of this.entries.values())
+        this.positionTile(entry, Number(entry.dataset.renderIndex));
+    }
     this.host.scrollTop = scrollTop > 0 ? scrollTop - 1 : 1;
     this.host.scrollTop = scrollTop;
+    this.mountViewport();
+    if (this.focusedItemID !== undefined) {
+      const index = this.renderItems.findIndex(
+        ({ item }) => item.id === this.focusedItemID,
+      );
+      if (index >= 0) this.mountItem(index);
+    }
+    this.updateActiveDescendant();
   }
 
   destroy(): void {
@@ -840,14 +964,19 @@ export class GridRenderer {
     this.host.removeEventListener("keydown", this.handleKeyDown);
     this.host.removeEventListener("focus", this.handleFocus);
     this.host.removeEventListener("blur", this.handleBlur);
+    this.host.removeEventListener("scroll", this.handleScroll);
     this.doc.removeEventListener("focus", this.handleDocumentFocus, true);
     this.doc.defaultView!.removeEventListener("blur", this.handleWindowBlur);
     this.doc.defaultView!.removeEventListener("focus", this.handleWindowFocus);
-    this.chunkObserver.disconnect();
+    this.layoutObserver.disconnect();
+    this.styleObserver.disconnect();
     this.coverObserver.disconnect();
     this.captionObserver.disconnect();
     this.renderItems = [];
-    this.renderedCount = 0;
+    this.layoutRows = [];
+    this.layoutKey = undefined;
+    this.layoutWidths = [];
+    this.host.style.position = this.originalPosition;
     this.entries.clear();
     this.selectedIDs.clear();
     this.focusedItemID = undefined;

@@ -1,4 +1,5 @@
 import { assert } from "chai";
+import { createRendererHost } from "./helpers/rendererHost";
 import { BasicTool } from "zotero-plugin-toolkit";
 import { registerCoverColumn } from "../src/modules/coverColumn";
 import { CoverProvider } from "../src/modules/coverProvider";
@@ -583,7 +584,7 @@ describe("opt-in metadata cover lookup", function () {
     const originalObserver = win.IntersectionObserver;
     const originalAddon = Object.getOwnPropertyDescriptor(globalThis, "addon");
     const item = book();
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     let nearViewport: IntersectionObserverCallback | undefined;
     let column:
       | {

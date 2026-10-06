@@ -1,4 +1,5 @@
 import { assert } from "chai";
+import { createRendererHost } from "./helpers/rendererHost";
 import { GridRenderer } from "../src/modules/gridRenderer";
 import { getPref, setPref } from "../src/utils/prefs";
 
@@ -24,7 +25,7 @@ describe("native grid tag indicators", function () {
   });
 
   it("shows coloured and emoji tags in native order with tag-name tooltips", async function () {
-    const host = Zotero.getMainWindow()!.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const item = new Zotero.Item("book");
     item.libraryID = Zotero.Libraries.userLibraryID;
@@ -338,7 +339,7 @@ describe("native grid tag indicators", function () {
   });
 
   it("uses each library's colours and keeps coloured emoji as emoji indicators", async function () {
-    const host = Zotero.getMainWindow()!.document.createElement("div");
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const group = new Zotero.Group({
       groupID: Date.now(),
@@ -459,8 +460,8 @@ describe("native grid tag indicators", function () {
     }
   });
 
-  it("renders current tag indicators when a deferred chunk is displayed", async function () {
-    const host = Zotero.getMainWindow()!.document.createElement("div");
+  it("renders current tag indicators when an unvisited tile is revealed", async function () {
+    const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
     const items: Zotero.Item[] = [];
     try {
@@ -495,7 +496,7 @@ describe("native grid tag indicators", function () {
 
   it("treats numpad physical keys as tag shortcuts even with NumLock off", function () {
     const win = Zotero.getMainWindow()!;
-    const host = win.document.createElement("div");
+    const host = createRendererHost();
     const commands: string[] = [];
     const navigation: string[] = [];
     const renderer = new GridRenderer(
