@@ -47,6 +47,7 @@ export default defineConfig({
   },
 
   test: {
+    entries: process.env.COVER_VIEW_TEST_ENTRIES || "test",
     waitForPlugin: `() => Zotero.${pkg.config.addonInstance}.data.initialized`,
   },
 

@@ -3,6 +3,7 @@ import { getString } from "../utils/locale";
 import { getPref } from "../utils/prefs";
 import { getItemYear } from "../utils/itemYear";
 import { getTagIndicators, TagIndicator } from "./tagIndicators";
+import { getPageRow, GridRowGeometry } from "./gridLayout";
 
 const CHUNK_SIZE = 120;
 
@@ -679,121 +680,128 @@ export class GridRenderer {
     return entry;
   }
 
-  /** Find the item in the corresponding column of an adjacent rendered row. */
+  /** Find an adjacent row in top-level item order, without mounting tiles. */
   getVerticalDestination(
     itemID: number,
     direction: -1 | 1,
   ): number | undefined {
-    const current = this.entries.get(itemID);
-    if (!current) return undefined;
-
-    let rows = this.getRenderedRows();
-    let rowIndex = rows.findIndex((row) => row.includes(current));
-    const columnIndex = rows[rowIndex].indexOf(current);
-
-    if (direction === 1 && this.renderedCount < this.renderItems.length) {
-      let destinationRow = rows[rowIndex + direction];
-      while (!destinationRow || columnIndex >= destinationRow.length) {
-        this.renderChunk();
-        rows = this.getRenderedRows();
-        rowIndex = rows.findIndex((row) => row.includes(current));
-        destinationRow = rows[rowIndex + direction];
-        if (this.renderedCount >= this.renderItems.length) break;
-      }
-    }
-
-    const destinationRow = rows[rowIndex + direction];
-    if (!destinationRow) return undefined;
-
-    const destination =
-      destinationRow[Math.min(columnIndex, destinationRow.length - 1)];
-    const destinationID = Number(destination.dataset.itemId);
-    return Number.isSafeInteger(destinationID) ? destinationID : undefined;
+    const index = this.renderItems.findIndex(({ item }) => item.id === itemID);
+    if (index < 0) return undefined;
+    const columns = this.getColumnWidths().length;
+    const rowStart = (Math.floor(index / columns) + direction) * columns;
+    if (rowStart < 0 || rowStart >= this.renderItems.length) return undefined;
+    return this.renderItems[
+      Math.min(rowStart + (index % columns), this.renderItems.length - 1)
+    ].item.id;
   }
 
-  /** Move about one viewport in the current visual column, using live rows. */
+  private getColumnWidths(): number[] {
+    // Gecko resolves auto-fill/minmax tracks against the current content width,
+    // including padding, column gaps and the scrollbar. No tile lookup needed.
+    const tracks = this.doc
+      .defaultView!.getComputedStyle(this.host)!
+      .gridTemplateColumns.split(/\s+/)
+      .filter((track) => /^\d+(?:\.\d+)?px$/.test(track))
+      .map(parseFloat);
+    return tracks.length ? tracks : [this.host.clientWidth];
+  }
+
+  /** Move about one viewport in the current visual column, including unmounted rows. */
   getPageDestination(itemID: number, direction: -1 | 1): number | undefined {
-    const current = this.entries.get(itemID);
-    if (!current) return undefined;
-
-    let rows = this.getRenderedRows();
-    const rowIndex = rows.findIndex((row) => row.includes(current));
-    const columnIndex = rows[rowIndex].indexOf(current);
-    if (rows.length === 1 && this.renderedCount < this.renderItems.length) {
-      this.renderChunk();
-      rows = this.getRenderedRows();
-    }
-    const rowStep =
-      rows.length > 1 ? rows[1][0].offsetTop - rows[0][0].offsetTop : 0;
-    // Move to the furthest row that has entered this viewport, including a
-    // partially visible row. Still advance a row in short viewports.
-    const distance = Math.max(rowStep, this.host.clientHeight - 1);
-    const viewport = this.host.getBoundingClientRect();
-    const currentRect = current.getBoundingClientRect();
-    const viewportEdge =
-      current.offsetTop +
-      (direction === 1
-        ? viewport.bottom - currentRect.top - 1
-        : viewport.top - currentRect.top);
-    const targetTop =
-      direction === 1
-        ? Math.max(
-            current.offsetTop + rowStep,
-            Math.min(current.offsetTop + distance, viewportEdge),
-          )
-        : Math.min(
-            current.offsetTop - rowStep,
-            Math.max(current.offsetTop - distance, viewportEdge),
-          );
-
-    if (direction === 1) {
-      while (
-        this.renderedCount < this.renderItems.length &&
-        rows.at(-1)![0].offsetTop < targetTop
-      ) {
-        this.renderChunk();
-        rows = this.getRenderedRows();
-      }
-    }
-
-    let destinationRowIndex = rowIndex;
-    for (
-      let index = rowIndex + direction;
-      index >= 0 && index < rows.length;
-      index += direction
-    ) {
-      destinationRowIndex = index;
-      if (direction * (rows[index][0].offsetTop - targetTop) > 0) {
-        const previous = index - direction;
-        const rowRect = rows[index][0].getBoundingClientRect();
-        const partiallyVisible =
-          direction === 1
-            ? rowRect.top < viewport.bottom
-            : rowRect.bottom > viewport.top;
-        if (previous !== rowIndex && !partiallyVisible) {
-          destinationRowIndex = previous;
-        }
-        break;
-      }
-    }
-
-    const row = rows[destinationRowIndex];
-    const destination = row[Math.min(columnIndex, row.length - 1)];
-    const destinationID = Number(destination.dataset.itemId);
-    return Number.isSafeInteger(destinationID) ? destinationID : undefined;
+    const index = this.renderItems.findIndex(({ item }) => item.id === itemID);
+    if (index < 0) return undefined;
+    const widths = this.getColumnWidths();
+    const rows = this.getLayoutRows(widths);
+    const viewportTop = this.host.scrollTop - this.host.clientTop;
+    const destinationRow = getPageRow(
+      rows,
+      Math.floor(index / widths.length),
+      direction,
+      viewportTop,
+      viewportTop + this.host.getBoundingClientRect().height,
+    );
+    return this.renderItems[
+      Math.min(
+        destinationRow * widths.length + (index % widths.length),
+        this.renderItems.length - 1,
+      )
+    ].item.id;
   }
 
-  private getRenderedRows(): HTMLElement[][] {
-    const rows: HTMLElement[][] = [];
-    for (const entry of this.entries.values()) {
-      const row = rows.at(-1);
-      if (!row || row[0].offsetTop !== entry.offsetTop) {
-        rows.push([entry]);
-      } else {
-        row.push(entry);
+  private getLayoutRows(widths: number[]): GridRowGeometry[] {
+    const style = this.doc.defaultView!.getComputedStyle(this.host)!;
+    const gap = parseFloat(style.rowGap) || 0;
+    const heights = new Map<string, { height: number; margin: number }>();
+    const rows: GridRowGeometry[] = [];
+    let top = parseFloat(style.paddingTop) || 0;
+
+    for (
+      let start = 0;
+      start < this.renderItems.length;
+      start += widths.length
+    ) {
+      let rowHeight = 0;
+      let rowMargin = 0;
+      for (let column = 0; column < widths.length; column++) {
+        const rendered = this.renderItems[start + column];
+        if (!rendered) break;
+        const key = JSON.stringify([
+          widths[column],
+          !!rendered.captionTitle,
+          !!(rendered.creators || rendered.year),
+          rendered.tags.map(({ emoji }) => !!emoji),
+        ]);
+        let size = heights.get(key);
+        if (!size) {
+          size = this.measureTile(rendered, widths[column]);
+          heights.set(key, size);
+        }
+        rowHeight = Math.max(rowHeight, size.height);
+        rowMargin = size.margin;
       }
+      rows.push({ top: top + rowMargin, height: rowHeight });
+      // Negative tile margins extend selection decoration, not row spacing.
+      top += rowHeight + 2 * rowMargin + gap;
     }
     return rows;
+  }
+
+  private measureTile(
+    rendered: GridRenderItem,
+    trackWidth: number,
+  ): { height: number; margin: number } {
+    // A CSS sizing probe shares the displayed cover/caption rules, but is not a
+    // mounted item: no item ID, observers, selection, or cover request.
+    const probe = this.doc.createElement("figure");
+    probe.className = "grid-view-item";
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText =
+      "position:absolute;visibility:hidden;pointer-events:none;top:0;left:0";
+    const tileSize = parseFloat(
+      this.doc
+        .defaultView!.getComputedStyle(this.host)!
+        .getPropertyValue("--cover-view-tile-size"),
+    );
+    probe.style.width = `${Math.min(tileSize || trackWidth, trackWidth)}px`;
+    const cover = this.doc.createElement("div");
+    cover.className = "grid-view-cover";
+    probe.append(cover);
+    const caption = this.buildCaption(rendered);
+    if (caption) probe.append(caption);
+    this.host.append(probe);
+    try {
+      return {
+        // Gecko lays out in 1/60px app units; DOMRect's float precision must not
+        // accumulate into a different visibility decision after many rows.
+        height: Math.round(probe.getBoundingClientRect().height * 60) / 60,
+        margin:
+          parseFloat(
+            this.doc.defaultView!.getComputedStyle(probe)!.marginTop,
+          ) || 0,
+      };
+    } finally {
+      probe.remove();
+    }
   }
 
   private renderThroughItem(itemID: number): void {
