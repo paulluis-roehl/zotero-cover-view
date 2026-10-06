@@ -26,6 +26,44 @@ describe("grid on-demand tiles", function () {
         }) as Zotero.Item,
     );
 
+  // IntersectionObserver also clips against the browser viewport, not only its
+  // root. Native integration tests may leave the document scrolled elsewhere.
+  function showCoverHost(host: HTMLElement): HTMLElement {
+    const wrapper = host.ownerDocument.createElement("div");
+    wrapper.style.cssText = "position:fixed;top:0;left:0";
+    host.before(wrapper);
+    wrapper.append(host);
+    return wrapper;
+  }
+
+  it("keeps mounted tiles bounded across repeated traversal and distant jumps, even with all items selected", function () {
+    const host = createRendererHost();
+    host.style.padding = "24px";
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      const collection = items(60001);
+      renderer.setItems(collection, { showCreators: true });
+      renderer.setSelection(collection.map((item) => item.id));
+      const height = host.scrollHeight;
+      for (const fraction of [0.1, 0.2, 0.3, 0.8, 0.5, 1, 0, 1]) {
+        host.scrollTop = height * fraction;
+        host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+        assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 24);
+        assert.equal(host.scrollHeight, height);
+      }
+      assert.notExists(host.querySelector('[data-item-id="-1"]'));
+      const last = host.querySelector<HTMLElement>('[data-item-id="-60001"]')!;
+      assert.equal(last.getAttribute("aria-posinset"), "60001");
+      assert.equal(last.getAttribute("aria-selected"), "true");
+      assert.isAtMost(
+        last.getBoundingClientRect().bottom,
+        host.getBoundingClientRect().bottom + 1,
+      );
+    } finally {
+      renderer.destroy();
+    }
+  });
+
   it("updates mounted row positions when column styles change without resizing the host", async function () {
     const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
@@ -40,6 +78,173 @@ describe("grid on-demand tiles", function () {
       assert.isAbove(third.offsetTop, first.offsetTop);
     } finally {
       renderer.destroy();
+    }
+  });
+
+  it("retains only the active drag source until dragend, including across item updates", async function () {
+    const host = createRendererHost();
+    const win = host.ownerDocument.defaultView!;
+    const renderer = new GridRenderer(
+      host,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {},
+    );
+    try {
+      const collection = items(3001);
+      renderer.setItems(collection, { showCreators: true });
+      const source = host.querySelector<HTMLElement>('[data-item-id="-1"]')!;
+      const event = new win.Event("dragstart", {
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, "dataTransfer", { value: {} });
+      source.dispatchEvent(event);
+      host.scrollTop = host.scrollHeight;
+      host.dispatchEvent(new win.Event("scroll"));
+      assert.isTrue(host.contains(source));
+      assert.notExists(host.querySelector('[data-item-id="-2"]'));
+      assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 25);
+      renderer.setItems(collection.slice().reverse(), { showCreators: true });
+      assert.isTrue(
+        host.contains(source),
+        "A native drag source must stay connected until dragend",
+      );
+      let connectedDuringDragend = false;
+      source.addEventListener(
+        "dragend",
+        () => {
+          connectedDuringDragend = host.contains(source);
+        },
+        { once: true },
+      );
+      source.dispatchEvent(new win.Event("dragend", { bubbles: true }));
+      assert.isTrue(
+        connectedDuringDragend,
+        "Dispatch finishes before deferred updates detach the source",
+      );
+      await Zotero.Promise.delay(0);
+      assert.isFalse(host.contains(source));
+      assert.equal(
+        host
+          .querySelector('[data-item-id="-1"]')
+          ?.getAttribute("aria-posinset"),
+        "3001",
+      );
+      assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 24);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("ignores late covers on retired tiles and reuses the cached result on remount", async function () {
+    const host = createRendererHost();
+    const wrapper = showCoverHost(host);
+    const win = host.ownerDocument.defaultView!;
+    const renderer = new GridRenderer(host, () => {});
+    const directory = PathUtils.join(
+      PathUtils.tempDir,
+      "opencode",
+      `retirement-${Zotero.Utilities.randomString()}`,
+    );
+    const path = PathUtils.join(directory, "cover.png");
+    let item: Zotero.Item | undefined;
+    let release!: (path: string) => void;
+    let pathReads = 0;
+    try {
+      await IOUtils.makeDirectory(directory, { createAncestors: true });
+      const canvas = host.ownerDocument.createElement("canvas");
+      canvas.width = canvas.height = 2;
+      await IOUtils.write(
+        path,
+        Uint8Array.from(
+          win.atob(canvas.toDataURL().split(",")[1]),
+          (character) => character.charCodeAt(0),
+        ),
+      );
+      const pendingPath = new Promise<string>((resolve) => {
+        release = resolve;
+      });
+      // A standalone attachment at the Zotero/file-system boundary, invisible
+      // to native indexing and the separately bundled installed add-on cache.
+      item = {
+        id: -80000,
+        itemType: "attachment",
+        attachmentContentType: "image/png",
+        getDisplayTitle: () => "Delayed image",
+        getField: () => "",
+        isFileAttachment: () => true,
+        isRegularItem: () => false,
+        getFilePathAsync: async () => {
+          pathReads++;
+          return pendingPath;
+        },
+      } as unknown as Zotero.Item;
+      const collection = [item, ...items(3000)];
+      renderer.setItems(collection, { showCreators: false });
+      const oldTile = host.querySelector<HTMLElement>(
+        `[data-item-id="${item.id}"]`,
+      )!;
+      const deadline = Date.now() + 4000;
+      while (!pathReads && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.equal(
+        pathReads,
+        1,
+        "Cover resolution started at the file-system seam",
+      );
+      host.scrollTop = host.scrollHeight;
+      host.dispatchEvent(new win.Event("scroll"));
+      assert.isFalse(host.contains(oldTile));
+      renderer.setSelection([item.id]);
+      renderer.setFocusedItem(item.id, true);
+      const tile = host.querySelector<HTMLElement>(
+        `[data-item-id="${item.id}"]`,
+      )!;
+      assert.notStrictEqual(tile, oldTile);
+      release(path);
+      const completionDeadline = Date.now() + 4000;
+      while (
+        tile.querySelector("img")!.hidden &&
+        Date.now() < completionDeadline
+      )
+        await Zotero.Promise.delay(20);
+      assert.isFalse(oldTile.querySelector("img")!.hasAttribute("src"));
+      assert.isTrue(oldTile.querySelector("img")!.hidden);
+      assert.equal(
+        tile.querySelector("img")!.dataset.coverSource,
+        "attachment",
+      );
+      assert.isFalse(tile.querySelector("img")!.hidden);
+      assert.equal(tile.getAttribute("aria-selected"), "true");
+      assert.isTrue(tile.classList.contains("focused"));
+      assert.isFalse(
+        host.classList.contains("owns-focus"),
+        "Remounted selection is inactive outside grid focus",
+      );
+      const uri = tile.querySelector("img")!.src;
+      renderer.setFocusedItem(undefined);
+      host.scrollTop = host.scrollHeight;
+      host.dispatchEvent(new win.Event("scroll"));
+      renderer.setFocusedItem(item.id, true);
+      await Zotero.Promise.delay(100);
+      assert.equal(
+        host
+          .querySelector(`[data-item-id="${item.id}"] img`)!
+          .getAttribute("src"),
+        uri,
+      );
+      assert.equal(pathReads, 1, "Unchanged cover is not regenerated");
+    } finally {
+      release?.(path);
+      renderer.destroy();
+      await IOUtils.remove(path, { ignoreAbsent: true });
+      await IOUtils.remove(directory, { ignoreAbsent: true });
+      wrapper.remove();
     }
   });
 
@@ -59,19 +264,21 @@ describe("grid on-demand tiles", function () {
               showCreators,
               showYears,
             });
-            for (const item of collection) renderer.setFocusedItem(item.id);
+            const tiles = collection.map((item) => {
+              renderer.setFocusedItem(item.id);
+              return host
+                .querySelector(`[data-item-id="${item.id}"]`)!
+                .cloneNode(true) as HTMLElement;
+            });
             reference.style.cssText = host.style.cssText;
             reference.style.gridTemplateRows = "none";
             reference.replaceChildren(
-              ...Array.from(
-                host.querySelectorAll(".grid-view-item"),
-                (child) => {
-                  const tile = child.cloneNode(true) as HTMLElement;
-                  tile.style.cssText = "";
-                  tile.removeAttribute("id");
-                  return tile;
-                },
-              ),
+              ...Array.from(tiles, (child) => {
+                const tile = child.cloneNode(true) as HTMLElement;
+                tile.style.cssText = "";
+                tile.removeAttribute("id");
+                return tile;
+              }),
             );
             assert.equal(
               host.scrollHeight,
@@ -103,6 +310,122 @@ describe("grid on-demand tiles", function () {
       }
     } finally {
       renderer.destroy();
+    }
+  });
+
+  it("remounts current captions and tags, preserving offscreen selection and bounded independent focus without scrolling", function () {
+    const host = createRendererHost();
+    const win = host.ownerDocument.defaultView!;
+    const renderer = new GridRenderer(host, () => {});
+    const collection = items(3001);
+    let tags = [{ tag: "⭐ Original", color: null }];
+    Object.assign(collection[1], { getItemsListTags: () => tags });
+    try {
+      renderer.setItems(collection, { showCreators: true });
+      renderer.setSelection([-2, -1500]);
+      renderer.setFocusedItem(-3);
+      const old = host.querySelector('[data-item-id="-2"]')!;
+      host.scrollTop = host.scrollHeight;
+      host.dispatchEvent(new win.Event("scroll"));
+      assert.isFalse(host.contains(old));
+      assert.exists(
+        host.querySelector('[data-item-id="-3"]'),
+        "Only the independent focus exception stays mounted",
+      );
+      const scrollTop = host.scrollTop;
+      for (const id of [-1000, -2000, -2500]) {
+        renderer.setFocusedItem(id);
+        assert.equal(
+          host.scrollTop,
+          scrollTop,
+          "Focus-only updates never scroll",
+        );
+        assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 25);
+        const active = host.getAttribute("aria-activedescendant")!;
+        assert.exists(host.querySelector(`[id="${active}"]`));
+      }
+      assert.notExists(host.querySelector('[data-item-id="-3"]'));
+      collection[1].firstCreator = "Updated creator";
+      tags = [{ tag: "📚 Current", color: null }];
+      renderer.setItems(collection, { showCreators: true });
+      renderer.setFocusedItem(-2, true);
+      const remounted = host.querySelector('[data-item-id="-2"]')!;
+      assert.notStrictEqual(remounted, old);
+      assert.equal(
+        remounted.querySelector(".grid-view-creators")!.textContent,
+        "Updated creator",
+      );
+      assert.equal(
+        remounted.querySelector(".grid-view-tag")!.getAttribute("title"),
+        "📚 Current",
+      );
+      assert.equal(
+        remounted.querySelector(".grid-view-year")!.textContent,
+        "2026",
+      );
+      assert.equal(remounted.getAttribute("aria-selected"), "true");
+      assert.isTrue(remounted.classList.contains("focused"));
+      assert.notExists(host.querySelector('[data-item-id="-1500"]'));
+      renderer.destroy();
+      renderer.refreshLayout();
+      host.dispatchEvent(new win.Event("scroll"));
+      assert.notExists(host.querySelector(".grid-view-item"));
+      assert.isFalse(host.hasAttribute("aria-activedescendant"));
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("releases destroyed grids and ignores pending cover completion and queued layout callbacks", async function () {
+    const host = createRendererHost();
+    const wrapper = showCoverHost(host);
+    const win = host.ownerDocument.defaultView!;
+    const renderer = new GridRenderer(host, () => {});
+    let release!: (path: string) => void;
+    let started = false;
+    const pendingPath = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const item = {
+      ...items(1)[0],
+      id: -80001,
+      attachmentContentType: "image/png",
+      isFileAttachment: () => true,
+      getFilePathAsync: () => {
+        started = true;
+        return pendingPath;
+      },
+    } as unknown as Zotero.Item;
+    try {
+      renderer.setItems([item, ...items(3000)], { showCreators: false });
+      renderer.setFocusedItem(item.id);
+      const tile = host.querySelector<HTMLElement>(
+        `[data-item-id="${item.id}"]`,
+      )!;
+      const deadline = Date.now() + 4000;
+      while (!started && Date.now() < deadline) await Zotero.Promise.delay(20);
+      assert.isTrue(started);
+      host.style.gridTemplateColumns = "repeat(2,180px)";
+      renderer.destroy();
+      release("/tmp/opencode/destroyed-cover.png");
+      await Zotero.Promise.delay(50);
+      host.dispatchEvent(new win.Event("scroll"));
+      renderer.refreshLayout();
+      assert.isEmpty(host.children);
+      assert.isFalse(host.hasAttribute("aria-activedescendant"));
+      assert.isFalse(tile.querySelector("img")!.hasAttribute("src"));
+      const replacement = new GridRenderer(host, () => {});
+      try {
+        replacement.setItems(items(301), { showCreators: false });
+        assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 24);
+        assert.notExists(host.querySelector('[data-item-id="-80001"]'));
+      } finally {
+        replacement.destroy();
+      }
+    } finally {
+      release?.("/tmp/opencode/destroyed-cover.png");
+      renderer.destroy();
+      wrapper.remove();
     }
   });
 

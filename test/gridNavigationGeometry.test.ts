@@ -78,15 +78,15 @@ describe("grid navigation geometry", function () {
         for (const showCreators of [false, true]) {
           for (const showYears of [false, true]) {
             renderer.setItems(items, { showTitles, showCreators, showYears });
-            for (const item of items) renderer.setFocusedItem(item.id);
-            renderer.setFocusedItem(undefined);
-            const entries =
-              host.querySelectorAll<HTMLElement>(".grid-view-item");
+            renderer.setFocusedItem(-11);
+            const fourthRow = host.querySelector<HTMLElement>(
+              '[data-item-id="-11"]',
+            )!;
             assert.equal(renderer.getVerticalDestination(-2, 1), -5);
             for (const visiblePixels of [0, 1]) {
               host.scrollTop = 0;
               const fourthRowTop =
-                entries[10].getBoundingClientRect().top -
+                fourthRow.getBoundingClientRect().top -
                 host.getBoundingClientRect().top;
               host.style.height = `${fourthRowTop + visiblePixels}px`;
               host.scrollTop = 0;
@@ -98,8 +98,12 @@ describe("grid navigation geometry", function () {
             }
             host.style.height = "300px";
             host.scrollTop = 0;
+            renderer.setFocusedItem(-5);
+            const secondRow = host.querySelector<HTMLElement>(
+              '[data-item-id="-5"]',
+            )!;
             const secondRowBottom =
-              entries[4].getBoundingClientRect().bottom -
+              secondRow.getBoundingClientRect().bottom -
               host.getBoundingClientRect().top;
             // Gecko's scrollTop is integer-valued. Align the row edge to a
             // whole pixel so zero versus one visible pixel is unambiguous.
@@ -108,7 +112,7 @@ describe("grid navigation geometry", function () {
             for (const visiblePixels of [0, 1]) {
               host.scrollTop = Math.ceil(secondRowBottom) - visiblePixels;
               assert.closeTo(
-                entries[4].getBoundingClientRect().bottom -
+                secondRow.getBoundingClientRect().bottom -
                   host.getBoundingClientRect().top,
                 visiblePixels,
                 0.02,

@@ -213,6 +213,13 @@ describe("grid file drops", function () {
           new win.Event("dragleave", { bubbles: true }),
         );
         assert.isFalse(currentTile.classList.contains("drop-target"));
+        drag(win, currentTile, "dragover", transfer);
+        assert.isTrue(currentTile.classList.contains("drop-target"));
+        grid.dispatchEvent(new win.Event("scroll"));
+        assert.isFalse(
+          currentTile.classList.contains("drop-target"),
+          "Scrolling clears stale hover presentation",
+        );
       }
     } finally {
       probe.remove();

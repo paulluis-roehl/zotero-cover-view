@@ -6,7 +6,11 @@ import { getTagIndicators, TagIndicator } from "./tagIndicators";
 import { getPageRow, GridRowGeometry } from "./gridLayout";
 
 // Mount intersecting rows within 400 CSS pixels of either viewport edge.
-// Visited tiles deliberately remain mounted until tile retirement lands.
+// Mounted bound: C * (ceil((viewportHeight + 800 + Hmax) / Smin) + 1)
+// plus at most one focused tile and one active drag source. Hmax is the tallest
+// row and Smin the smallest distance between row tops in the current layout.
+// Focus retention ends when its identity changes/clears; drag retention ends on
+// drop/dragend. Destruction releases both. Selection and menus never pin tiles.
 const TILE_OVERSCAN = 400;
 
 export type GridNavigationCommand =
@@ -67,6 +71,10 @@ export class GridRenderer {
   private readonly entries = new Map<number, HTMLElement>();
   private selectedIDs = new Set<number>();
   private focusedItemID?: number;
+  private dragEntry?: HTMLElement;
+  private pendingItems?: { items: Zotero.Item[]; options: GridRenderOptions };
+  private pendingDragCover?: number;
+  private destroyed = false;
 
   constructor(
     private readonly host: HTMLElement,
@@ -112,6 +120,8 @@ export class GridRenderer {
     this.host.addEventListener("blur", this.handleBlur);
     this.host.addEventListener("scroll", this.handleScroll);
     doc.addEventListener("focus", this.handleDocumentFocus, true);
+    doc.addEventListener("dragend", this.handleDragFinished, true);
+    doc.addEventListener("drop", this.handleDragFinished, true);
     doc.defaultView!.addEventListener("blur", this.handleWindowBlur);
     doc.defaultView!.addEventListener("focus", this.handleWindowFocus);
     this.layoutObserver = new doc.defaultView!.ResizeObserver(() =>
@@ -184,6 +194,31 @@ export class GridRenderer {
       return;
     }
     this.onDragStart(itemID, event);
+    if (!event.defaultPrevented) {
+      this.dragEntry = this.entries.get(itemID);
+      this.mountViewport();
+    }
+  };
+
+  private readonly handleDragEnd = (): void => {
+    this.dragEntry = undefined;
+    const pending = this.pendingItems;
+    const coverID = this.pendingDragCover;
+    this.pendingItems = undefined;
+    this.pendingDragCover = undefined;
+    if (pending) this.setItems(pending.items, pending.options);
+    if (coverID !== undefined) this.refreshCover(coverID);
+    this.mountViewport();
+  };
+
+  private readonly handleDragFinished = (): void => {
+    const source = this.dragEntry;
+    if (!source) return;
+    // Grid/native drag handlers may stop propagation. Capture the event but do
+    // not retire its target or apply queued item updates until dispatch ends.
+    this.doc.defaultView!.queueMicrotask(() => {
+      if (!this.destroyed && this.dragEntry === source) this.handleDragEnd();
+    });
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -307,6 +342,13 @@ export class GridRenderer {
   };
 
   setItems(items: Zotero.Item[], options: GridRenderOptions): void {
+    if (this.destroyed) return;
+    // Replacing a native drag source can cancel Gecko's drag session. Keep only
+    // the latest update and apply it once the source is no longer needed.
+    if (this.dragEntry) {
+      this.pendingItems = { items, options };
+      return;
+    }
     this.host.classList.toggle(
       "desaturate-online-covers",
       options.desaturateOnlineCovers ?? getPref("desaturateOnlineCovers"),
@@ -346,6 +388,8 @@ export class GridRenderer {
     ++this.renderVersion;
     this.coverObserver.disconnect();
     this.captionObserver.disconnect();
+    for (const entry of this.entries.values())
+      entry.classList.remove("drop-target");
     this.entries.clear();
     this.host.replaceChildren();
     this.refreshLayout();
@@ -388,6 +432,11 @@ export class GridRenderer {
 
   /** Replace only the edited tile; leave other covers and offscreen tiles alone. */
   refreshCover(itemID: number): void {
+    if (this.destroyed) return;
+    if (this.dragEntry === this.entries.get(itemID) && this.dragEntry) {
+      this.pendingDragCover = itemID;
+      return;
+    }
     const index = this.renderItems.findIndex(({ item }) => item.id === itemID);
     if (index < 0) return;
     const item = Zotero.Items.get(itemID);
@@ -405,8 +454,7 @@ export class GridRenderer {
       this.refreshLayout();
       return;
     }
-    this.coverObserver.unobserve(oldEntry);
-    this.captionObserver.unobserve(oldEntry);
+    this.releaseTileObservers(oldEntry);
     const replacement = this.buildTile(this.renderItems[index], index);
     oldEntry.replaceWith(replacement);
     this.refreshLayout();
@@ -420,10 +468,20 @@ export class GridRenderer {
   }
 
   private mountViewport(): void {
-    if (!this.isVisible()) return;
+    if (this.destroyed || !this.isVisible()) return;
     const top = this.host.scrollTop - TILE_OVERSCAN;
     const bottom = this.host.scrollTop + this.host.clientHeight + TILE_OVERSCAN;
-    for (let row = 0; row < this.layoutRows.length; row++) {
+    const required = new Set<number>();
+    // Jump directly to the first intersecting row instead of walking visited rows.
+    let low = 0;
+    let high = this.layoutRows.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const row = this.layoutRows[middle];
+      if (row.top + row.height < top) low = middle + 1;
+      else high = middle;
+    }
+    for (let row = low; row < this.layoutRows.length; row++) {
       const geometry = this.layoutRows[row];
       if (geometry.top > bottom) break;
       if (geometry.top + geometry.height < top) continue;
@@ -431,10 +489,29 @@ export class GridRenderer {
         (row + 1) * this.layoutColumns,
         this.renderItems.length,
       );
-      for (let index = row * this.layoutColumns; index < end; index++)
+      for (let index = row * this.layoutColumns; index < end; index++) {
+        required.add(this.renderItems[index].item.id);
         this.mountItem(index);
+      }
+    }
+    for (const [itemID, entry] of this.entries) {
+      if (
+        required.has(itemID) ||
+        itemID === this.focusedItemID ||
+        entry === this.dragEntry
+      )
+        continue;
+      this.releaseTileObservers(entry);
+      this.entries.delete(itemID);
+      entry.remove();
     }
     this.updateActiveDescendant();
+  }
+
+  private releaseTileObservers(entry: HTMLElement): void {
+    this.coverObserver.unobserve(entry);
+    this.captionObserver.unobserve(entry);
+    entry.classList.remove("drop-target");
   }
 
   private positionTile(entry: HTMLElement, index: number): void {
@@ -719,6 +796,7 @@ export class GridRenderer {
     for (const [entryItemID, entry] of this.entries) {
       entry.classList.toggle("focused", entryItemID === itemID);
     }
+    this.mountViewport();
     this.updateActiveDescendant();
   }
 
@@ -909,7 +987,7 @@ export class GridRenderer {
   refreshLayout(): void {
     // Hidden tabs report zero dimensions: retain the last valid geometry until
     // Zotero restores the library tab and calls us again.
-    if (!this.isVisible()) return;
+    if (this.destroyed || !this.isVisible()) return;
     const scrollTop = this.host.scrollTop;
     if (!this.host.contains(this.spacer)) this.host.append(this.spacer);
     // A spacer avoids Gecko's 10,000 explicit-grid-row limit. A second pass
@@ -955,6 +1033,7 @@ export class GridRenderer {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.renderVersion++;
     this.renderKey = undefined;
     this.host.removeEventListener("click", this.handleClick);
@@ -966,6 +1045,8 @@ export class GridRenderer {
     this.host.removeEventListener("blur", this.handleBlur);
     this.host.removeEventListener("scroll", this.handleScroll);
     this.doc.removeEventListener("focus", this.handleDocumentFocus, true);
+    this.doc.removeEventListener("dragend", this.handleDragFinished, true);
+    this.doc.removeEventListener("drop", this.handleDragFinished, true);
     this.doc.defaultView!.removeEventListener("blur", this.handleWindowBlur);
     this.doc.defaultView!.removeEventListener("focus", this.handleWindowFocus);
     this.layoutObserver.disconnect();
@@ -980,6 +1061,10 @@ export class GridRenderer {
     this.entries.clear();
     this.selectedIDs.clear();
     this.focusedItemID = undefined;
+    this.dragEntry = undefined;
+    this.pendingItems = undefined;
+    this.pendingDragCover = undefined;
     this.host.replaceChildren();
+    this.host.removeAttribute("aria-activedescendant");
   }
 }

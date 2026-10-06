@@ -47,7 +47,6 @@ export class GridView {
   private selectionWrites: Promise<void> = Promise.resolve();
   private focusOwner?: "grid" | "tree";
   private wheelRemainder = 0;
-  private dropTile?: HTMLElement;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -69,6 +68,7 @@ export class GridView {
     this.ui.host.addEventListener("dragover", this.handleDragOver);
     this.ui.host.addEventListener("drop", this.handleDrop);
     this.ui.host.addEventListener("dragleave", this.handleDragLeave);
+    this.ui.host.addEventListener("scroll", this.clearDropTile);
     this.win.document.addEventListener("dragend", this.clearDropTile);
     this.tree.onItemsChanged(this.scheduleSync);
     this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
@@ -227,6 +227,7 @@ export class GridView {
     this.ui.host.removeEventListener("dragover", this.handleDragOver);
     this.ui.host.removeEventListener("drop", this.handleDrop);
     this.ui.host.removeEventListener("dragleave", this.handleDragLeave);
+    this.ui.host.removeEventListener("scroll", this.clearDropTile);
     this.win.document.removeEventListener("dragend", this.clearDropTile);
     this.clearDropTile();
     this.cancelSync();
@@ -373,7 +374,6 @@ export class GridView {
       tile && this.tree.canDropItems(event.dataTransfer, itemID!);
     const hoverFiles = this.tree.canHoverFiles(event.dataTransfer, itemID);
     if (tile && (hoverItems || hoverFiles)) {
-      this.dropTile = tile;
       tile.classList.add("drop-target");
     }
     if (!hoverItems && !hoverFiles) {
@@ -425,13 +425,14 @@ export class GridView {
   };
 
   private readonly clearDropTile = (): void => {
-    this.dropTile?.classList.remove("drop-target");
-    this.dropTile = undefined;
+    for (const tile of this.ui.host.querySelectorAll(".drop-target"))
+      tile.classList.remove("drop-target");
   };
 
   private readonly handleDragLeave = (event: DragEvent): void => {
     const next = event.relatedTarget as Node | null;
-    if (next && this.dropTile?.contains(next)) return;
+    if (next && this.ui.host.querySelector(".drop-target")?.contains(next))
+      return;
     this.clearDropTile();
   };
 

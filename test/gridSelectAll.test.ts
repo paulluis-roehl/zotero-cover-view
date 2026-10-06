@@ -97,6 +97,17 @@ describe("grid select all", function () {
       assert.notExists(grid.querySelector(`[data-item-id="${ids[120]}"]`));
       assert.equal(entries[0].getAttribute("aria-selected"), "true");
 
+      for (const fraction of [0.25, 0.75, 1, 0.5, 0]) {
+        grid.scrollTop = grid.scrollHeight * fraction;
+        grid.dispatchEvent(new win.Event("scroll"));
+        assert.isAtMost(
+          grid.querySelectorAll(".grid-view-item").length,
+          mounted + 10,
+        );
+        assert.sameMembers(selected(), ids);
+        assert.equal(grid.getAttribute("aria-activedescendant"), entries[2].id);
+      }
+
       press("ArrowRight", { shiftKey: true });
       await waitFor(
         () => selected().length === 2,

@@ -204,15 +204,26 @@ describe("native item-type badges", function () {
         );
         for (const size of [90, 180, 360]) {
           setPref("tileSize", size);
-          await waitFor(() =>
-            items.every(
-              ({ item }) =>
-                !!grid.querySelector(
-                  `[data-item-id="${item.id}"] .grid-view-item-type-badge`,
-                ),
-            ),
+          await waitFor(
+            () =>
+              grid.style.getPropertyValue("--cover-view-tile-size") ===
+              `${size}px`,
           );
           for (const { item, icon, type } of items) {
+            grid.scrollTop = 0;
+            grid.dispatchEvent(new win.Event("scroll"));
+            const selector = `[data-item-id="${item.id}"]`;
+            while (
+              !grid.querySelector(selector) &&
+              grid.scrollTop < grid.scrollHeight - grid.clientHeight
+            ) {
+              grid.scrollTop += Math.max(grid.clientHeight, 1);
+              grid.dispatchEvent(new win.Event("scroll"));
+            }
+            await waitFor(
+              () => !!grid.querySelector(selector),
+              `${icon}: viewport traversal reveals tile`,
+            );
             const tile = grid.querySelector<HTMLElement>(
               `[data-item-id="${item.id}"]`,
             )!;

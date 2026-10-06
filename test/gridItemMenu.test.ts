@@ -89,6 +89,13 @@ describe("grid item menu", function () {
       );
       const ids = entries.map((entry) => Number(entry.dataset.itemId));
       const rowHeight = entries[1].offsetTop - entries[0].offsetTop;
+      const tile = (index: number) =>
+        grid.querySelector<HTMLElement>(`[data-item-id="${ids[index]}"]`)!;
+      const revealTile = (index: number) => {
+        grid.scrollTop = index * rowHeight;
+        grid.dispatchEvent(new win.Event("scroll"));
+        return tile(index);
+      };
       assert.isAbove(rowHeight, 0);
       grid.style.flex = "none";
       grid.style.height = `${rowHeight * 2 - 1}px`;
@@ -127,15 +134,11 @@ describe("grid item menu", function () {
       assert.sameMembers(calls[0].selected, [ids[0], ids[1], ids[4]]);
       assert.equal(
         calls[0].x,
-        Math.round(
-          win.mozInnerScreenX + entries[1].getBoundingClientRect().right,
-        ),
+        Math.round(win.mozInnerScreenX + tile(1).getBoundingClientRect().right),
       );
       assert.equal(
         calls[0].y,
-        Math.round(
-          win.mozInnerScreenY + entries[1].getBoundingClientRect().top,
-        ),
+        Math.round(win.mozInnerScreenY + tile(1).getBoundingClientRect().top),
       );
       assert.equal(grid.getAttribute("aria-activedescendant"), focusBefore);
 
@@ -145,21 +148,17 @@ describe("grid item menu", function () {
       await waitFor(() => calls.length === 2);
       assert.equal(
         calls[1].x,
-        Math.round(
-          win.mozInnerScreenX + entries[1].getBoundingClientRect().right,
-        ),
+        Math.round(win.mozInnerScreenX + tile(1).getBoundingClientRect().right),
       );
       assert.isAtMost(grid.scrollTop, rowHeight * 2);
 
       await pane.selectItems([ids[1]]);
-      grid.scrollTop = entries[1].offsetTop + entries[1].offsetHeight - 1;
+      grid.scrollTop = tile(1).offsetTop + tile(1).offsetHeight - 1;
       press("ContextMenu");
       await waitFor(() => calls.length === 3);
       assert.equal(
         calls[2].x,
-        Math.round(
-          win.mozInnerScreenX + entries[1].getBoundingClientRect().right,
-        ),
+        Math.round(win.mozInnerScreenX + tile(1).getBoundingClientRect().right),
       );
       assert.isAtLeast(
         calls[2].y,
@@ -173,21 +172,17 @@ describe("grid item menu", function () {
       await waitFor(() => calls.length === 4);
       assert.equal(
         calls[3].x,
-        Math.round(
-          win.mozInnerScreenX + entries[4].getBoundingClientRect().right,
-        ),
+        Math.round(win.mozInnerScreenX + tile(4).getBoundingClientRect().right),
       );
       assert.equal(
         calls[3].y,
-        Math.round(
-          win.mozInnerScreenY + entries[4].getBoundingClientRect().top,
-        ),
+        Math.round(win.mozInnerScreenY + tile(4).getBoundingClientRect().top),
         "Native popup anchors below the tile's visible top",
       );
 
       grid.scrollTop =
-        entries[4].offsetTop - grid.clientHeight + entries[4].offsetHeight / 2;
-      const partial = entries[4].getBoundingClientRect();
+        tile(4).offsetTop - grid.clientHeight + tile(4).offsetHeight / 2;
+      const partial = tile(4).getBoundingClientRect();
       const viewport = grid.getBoundingClientRect();
       assert.isBelow(partial.top, viewport.bottom);
       assert.isAbove(partial.bottom, viewport.bottom);
@@ -195,9 +190,7 @@ describe("grid item menu", function () {
       await waitFor(() => calls.length === 5);
       assert.equal(
         calls[4].x,
-        Math.round(
-          win.mozInnerScreenX + entries[4].getBoundingClientRect().right,
-        ),
+        Math.round(win.mozInnerScreenX + tile(4).getBoundingClientRect().right),
       );
       assert.equal(
         calls[4].y,
@@ -215,7 +208,9 @@ describe("grid item menu", function () {
         await pending;
         return nativeSelect(selected);
       });
-      entries[2].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      revealTile(2).dispatchEvent(
+        new win.MouseEvent("click", { bubbles: true }),
+      );
       press("ContextMenu");
       await Zotero.Promise.delay(30);
       assert.lengthOf(calls, 5, "Menu waits for selection write");
@@ -224,13 +219,11 @@ describe("grid item menu", function () {
       assert.deepEqual(calls[5].selected, [ids[2]]);
       assert.equal(
         calls[5].x,
-        Math.round(
-          win.mozInnerScreenX + entries[2].getBoundingClientRect().right,
-        ),
+        Math.round(win.mozInnerScreenX + tile(2).getBoundingClientRect().right),
       );
 
       await pane.selectItems([ids[0], ids[2]]);
-      const selectedMenu = rightClick(entries[0], 412, 527);
+      const selectedMenu = rightClick(revealTile(0), 412, 527);
       assert.isTrue(selectedMenu.defaultPrevented);
       await waitFor(() => calls.length === 7);
       assert.sameMembers(calls[6].selected, [ids[0], ids[2]]);
@@ -238,9 +231,9 @@ describe("grid item menu", function () {
         [calls[6].x, calls[6].y, calls[6].height],
         [412, 527, 0],
       );
-      assert.equal(grid.getAttribute("aria-activedescendant"), entries[0].id);
+      assert.equal(grid.getAttribute("aria-activedescendant"), tile(0).id);
       assert.equal(win.document.activeElement, grid);
-      entries[1].dispatchEvent(
+      revealTile(1).dispatchEvent(
         new win.MouseEvent("click", { bubbles: true, shiftKey: true }),
       );
       await waitFor(
@@ -258,7 +251,7 @@ describe("grid item menu", function () {
         await rightClickPending;
         return nativeSelect(selected);
       });
-      assert.isTrue(rightClick(entries[3], 631, 744).defaultPrevented);
+      assert.isTrue(rightClick(revealTile(3), 631, 744).defaultPrevented);
       await Zotero.Promise.delay(30);
       assert.lengthOf(calls, 7, "Pointer menu waits for native selection");
       releaseRightClick();
@@ -268,20 +261,20 @@ describe("grid item menu", function () {
         [calls[7].x, calls[7].y, calls[7].height],
         [631, 744, 0],
       );
-      assert.equal(grid.getAttribute("aria-activedescendant"), entries[3].id);
+      assert.equal(grid.getAttribute("aria-activedescendant"), tile(3).id);
       assert.equal(win.document.activeElement, grid);
-      entries[4].dispatchEvent(
+      revealTile(4).dispatchEvent(
         new win.MouseEvent("click", { bubbles: true, shiftKey: true }),
       );
       await waitFor(() => pane.getSelectedItems(true).includes(ids[4]));
       assert.sameMembers(pane.getSelectedItems(true), [ids[3], ids[4]]);
 
       override("buildItemContextMenu", undefined);
-      rightClick(entries[2], 123, 234);
+      rightClick(revealTile(2), 123, 234);
       await waitFor(() => logs.length > 0);
       assert.lengthOf(calls, 8);
       assert.deepEqual(pane.getSelectedItems(true), [ids[2]]);
-      assert.equal(grid.getAttribute("aria-activedescendant"), entries[2].id);
+      assert.equal(grid.getAttribute("aria-activedescendant"), tile(2).id);
       assert.match(
         String(logs.at(-1)![0]),
         /Failed to open selected grid items menu/,
@@ -292,7 +285,7 @@ describe("grid item menu", function () {
         throw new Error("Menu opener failed");
       });
       const focusAfterFailure = grid.getAttribute("aria-activedescendant");
-      rightClick(entries[2], 123, 234);
+      rightClick(tile(2), 123, 234);
       await waitFor(() => logs.length > logCount);
       assert.match(String(logs.at(-1)![1]), /Menu opener failed/);
       assert.deepEqual(pane.getSelectedItems(true), [ids[2]]);
@@ -316,7 +309,7 @@ describe("grid item menu", function () {
         configurable: true,
         value: undefined,
       });
-      rightClick(entries[2], 321, 432);
+      rightClick(tile(2), 321, 432);
       await waitFor(() => logs.length > beforeMissingPopup);
       assert.lengthOf(calls, 8);
       assert.deepEqual(pane.getSelectedItems(true), [ids[2]]);

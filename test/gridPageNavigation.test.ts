@@ -78,43 +78,47 @@ describe("grid page navigation", function () {
         grid.querySelectorAll<HTMLElement>(".grid-view-item"),
       );
       const ids = entries.map((entry) => Number(entry.dataset.itemId));
+      const tile = (index: number) =>
+        grid.querySelector<HTMLElement>(`[data-item-id="${ids[index]}"]`)!;
+      const resetScroll = () => {
+        grid.scrollTop = 0;
+        grid.dispatchEvent(new win.Event("scroll"));
+      };
       const rowHeight = entries[3].offsetTop - entries[0].offsetTop;
       assert.isAbove(rowHeight, 0);
       grid.style.flex = "none";
       grid.style.height = `${rowHeight * 2 - 8}px`;
       assert.closeTo(grid.clientHeight, rowHeight * 2 - 8, 2);
 
-      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      tile(1).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Starting selection");
       grid.style.height = `${rowHeight * 3.5}px`;
-      grid.scrollTop = 0;
+      resetScroll();
       assert.closeTo(grid.clientHeight, rowHeight * 3.5, 2);
       press("PageDown");
       await waitFor(
         () => selected()[0] === ids[10],
         "PageDown reaches the partially visible fourth row",
       );
-      assert.equal(grid.getAttribute("aria-activedescendant"), entries[10].id);
+      assert.equal(grid.getAttribute("aria-activedescendant"), tile(10).id);
 
       // Measure live viewport coordinates rather than extrapolating rounded
       // offsetTop row spacing. Cover layout and padding can change that spacing.
       for (const padding of ["0", ""]) {
         grid.style.padding = padding;
         await Zotero.Promise.delay(20);
-        grid.scrollTop = 0;
+        resetScroll();
         const fourthRowTop =
-          entries[10].getBoundingClientRect().top -
+          tile(10).getBoundingClientRect().top -
           grid.getBoundingClientRect().top;
         for (const visiblePixels of [0, 1]) {
           grid.style.height = `${fourthRowTop + visiblePixels}px`;
-          grid.scrollTop = 0;
-          entries[1].dispatchEvent(
-            new win.MouseEvent("click", { bubbles: true }),
-          );
+          resetScroll();
+          tile(1).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
           await waitFor(() => selected()[0] === ids[1], "Viewport edge start");
           assert.closeTo(
             grid.getBoundingClientRect().bottom -
-              entries[10].getBoundingClientRect().top,
+              tile(10).getBoundingClientRect().top,
             visiblePixels,
             0.05,
             `Exactly ${visiblePixels} pixels of the fourth row are visible (padding ${padding || "default"})`,
@@ -129,16 +133,16 @@ describe("grid page navigation", function () {
         }
       }
 
-      grid.style.height = `${(entries[3].offsetTop - entries[0].offsetTop) * 2 - 8}px`;
-      grid.scrollTop = 0;
-      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      resetScroll();
+      grid.style.height = `${(tile(3).offsetTop - tile(0).offsetTop) * 2 - 8}px`;
+      tile(1).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Reset starting selection");
       assert.isTrue(press("PageDown").defaultPrevented);
       await waitFor(
         () => selected()[0] === ids[4],
         "Last visible row in column two",
       );
-      assert.equal(grid.getAttribute("aria-activedescendant"), entries[4].id);
+      assert.equal(grid.getAttribute("aria-activedescendant"), tile(4).id);
 
       press("PageDown", { shiftKey: true });
       await waitFor(
@@ -177,8 +181,8 @@ describe("grid page navigation", function () {
       assert.deepEqual(selected(), ids.slice(4, 10));
 
       grid.style.height = `${rowHeight / 2}px`;
-      grid.scrollTop = 0;
-      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      resetScroll();
+      tile(1).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Short viewport start");
       press("PageDown");
       await waitFor(
@@ -188,13 +192,13 @@ describe("grid page navigation", function () {
       assert.isAbove(grid.scrollTop, 0, "Next row scrolls into view");
 
       grid.style.height = `${rowHeight * 2 - 8}px`;
-      grid.scrollTop = 0;
+      resetScroll();
       grid.style.gridTemplateColumns = "repeat(2, 150px)";
       await waitFor(
-        () => entries[1].offsetTop !== entries[2].offsetTop,
+        () => tile(1).offsetTop !== tile(2).offsetTop,
         "Mounted rows follow changed column styles",
       );
-      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      tile(1).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(
         () => selected()[0] === ids[1] && selected().length === 1,
         "Reflow starting tile",

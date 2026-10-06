@@ -200,6 +200,21 @@ describe("grid native item drag", function () {
       );
       assert.equal(data.get("text/html"), "<p>Grid citation</p>");
 
+      grid.scrollTop = grid.scrollHeight;
+      grid.dispatchEvent(new win.Event("scroll"));
+      assert.isTrue(
+        grid.contains(tiles[0]),
+        "Scrolling retains the native drag source",
+      );
+      assert.notExists(grid.querySelector(`[data-item-id="${ids[1]}"]`));
+      assert.equal(data.get("zotero/item"), `${ids[0]},${ids[60]},${ids[120]}`);
+      assert.sameMembers(pane.getSelectedItems(true), [
+        ids[0],
+        ids[60],
+        ids[120],
+      ]);
+      tiles[0].dispatchEvent(new win.Event("dragend", { bubbles: true }));
+
       // Hand the actual payload to Zotero's collection drop handler. The grid
       // does not emulate the collection tree's add/move/copy rules.
       const collectionTree =
@@ -241,6 +256,7 @@ describe("grid native item drag", function () {
         "Copy keeps source collection membership",
       );
     } finally {
+      win.document.dispatchEvent(new win.Event("dragend", { bubbles: true }));
       internal.onDragItems = nativeHelper;
       quickCopy.getFormatFromURL = originalFormat;
       quickCopy.unserializeSetting = originalUnserialize;
