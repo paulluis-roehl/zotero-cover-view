@@ -12,7 +12,11 @@ import { getPref, observePrefs, setPref } from "../utils/prefs";
 
 const gridViews = new Map<Window, GridView>();
 const GRID_RENDER_PREFS = [
-  "showAuthors",
+  "showCreators",
+  "showTitles",
+  "showYears",
+  "showItemTypeIcon",
+  "desaturateOnlineCovers",
   "fetchISBNCover",
   "fetchMetadataCover",
 ] as const;
@@ -27,7 +31,7 @@ export class GridView {
   private readonly tree: ItemTreeBridge;
   private readonly ui: GridWindowUI;
   private readonly renderer: GridRenderer;
-  private readonly tabObserverID: string;
+  private readonly presentationObserverID: string;
   private readonly stopCoverChanges: () => void;
   private readonly pendingCoverIDs = new Set<number>();
   private syncTimer?: number;
@@ -43,6 +47,7 @@ export class GridView {
   private selectionWrites: Promise<void> = Promise.resolve();
   private focusOwner?: "grid" | "tree";
   private wheelRemainder = 0;
+  private dropTile?: HTMLElement;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -55,11 +60,16 @@ export class GridView {
       this.onGridFocus,
       this.handleItemCommand,
       this.openClickedItemMenu,
+      this.startItemDrag,
     );
     this.applyTileSizePreference();
     this.ui.host.addEventListener("wheel", this.handleWheel, {
       passive: false,
     });
+    this.ui.host.addEventListener("dragover", this.handleDragOver);
+    this.ui.host.addEventListener("drop", this.handleDrop);
+    this.ui.host.addEventListener("dragleave", this.handleDragLeave);
+    this.win.document.addEventListener("dragend", this.clearDropTile);
     this.tree.onItemsChanged(this.scheduleSync);
     this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
       this.tree.refreshRows();
@@ -81,25 +91,38 @@ export class GridView {
       }
     }, 150);
     win.document.addEventListener("focusin", this.trackFocus);
-    this.tabObserverID = Zotero.Notifier.registerObserver(
+    this.presentationObserverID = Zotero.Notifier.registerObserver(
       {
-        notify: (event, _type, ids) => {
-          if (event === "select" && ids.some((id) => id === "zotero-pane")) {
+        notify: (event, type, ids) => {
+          if (
+            type === "item-tag" ||
+            (type === "setting" &&
+              ids.some((id) => String(id).endsWith("/tagColors")))
+          ) {
+            this.scheduleSync();
+          }
+          if (
+            type === "tab" &&
+            event === "select" &&
+            ids.some((id) => id === "zotero-pane")
+          ) {
             for (const itemID of this.pendingCoverIDs) {
               if (getPref("enableGridView")) this.renderer.refreshCover(itemID);
             }
             this.pendingCoverIDs.clear();
             this.renderer.refreshLayout();
+            this.scheduleSync();
           }
         },
       },
-      ["tab"],
+      ["tab", "item-tag", "setting"],
       "cover-view-grid",
     );
     this.applyEnabledPreference();
   }
 
   applyEnabledPreference(): void {
+    this.clearDropTile();
     const enabled = !!getPref("enableGridView");
     const active = this.win.document.activeElement;
     const outgoingOwner = this.ui.ownsGridFocus(active)
@@ -200,10 +223,15 @@ export class GridView {
     this.win.clearInterval(this.selectionTimer);
     this.win.document.removeEventListener("focusin", this.trackFocus);
     this.ui.host.removeEventListener("wheel", this.handleWheel);
+    this.ui.host.removeEventListener("dragover", this.handleDragOver);
+    this.ui.host.removeEventListener("drop", this.handleDrop);
+    this.ui.host.removeEventListener("dragleave", this.handleDragLeave);
+    this.win.document.removeEventListener("dragend", this.clearDropTile);
+    this.clearDropTile();
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
-    Zotero.Notifier.unregisterObserver(this.tabObserverID);
+    Zotero.Notifier.unregisterObserver(this.presentationObserverID);
 
     this.renderer.destroy();
     this.ui.destroy();
@@ -303,6 +331,109 @@ export class GridView {
     this.transitionSelection(itemID, modifiers, "click");
   };
 
+  private readonly startItemDrag = (itemID: number, event: DragEvent): void => {
+    try {
+      // Read the native selection at drag start. An unselected tile is dragged
+      // alone without changing selection or queuing an asynchronous tree write.
+      const selected = this.tree.getSelectedIDs();
+      const selectedSet = new Set(
+        selected.includes(itemID) ? selected : [itemID],
+      );
+      const itemIDs = this.itemIDs.filter((id) => selectedSet.has(id));
+      if (!itemIDs.length) {
+        event.preventDefault();
+        return;
+      }
+      this.tree.startItemDrag(event, itemIDs);
+    } catch (error) {
+      event.preventDefault();
+      ztoolkit.log("Failed to start grid item drag", itemID, error);
+    }
+  };
+
+  private isGridDrop(event: DragEvent): boolean {
+    const target = event.target as Element | null;
+    return (
+      !this.ui.host.hidden &&
+      this.win.Zotero_Tabs.selectedType === "library" &&
+      !!target &&
+      this.ui.host.contains(target)
+    );
+  }
+
+  private readonly handleDragOver = (event: DragEvent): void => {
+    this.clearDropTile();
+    if (!this.isGridDrop(event)) return;
+    const tile = (event.target as Element).closest(
+      ".grid-view-item",
+    ) as HTMLElement | null;
+    const itemID = tile ? Number(tile.dataset.itemId) : undefined;
+    const hoverItems =
+      tile && this.tree.canDropItems(event.dataTransfer, itemID!);
+    const hoverFiles = this.tree.canHoverFiles(event.dataTransfer, itemID);
+    if (tile && (hoverItems || hoverFiles)) {
+      this.dropTile = tile;
+      tile.classList.add("drop-target");
+    }
+    if (!hoverItems && !hoverFiles) {
+      // Cancel even rejected hover events so Gecko applies the prohibit effect.
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const transfer = event.dataTransfer!;
+    if (hoverItems) {
+      this.tree.setItemDropEffect(event);
+    } else if (this.win.navigator.platform.startsWith("Mac")) {
+      // Gecko doesn't expose Mac modifiers during dragover; onDrop resolves them.
+      transfer.dropEffect = "move";
+    } else {
+      transfer.dropEffect = event.shiftKey
+        ? event.ctrlKey
+          ? "link"
+          : "move"
+        : "copy";
+    }
+  };
+
+  private readonly handleDrop = (event: DragEvent): void => {
+    this.clearDropTile();
+    if (!this.isGridDrop(event)) return;
+    const tile = (event.target as Element).closest(
+      ".grid-view-item",
+    ) as HTMLElement | null;
+    const itemID = tile ? Number(tile.dataset.itemId) : undefined;
+    if (event.dataTransfer?.types?.includes("zotero/item")) {
+      if (!tile || !this.tree.canDropItems(event.dataTransfer, itemID!)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void this.tree.dropItems(event, itemID!).catch((error) => {
+        ztoolkit.log("Failed to reparent items in grid", error);
+      });
+      return;
+    }
+    if (tile && !this.tree.canDropFiles(event.dataTransfer, itemID)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void this.tree.dropFiles(event, itemID).catch((error) => {
+      ztoolkit.log("Failed to import files into grid", error);
+    });
+  };
+
+  private readonly clearDropTile = (): void => {
+    this.dropTile?.classList.remove("drop-target");
+    this.dropTile = undefined;
+  };
+
+  private readonly handleDragLeave = (event: DragEvent): void => {
+    const next = event.relatedTarget as Node | null;
+    if (next && this.dropTile?.contains(next)) return;
+    this.clearDropTile();
+  };
+
   private readonly openClickedItemMenu = (
     itemID: number,
     screenX: number,
@@ -369,6 +500,13 @@ export class GridView {
     options: GridItemCommandOptions,
   ): void => {
     switch (command) {
+      case "toggle-tag":
+        if (options.tagNumber === undefined) return;
+        this.runSelectedItemCommand(
+          () => this.tree.toggleSelectedItemsTag(options.tagNumber!),
+          "Failed to toggle coloured tag on selected grid items",
+        );
+        return;
       case "activate":
         this.runSelectedItemCommand(
           () => this.tree.activateSelectedItems(),
@@ -568,7 +706,11 @@ export class GridView {
       this.selectionAnchorID = this.focusedItemID;
     }
     this.renderer.setItems(items, {
-      showAuthors: getPref("showAuthors"),
+      showCreators: getPref("showCreators"),
+      showTitles: getPref("showTitles"),
+      showYears: getPref("showYears"),
+      showItemTypeIcon: getPref("showItemTypeIcon"),
+      desaturateOnlineCovers: getPref("desaturateOnlineCovers"),
     });
     this.renderer.setSelection(selectedIDs);
     if (!this.itemIDs.length) {

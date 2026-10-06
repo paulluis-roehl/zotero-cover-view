@@ -559,7 +559,7 @@ describe("grid view", function () {
     } as unknown as Zotero.Item;
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       const entry = host.firstElementChild!;
@@ -570,7 +570,7 @@ describe("grid view", function () {
       assert.strictEqual(host.firstElementChild, entry);
       assert.isFalse(entry.classList.contains("selected"));
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       assert.strictEqual(host.firstElementChild, entry);
@@ -595,7 +595,7 @@ describe("grid view", function () {
     );
 
     try {
-      renderer.setItems(items, { showAuthors: true });
+      renderer.setItems(items, { showCreators: true });
       renderer.setSelection([-1]);
       renderer.setFocusedItem(-2);
 
@@ -1007,7 +1007,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems(items, {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
 
@@ -1044,7 +1044,7 @@ describe("grid view", function () {
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
     const originalCacheCover = CoverProvider.cacheCover;
-    const originalGetCover = CoverProvider.getCover;
+    const originalGetCover = CoverProvider.getCoverResult;
     let notify: IntersectionObserverCallback | undefined;
     const cachedItemIDs: number[] = [];
     const requestedItemIDs: number[] = [];
@@ -1064,7 +1064,7 @@ describe("grid view", function () {
     win.IntersectionObserver =
       FakeIntersectionObserver as unknown as typeof IntersectionObserver;
     CoverProvider.cacheCover = (item) => cachedItemIDs.push(item.id);
-    CoverProvider.getCover = (itemID) => {
+    CoverProvider.getCoverResult = (itemID) => {
       requestedItemIDs.push(itemID);
       return Promise.resolve(null);
     };
@@ -1080,7 +1080,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       assert.isEmpty(cachedItemIDs);
@@ -1103,7 +1103,7 @@ describe("grid view", function () {
     } finally {
       renderer.destroy();
       CoverProvider.cacheCover = originalCacheCover;
-      CoverProvider.getCover = originalGetCover;
+      CoverProvider.getCoverResult = originalGetCover;
       win.IntersectionObserver = originalIntersectionObserver;
     }
   });
@@ -1124,7 +1124,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       host
@@ -1156,7 +1156,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       host
@@ -1168,7 +1168,7 @@ describe("grid view", function () {
     }
   });
 
-  it("renders the title and authors on separate caption lines", function () {
+  it("renders the title and creators on separate caption lines", function () {
     const win = Zotero.getMainWindow()!;
     const host = win.document.createElement("div");
     const renderer = new GridRenderer(host, () => {});
@@ -1182,7 +1182,7 @@ describe("grid view", function () {
 
     try {
       renderer.setItems([displayItem], {
-        showAuthors: true,
+        showCreators: true,
         fetchISBNCover: false,
       });
       assert.equal(
@@ -1190,7 +1190,7 @@ describe("grid view", function () {
         "Analytical Engine Notes",
       );
       assert.equal(
-        host.querySelector(".grid-view-authors")?.textContent,
+        host.querySelector(".grid-view-creators")?.textContent,
         "Ada Lovelace and Charles Babbage",
       );
       assert.equal(
@@ -1199,10 +1199,10 @@ describe("grid view", function () {
       );
 
       renderer.setItems([displayItem], {
-        showAuthors: false,
+        showCreators: false,
         fetchISBNCover: false,
       });
-      assert.notExists(host.querySelector(".grid-view-authors"));
+      assert.notExists(host.querySelector(".grid-view-creators"));
     } finally {
       renderer.destroy();
     }
@@ -1213,12 +1213,12 @@ describe("grid view", function () {
     const pane = win.ZoteroPane;
     const button = win.document.getElementById("cover-view-toggle")!;
     const grid = win.document.getElementById("cover-view-grid")!;
-    const originalShowAuthors = getPref("showAuthors");
+    const originalShowCreators = getPref("showCreators");
     const originallyHidden = grid.hidden;
     const item = new Zotero.Item("book");
     const toggle = () => button.dispatchEvent(new win.Event("command"));
-    const authorLine = () =>
-      grid.querySelector(`[data-item-id="${item.id}"] .grid-view-authors`);
+    const creatorLine = () =>
+      grid.querySelector(`[data-item-id="${item.id}"] .grid-view-creators`);
     const waitFor = async (condition: () => boolean) => {
       const deadline = Date.now() + 2000;
       while (!condition() && Date.now() < deadline) {
@@ -1233,30 +1233,30 @@ describe("grid view", function () {
         { firstName: "Ada", lastName: "Lovelace", creatorType: "author" },
       ]);
       await item.saveTx();
-      setPref("showAuthors", true);
+      setPref("showCreators", true);
       if (grid.hidden) toggle();
       await pane.selectItems([item.id], true);
-      await waitFor(() => !!authorLine());
+      await waitFor(() => !!creatorLine());
 
-      setPref("showAuthors", false);
-      await waitFor(() => !authorLine());
+      setPref("showCreators", false);
+      await waitFor(() => !creatorLine());
       assert.exists(grid.querySelector(`[data-item-id="${item.id}"]`));
-      setPref("showAuthors", true);
-      await waitFor(() => !!authorLine());
+      setPref("showCreators", true);
+      await waitFor(() => !!creatorLine());
 
       toggle();
       const previousTile = grid.querySelector(`[data-item-id="${item.id}"]`);
-      setPref("showAuthors", false);
+      setPref("showCreators", false);
       await Zotero.Promise.delay(100);
       assert.strictEqual(
         grid.querySelector(`[data-item-id="${item.id}"]`),
         previousTile,
       );
       toggle();
-      assert.notExists(authorLine());
+      assert.notExists(creatorLine());
       assert.exists(grid.querySelector(`[data-item-id="${item.id}"].selected`));
     } finally {
-      setPref("showAuthors", originalShowAuthors);
+      setPref("showCreators", originalShowCreators);
       if (grid.hidden !== originallyHidden) toggle();
       if (item.id) await item.eraseTx();
     }
@@ -1322,7 +1322,7 @@ describe("grid view", function () {
     const originallyHidden = grid.hidden;
     const originalISBN = getPref("fetchISBNCover");
     const originalMetadata = getPref("fetchMetadataCover");
-    const originalFindCover = CoverProvider.findCover;
+    const originalFindCover = CoverProvider.findCoverResult;
     const tree = win.ZoteroPane.itemsView!.tree!;
     const originalInvalidate = tree.invalidate;
     const item = new Zotero.Item("book");
@@ -1338,8 +1338,10 @@ describe("grid view", function () {
         "Cover preference change should refresh both views",
       );
     };
-    CoverProvider.findCover = (async () =>
-      `data:image/svg+xml,${getPref("fetchISBNCover")}-${getPref("fetchMetadataCover")}`) as typeof CoverProvider.findCover;
+    CoverProvider.findCoverResult = async () => ({
+      uri: `data:image/svg+xml,${getPref("fetchISBNCover")}-${getPref("fetchMetadataCover")}`,
+      source: "online",
+    });
     tree.invalidate = function (...args) {
       rowRefreshes++;
       return originalInvalidate.apply(this, args);
@@ -1369,7 +1371,7 @@ describe("grid view", function () {
       );
     } finally {
       tree.invalidate = originalInvalidate;
-      CoverProvider.findCover = originalFindCover;
+      CoverProvider.findCoverResult = originalFindCover;
       setPref("fetchISBNCover", originalISBN);
       setPref("fetchMetadataCover", originalMetadata);
       if (grid.hidden !== originallyHidden) toggle();
@@ -2161,7 +2163,7 @@ describe("grid view", function () {
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
     const requestedItemIDs: number[] = [];
-    const originalGetCover = CoverProvider.getCover;
+    const originalGetCover = CoverProvider.getCoverResult;
 
     class FakeIntersectionObserver {
       constructor(
@@ -2174,7 +2176,7 @@ describe("grid view", function () {
     }
     win.IntersectionObserver =
       FakeIntersectionObserver as unknown as typeof IntersectionObserver;
-    CoverProvider.getCover = (itemID) => {
+    CoverProvider.getCoverResult = (itemID) => {
       requestedItemIDs.push(itemID);
       return Promise.resolve(null);
     };
@@ -2216,7 +2218,7 @@ describe("grid view", function () {
       win.document
         .getElementById("cover-view-grid")!
         .parentElement!.append(host);
-      renderer.setItems(items, { showAuthors: true });
+      renderer.setItems(items, { showCreators: true });
       renderer.setFocusedItem(focusedID);
       assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
 
@@ -2258,7 +2260,7 @@ describe("grid view", function () {
     } finally {
       renderer.destroy();
       host.remove();
-      CoverProvider.getCover = originalGetCover;
+      CoverProvider.getCoverResult = originalGetCover;
       win.IntersectionObserver = originalIntersectionObserver;
     }
   });

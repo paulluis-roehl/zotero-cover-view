@@ -5,6 +5,19 @@ type ListenerEvent = {
 type ItemsView = _ZoteroTypes.ItemTree & {
   _treebox?: { update(): void };
   tree?: { invalidate(): void };
+  collectionTreeRows?: CollectionDropRow[];
+  canDropCheck?: (
+    row: number,
+    orient: number,
+    transfer: DataTransfer,
+  ) => boolean;
+  onDrop?: (event: DragEvent, row: number) => Promise<void>;
+  setDropEffect?: (event: DragEvent, effect: string) => void;
+};
+type CollectionDropRow = {
+  ref: { libraryID: number; id?: number };
+  isCollection(): boolean;
+  isLibrary(root?: boolean): boolean;
 };
 type CollectionsView = _ZoteroTypes.CollectionTree & {
   onSelect?: ListenerEvent;
@@ -30,6 +43,279 @@ export class ItemTreeBridge {
 
   getSelectedIDs(): number[] {
     return this.win.ZoteroPane.getSelectedItems(true);
+  }
+
+  /** Supply the same source row and payload helper used by Zotero's item tree.
+   * The collection tree uses this row to decide add/move/copy and invalid drops.
+   */
+  startItemDrag(event: DragEvent, itemIDs: number[]): void {
+    const source = (
+      this.itemsView as ItemsView & {
+        collectionTreeRows?: Array<unknown>;
+      }
+    ).collectionTreeRows?.[0];
+    const dragDrop = (
+      Zotero as typeof Zotero & {
+        DragDrop: { currentDragSource: unknown };
+      }
+    ).DragDrop;
+    const onDragItems = (
+      Zotero.Utilities.Internal as unknown as {
+        onDragItems?: (event: DragEvent, ids: number[], image: Element) => void;
+      }
+    ).onDragItems;
+    if (!source || !onDragItems || !event.currentTarget || !itemIDs.length) {
+      throw new Error("Native Zotero item drag is unavailable");
+    }
+    dragDrop.currentDragSource = source;
+    try {
+      onDragItems(
+        event,
+        itemIDs,
+        (event.target as Element).closest(".grid-view-item") ??
+          (event.target as Element),
+      );
+    } catch (error) {
+      dragDrop.currentDragSource = null;
+      throw error;
+    }
+  }
+
+  /** File flavors may be visible before Gecko exposes the actual files. */
+  canHoverFiles(transfer: DataTransfer | null, itemID?: number): boolean {
+    if (!transfer || !this.itemsView.onDrop || !this.itemsView.canDropCheck)
+      return false;
+    const rows = this.itemsView.collectionTreeRows;
+    if (!rows?.length || rows.some((row) => !row.ref)) return false;
+    const libraries = new Set(rows.map((row) => row.ref.libraryID));
+    if (libraries.size !== 1) return false;
+    const libraryID = rows[0].ref.libraryID;
+    const library = Zotero.Libraries.get(libraryID);
+    if (!library || !library.editable) return false;
+    if (!rows.every((row) => row.isCollection() || row.isLibrary(true)))
+      return false;
+    if (itemID !== undefined) {
+      const item = this.getItems().find((item) => item.id === itemID);
+      if (
+        !item?.isRegularItem() ||
+        item.deleted ||
+        item.libraryID !== libraryID
+      )
+        return false;
+      if (!library.filesEditable) return false;
+    }
+    // Gecko may not expose file objects during dragover; check flavors here
+    // and defer file validation and Zotero's native check until the drop.
+    try {
+      return (
+        !!transfer.types?.includes("application/x-moz-file") &&
+        transfer.mozItemCount > 0 &&
+        typeof transfer.mozGetDataAt === "function" &&
+        !transfer.types.some(
+          (type) =>
+            type !== "application/x-moz-file" &&
+            type !== "text/x-moz-url" &&
+            type !== "Files",
+        )
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  canDropFiles(transfer: DataTransfer | null, itemID?: number): boolean {
+    if (!transfer || !this.canHoverFiles(transfer, itemID)) return false;
+    try {
+      for (let index = 0; index < transfer.mozItemCount; index++) {
+        const entry = transfer.mozGetDataAt(
+          "application/x-moz-file",
+          index,
+        ) as {
+          QueryInterface?: (iface: typeof Ci.nsIFile) => {
+            path?: string;
+            isFile?: () => boolean;
+          };
+          path?: string;
+          isFile?: () => boolean;
+        } | null;
+        const file = entry?.QueryInterface?.(Ci.nsIFile) ?? entry;
+        if (!file?.path || !file.isFile?.()) return false;
+      }
+      return (
+        itemID !== undefined || this.itemsView.canDropCheck!(-1, -1, transfer)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /** Validate direct item drops using the native target row and restrictions. */
+  canDropItems(transfer: DataTransfer | null, itemID: number): boolean {
+    if (
+      !transfer?.types?.includes("zotero/item") ||
+      !this.itemsView.onDrop ||
+      !this.itemsView.setDropEffect
+    )
+      return false;
+    const item = this.getItems().find((item) => item.id === itemID);
+    if (!item?.isRegularItem() || item.deleted) return false;
+    const library = Zotero.Libraries.get(item.libraryID);
+    if (!library || !library.editable) return false;
+    const rows = this.itemsView.collectionTreeRows;
+    if (
+      !rows?.length ||
+      !rows.every(
+        (row) =>
+          row.ref?.libraryID === item.libraryID &&
+          (row.isCollection() || row.isLibrary(true)),
+      )
+    )
+      return false;
+    const row = this.itemsView.getRowIndexByID(String(itemID));
+    if (row === false) return false;
+    try {
+      return !!this.itemsView.canDropCheck?.(row, 0, transfer);
+    } catch {
+      return false;
+    }
+  }
+
+  setItemDropEffect(event: DragEvent): void {
+    // Native file drags may allow only copy at the OS level. Zotero's helper
+    // negotiates a permitted cursor effect while recording the internal move.
+    this.itemsView.setDropEffect!(event, "move");
+  }
+
+  async dropItems(event: DragEvent, itemID: number): Promise<void> {
+    if (
+      !this.itemsView.onDrop ||
+      !this.canDropItems(event.dataTransfer, itemID)
+    )
+      return;
+    const row = this.itemsView.getRowIndexByID(String(itemID));
+    if (row === false) return;
+    const { DragDrop } = Zotero as typeof Zotero & {
+      DragDrop: {
+        currentOrientation: number;
+        currentDropEffect: string | null;
+      };
+    };
+    // Ignore orientation/effect left by another view. A tile is always a
+    // direct-on-parent move, never a between-row or whitespace drop.
+    DragDrop.currentOrientation = 0;
+    DragDrop.currentDropEffect = "move";
+    await this.itemsView.onDrop(event, row);
+  }
+
+  async dropFiles(event: DragEvent, itemID?: number): Promise<void> {
+    if (!this.canDropFiles(event.dataTransfer, itemID)) return;
+    if (itemID !== undefined) {
+      const parent = Zotero.Items.get(itemID);
+      if (parent) await this.attachFiles(event, parent);
+      return;
+    }
+    const dragDrop = Zotero as typeof Zotero & {
+      DragDrop: {
+        currentOrientation: number;
+        currentDropEffect: string | null;
+      };
+    };
+    // onDrop(-1) explicitly means whitespace; its internal row=0 is not a
+    // tile target. Clear state left by another drop target before handing off.
+    dragDrop.DragDrop.currentOrientation = -1;
+    dragDrop.DragDrop.currentDropEffect = null;
+    await this.itemsView.onDrop!(event, -1);
+  }
+
+  private async attachFiles(
+    event: DragEvent,
+    parent: Zotero.Item,
+  ): Promise<void> {
+    const transfer = event.dataTransfer!;
+    const isMac = this.win.navigator.platform.startsWith("Mac");
+    const move = isMac ? event.metaKey : event.shiftKey;
+    const link = move && (isMac ? event.altKey : event.ctrlKey);
+    const library = Zotero.Libraries.get(parent.libraryID);
+    if (
+      !library ||
+      (link ? library.libraryType !== "user" : !library.filesEditable)
+    )
+      return;
+    const notifier = Zotero.Notifier as typeof Zotero.Notifier & {
+      Queue: new () => _ZoteroTypes.Notifier.Queue;
+    };
+    const queue = new notifier.Queue();
+    const saveOptions = {
+      notifierQueue: queue,
+    } as Zotero.DataObject.SaveOptions;
+    const attachments = Zotero.Attachments as typeof Zotero.Attachments & {
+      shouldAutoRenameFile(isLink: boolean, libraryID: number): boolean;
+    };
+    const added: Zotero.Item[] = [];
+    try {
+      const rename =
+        transfer.mozItemCount === 1 &&
+        attachments.shouldAutoRenameFile(link, parent.libraryID) &&
+        !parent.numNonHTMLFileAttachments();
+      const delayTitle = transfer.mozItemCount > 1;
+      for (let index = 0; index < transfer.mozItemCount; index++) {
+        const entry = transfer.mozGetDataAt("application/x-moz-file", index);
+        let file = (entry.QueryInterface?.(Ci.nsIFile) ?? entry).path as string;
+        if (!link && file.endsWith(".lnk")) continue;
+        const fileBaseName = rename
+          ? await Zotero.Attachments.getRenamedFileBaseNameIfAllowedType(
+              parent,
+              file,
+            )
+          : undefined;
+        if (link && fileBaseName) {
+          try {
+            const ext = Zotero.File.getExtension(file);
+            const name = await Zotero.File.rename(
+              file,
+              fileBaseName + (ext ? `.${ext}` : ""),
+              { unique: true },
+            );
+            if (name) file = PathUtils.join(PathUtils.parent(file)!, name);
+          } catch (error) {
+            ztoolkit.log("Failed to rename linked drop file", error);
+          }
+        }
+        const options = {
+          file,
+          parentItemID: parent.id,
+          title: delayTitle ? "" : undefined,
+          saveOptions,
+        };
+        const item = link
+          ? await Zotero.Attachments.linkFromFile(options)
+          : await Zotero.Attachments.importFromFile({
+              ...options,
+              libraryID: parent.libraryID,
+              fileBaseName,
+            });
+        if (item) {
+          added.push(item);
+          if (move && !link) {
+            try {
+              await IOUtils.remove(file);
+            } catch (error) {
+              ztoolkit.log("Failed to remove moved drop file", error);
+            }
+          }
+        }
+      }
+      if (delayTitle) {
+        for (const item of added) {
+          (
+            item as Zotero.Item & { setAutoAttachmentTitle(): void }
+          ).setAutoAttachmentTitle();
+          await item.saveTx(saveOptions);
+        }
+      }
+    } finally {
+      await Zotero.Notifier.commit(queue);
+    }
   }
 
   focus(): void {
@@ -76,6 +362,26 @@ export class ItemTreeBridge {
   async deleteSelectedItems(force: boolean): Promise<void> {
     if (!this.getSelectedIDs().length) return;
     await this.win.ZoteroPane.deleteSelectedItems(force);
+  }
+
+  /** Forward only the native coloured-tag shortcut, preserving Zotero-version
+   * specific mixed-selection toggling, transactions, and undo behavior. */
+  async toggleSelectedItemsTag(number: number): Promise<void> {
+    if (!Number.isInteger(number) || number < 0 || number > 9) return;
+    const items = this.win.ZoteroPane.getSelectedItems();
+    if (!items.length || items.some((item) => !item.isEditable())) return;
+    const rows = this.itemsView.collectionTreeRows;
+    if (rows && new Set(rows.map((row) => row.ref?.libraryID)).size > 1) return;
+    const nativeView = this.itemsView as ItemsView & {
+      handleKeyDown?: (event: KeyboardEvent) => boolean;
+    };
+    if (!nativeView.handleKeyDown) return;
+    nativeView.handleKeyDown(
+      new this.win.KeyboardEvent("keydown", {
+        key: String(number),
+        code: `Digit${number}`,
+      }),
+    );
   }
 
   /** Build Zotero's native item menu, then let Gecko flip it before display. */

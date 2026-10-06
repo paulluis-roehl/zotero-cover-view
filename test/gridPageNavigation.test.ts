@@ -84,22 +84,6 @@ describe("grid page navigation", function () {
 
       entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => selected()[0] === ids[1], "Starting selection");
-      grid.style.padding = "0";
-      grid.style.height = `${rowHeight * 3 + 1}px`;
-      assert.isBelow(
-        entries[10].offsetTop,
-        grid.scrollTop + grid.clientHeight,
-        "Fourth row has entered the viewport",
-      );
-      press("PageDown");
-      await waitFor(
-        () => selected()[0] === ids[10],
-        "PageDown reaches a fourth row visible by one pixel",
-      );
-
-      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
-      await waitFor(() => selected()[0] === ids[1], "Reset starting selection");
-      grid.style.padding = "";
       grid.style.height = `${rowHeight * 3.5}px`;
       grid.scrollTop = 0;
       assert.closeTo(grid.clientHeight, rowHeight * 3.5, 2);
@@ -110,40 +94,37 @@ describe("grid page navigation", function () {
       );
       assert.equal(grid.getAttribute("aria-activedescendant"), entries[10].id);
 
-      grid.scrollTop = 0;
-      const fourthRowTop =
-        entries[10].getBoundingClientRect().top -
-        grid.getBoundingClientRect().top;
-      grid.style.height = `${fourthRowTop}px`;
-      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
-      await waitFor(() => selected()[0] === ids[1], "Viewport edge start");
-      assert.closeTo(
-        entries[10].getBoundingClientRect().top,
-        grid.getBoundingClientRect().bottom,
-        0.05,
-      );
-      press("PageDown");
-      await waitFor(
-        () => selected()[0] === ids[7],
-        "Row starting below viewport is not selected",
-      );
-
-      grid.scrollTop = 0;
-      grid.style.height = `${fourthRowTop + 1}px`;
-      entries[1].dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
-      await waitFor(() => selected()[0] === ids[1], "One-pixel viewport start");
-      assert.closeTo(
-        grid.getBoundingClientRect().bottom -
-          entries[10].getBoundingClientRect().top,
-        1,
-        0.05,
-        "Exactly one pixel of the fourth row is visible",
-      );
-      press("PageDown");
-      await waitFor(
-        () => selected()[0] === ids[10],
-        "One visible pixel includes the fourth row",
-      );
+      // Measure live viewport coordinates rather than extrapolating rounded
+      // offsetTop row spacing. Cover layout and padding can change that spacing.
+      for (const padding of ["0", ""]) {
+        grid.style.padding = padding;
+        grid.scrollTop = 0;
+        const fourthRowTop =
+          entries[10].getBoundingClientRect().top -
+          grid.getBoundingClientRect().top;
+        for (const visiblePixels of [0, 1]) {
+          grid.style.height = `${fourthRowTop + visiblePixels}px`;
+          grid.scrollTop = 0;
+          entries[1].dispatchEvent(
+            new win.MouseEvent("click", { bubbles: true }),
+          );
+          await waitFor(() => selected()[0] === ids[1], "Viewport edge start");
+          assert.closeTo(
+            grid.getBoundingClientRect().bottom -
+              entries[10].getBoundingClientRect().top,
+            visiblePixels,
+            0.05,
+            `Exactly ${visiblePixels} pixels of the fourth row are visible (padding ${padding || "default"})`,
+          );
+          press("PageDown");
+          await waitFor(
+            () => selected()[0] === ids[visiblePixels ? 10 : 7],
+            visiblePixels
+              ? "One visible pixel includes the fourth row"
+              : "Row starting below viewport is not selected",
+          );
+        }
+      }
 
       grid.style.height = `${(entries[3].offsetTop - entries[0].offsetTop) * 2 - 8}px`;
       grid.scrollTop = 0;
@@ -273,7 +254,7 @@ describe("grid page navigation", function () {
     const host = win.document.createElement("div");
     const originalIntersectionObserver = win.IntersectionObserver;
     const originalCacheCover = CoverProvider.cacheCover;
-    const originalGetCover = CoverProvider.getCover;
+    const originalGetCover = CoverProvider.getCoverResult;
     const requestedIDs: number[] = [];
     const cachedIDs: number[] = [];
     const observed = new Set<Element>();
@@ -300,7 +281,7 @@ describe("grid page navigation", function () {
     CoverProvider.cacheCover = (item) => {
       cachedIDs.push(item.id);
     };
-    CoverProvider.getCover = (id) => {
+    CoverProvider.getCoverResult = (id) => {
       requestedIDs.push(id);
       return Promise.resolve(null);
     };
@@ -335,7 +316,7 @@ describe("grid page navigation", function () {
       host.style.width = "600px";
       host.style.overflow = "auto";
       win.document.documentElement.append(host);
-      renderer.setItems(items, { showAuthors: true });
+      renderer.setItems(items, { showCreators: true });
       renderer.setFocusedItem(focusedID);
       assert.lengthOf(host.querySelectorAll(".grid-view-item"), 120);
       const page = new win.KeyboardEvent("keydown", {
@@ -379,7 +360,7 @@ describe("grid page navigation", function () {
       renderer.destroy();
       host.remove();
       CoverProvider.cacheCover = originalCacheCover;
-      CoverProvider.getCover = originalGetCover;
+      CoverProvider.getCoverResult = originalGetCover;
       win.IntersectionObserver = originalIntersectionObserver;
     }
   });

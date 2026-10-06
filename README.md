@@ -53,14 +53,14 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [x] right click menu
 - [x] general keyboard input and shortcuts
   - [x] adjust arrow keys for grid navigation
-- [ ] drag and drop files into grid view
+- [x] drag and drop files into grid view
 
 **Settings**
 
 - [x] grid size
 - [ ] grid item aspect ratio
   - update in `coverView.css` and also `placeholderCover.ts` default cover svg
-- [ ] further display options for grid view (e.g. title, author, year, ...)
+- [x] further display options for grid view (e.g. title, author, year, ...)
 - [x] remember previous choice of list vs grid view
   - [ ] option for separate choice in every collection
 - [ ] save fetched cover(s) as attachment (maybe also in right click menu) (warning: in large libraries, this may create a lot of attachments)
@@ -74,7 +74,7 @@ This makes it more visually appealing especially for books (as opposed to academ
 - [ ] improve graphics / effects while loading covers
 - [x] make cover column small and with icon, just like the Attachments column
 - [ ] add cover flow pane
-- [ ] visually distinguish fetched missing covers from actual attachments (+ settings option)
+- [x] visually distinguish fetched missing covers from actual attachments (+ settings option)
   - e.g. decrease opacity
 
 **Implementation**

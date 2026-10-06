@@ -2,6 +2,8 @@ import { assert } from "chai";
 import { BasicTool } from "zotero-plugin-toolkit";
 import { CoverProvider } from "../src/modules/coverProvider";
 import { getPref, setPref } from "../src/utils/prefs";
+import { findISBNCoverURI } from "../src/modules/covers/isbnCover";
+import { findMetadataCoverURI } from "../src/modules/covers/metadataCover";
 
 describe("Cover provider", function () {
   let originalGet: typeof Zotero.Items.get;
@@ -59,6 +61,152 @@ describe("Cover provider", function () {
       Reflect.deleteProperty(globalThis, "ztoolkit");
     }
     CoverProvider.clearCache();
+  });
+
+  it("reports online provenance without relying on the URI scheme", async function () {
+    const item = parent([], "9783570402931");
+    const result = await CoverProvider.findCoverResult(
+      item,
+      async () => null,
+      async () => null,
+      async () => null,
+      async () => "file:///cached-online.jpg",
+      undefined,
+      true,
+    );
+    assert.deepEqual(result, {
+      uri: "file:///cached-online.jpg",
+      source: "online",
+    });
+  });
+
+  it("identifies image, EPUB, and PDF branches as attachment-derived, including standalone attachments", async function () {
+    for (const [type, index] of [
+      ["image/png", 2],
+      ["application/epub+zip", 0],
+      ["application/pdf", 1],
+    ] as const) {
+      const file = attachment(1, type, "fixture");
+      for (const item of [parent([file]), file]) {
+        const finders: [
+          () => Promise<string | null>,
+          () => Promise<string | null>,
+          () => Promise<string | null>,
+        ] = [async () => null, async () => null, async () => null];
+        finders[index] = async () => "https://example.invalid/attachment-cover";
+        assert.deepEqual(
+          await CoverProvider.findCoverResult(item, ...finders),
+          {
+            uri: "https://example.invalid/attachment-cover",
+            source: "attachment",
+          },
+        );
+      }
+    }
+  });
+
+  it("identifies a generated placeholder separately from online and attachment covers", async function () {
+    const result = await CoverProvider.findCoverResult(
+      parent([]),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      false,
+    );
+    assert.equal(result!.source, "placeholder");
+    assert.match(result!.uri, /^data:image\/svg\+xml/);
+    assert.equal(await CoverProvider.findCover(parent([])), result!.uri);
+  });
+
+  it("retains online provenance for both persistent lookup caches after clearing provider memory", async function () {
+    const isbn = "9780142410370";
+    const title = `Persistent provenance ${Zotero.Utilities.randomString()}`;
+    const author = "Test, Author";
+    const edition = "OL987654322M";
+    const directory = PathUtils.join(
+      Zotero.DataDirectory.dir,
+      "coverview",
+      "covers",
+      "open-library",
+    );
+    const paths = [
+      PathUtils.join(directory, `${isbn}.jpg`),
+      PathUtils.join(directory, `${isbn}.missing`),
+      PathUtils.join(directory, "olid", `${edition}.jpg`),
+      PathUtils.join(directory, "olid", `${edition}.missing`),
+      PathUtils.join(
+        directory,
+        "olid",
+        "search",
+        `${Zotero.Utilities.Internal.sha1(JSON.stringify([title, author]))}.json`,
+      ),
+    ];
+    const originalRequest = Zotero.HTTP.request;
+    const originalMetadata = getPref("fetchMetadataCover");
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+    try {
+      for (const path of paths)
+        await IOUtils.remove(path, { ignoreAbsent: true });
+      const isbnURI = await findISBNCoverURI(isbn, async () => ({
+        status: 200,
+        bytes,
+      }));
+      const metadataURI = await findMetadataCoverURI(
+        title,
+        author,
+        async (url) => ({
+          status: 200,
+          bytes: url.includes("search.json")
+            ? new TextEncoder().encode(
+                JSON.stringify({ docs: [{ cover_edition_key: edition }] }),
+              )
+            : bytes,
+        }),
+      );
+      Zotero.HTTP.request = (async () => {
+        throw new Error("Persisted lookup must not access the network");
+      }) as typeof originalRequest;
+      for (const [lookup, uri] of [
+        ["isbn", isbnURI],
+        ["metadata", metadataURI],
+      ]) {
+        CoverProvider.clearCache();
+        setPref("fetchISBNCover", lookup === "isbn");
+        setPref("fetchMetadataCover", lookup === "metadata");
+        const item = parent([], lookup === "isbn" ? isbn : "");
+        Object.assign(item, {
+          itemType: "book",
+          getField: (field: string) =>
+            field === "title"
+              ? title
+              : field === "ISBN" && lookup === "isbn"
+                ? isbn
+                : "",
+          getCreatorsJSON: () => [
+            { firstName: "Author", lastName: "Test", creatorType: "author" },
+          ],
+        });
+        CoverProvider.cacheCover(item);
+        assert.deepEqual(await CoverProvider.getCoverResult(item.id), {
+          uri,
+          source: "online",
+        });
+        assert.equal(
+          await CoverProvider.getCover(item.id),
+          uri,
+          "URI-only consumers remain compatible",
+        );
+      }
+    } finally {
+      Zotero.HTTP.request = originalRequest;
+      setPref("fetchMetadataCover", originalMetadata);
+      for (const path of paths)
+        await IOUtils.remove(path, { ignoreAbsent: true });
+    }
   });
 
   it("uses a PDF attachment when no EPUB attachment exists", async function () {
@@ -264,33 +412,37 @@ describe("Cover provider", function () {
 
     assert.equal(first, second);
     assert.match(first!, /^data:image\/svg\+xml;charset=utf-8,/);
-    const svg = decodeURIComponent(first!.split(",")[1]);
-    assert.include(svg, 'viewBox="0 0 420 594"');
-    assert.include(svg, 'y="225">Analytical Engine</tspan>');
-    assert.include(svg, ">Notes and</tspan>");
-    assert.include(svg, ">Observations</tspan>");
-    assert.include(svg, 'y="490"');
-    assert.include(svg, ">Ada Lovelace</text>");
-    assert.include(
-      svg,
-      'x="382" y="38" text-anchor="end" dominant-baseline="hanging"',
+    const svg = new (Zotero.getMainWindow()!.DOMParser)().parseFromString(
+      decodeURIComponent(first!.split(",")[1]),
+      "image/svg+xml",
     );
-    assert.include(svg, 'font-size="19" font-weight="500">1843</text>');
-    assert.notInclude(svg, "&#65;");
-    assert.include(svg, 'clip-path="url(#content)"');
+    assert.equal(svg.documentElement.getAttribute("viewBox"), "0 0 420 594");
+    assert.equal(
+      Array.from(
+        svg.querySelectorAll("tspan"),
+        (line) => line.textContent,
+      ).join(" "),
+      "Analytical Engine Notes and Observations",
+    );
+    assert.include(svg.documentElement.textContent, "Ada Lovelace");
+    assert.equal(
+      svg.querySelector('[data-metadata="year"]')?.textContent,
+      "1843",
+    );
+    assert.notExists(svg.querySelector("parsererror"));
   });
 
   it("does not publish a cover from an invalidated lookup", async function () {
-    const originalFindCover = CoverProvider.findCover;
-    let resolveFirst!: (cover: string | null) => void;
-    let resolveSecond!: (cover: string | null) => void;
+    const originalFindCover = CoverProvider.findCoverResult;
+    let resolveFirst!: (cover: { uri: string; source: "online" }) => void;
+    let resolveSecond!: (cover: { uri: string; source: "attachment" }) => void;
     let calls = 0;
-    CoverProvider.findCover = (() =>
-      new Promise<string | null>((resolve) => {
+    CoverProvider.findCoverResult = (() =>
+      new Promise((resolve) => {
         calls++;
         if (calls === 1) resolveFirst = resolve;
         else resolveSecond = resolve;
-      })) as typeof CoverProvider.findCover;
+      })) as typeof CoverProvider.findCoverResult;
     const item = { id: 99 } as Zotero.Item;
 
     CoverProvider.cacheCover(item);
@@ -299,40 +451,48 @@ describe("Cover provider", function () {
     CoverProvider.cacheCover(item);
     const second = CoverProvider.getCover(item.id);
 
-    resolveFirst("stale-cover");
-    resolveSecond("fresh-cover");
+    resolveFirst({ uri: "stale-cover", source: "online" });
+    resolveSecond({ uri: "fresh-cover", source: "attachment" });
     assert.isNull(await first);
     assert.equal(await second, "fresh-cover");
-    CoverProvider.findCover = originalFindCover;
+    assert.deepEqual(await CoverProvider.getCoverResult(item.id), {
+      uri: "fresh-cover",
+      source: "attachment",
+    });
+    CoverProvider.findCoverResult = originalFindCover;
   });
 
   it("publishes a normal lookup once and deduplicates it", async function () {
-    const originalFindCover = CoverProvider.findCover;
-    let resolveCover!: (cover: string | null) => void;
+    const originalFindCover = CoverProvider.findCoverResult;
+    let resolveCover!: (cover: { uri: string; source: "online" }) => void;
     let calls = 0;
-    CoverProvider.findCover = (() => {
+    CoverProvider.findCoverResult = (() => {
       calls++;
-      return new Promise<string | null>((resolve) => {
+      return new Promise((resolve) => {
         resolveCover = resolve;
       });
-    }) as typeof CoverProvider.findCover;
+    }) as typeof CoverProvider.findCoverResult;
     const item = { id: 100 } as Zotero.Item;
 
     try {
       CoverProvider.cacheCover(item);
       CoverProvider.cacheCover(item);
       const result = CoverProvider.getCover(item.id);
-      resolveCover("cover");
+      resolveCover({ uri: "cover", source: "online" });
       assert.equal(await result, "cover");
       assert.equal(calls, 1);
       assert.equal(await CoverProvider.getCover(item.id), "cover");
+      assert.deepEqual(await CoverProvider.getCoverResult(item.id), {
+        uri: "cover",
+        source: "online",
+      });
     } finally {
-      CoverProvider.findCover = originalFindCover;
+      CoverProvider.findCoverResult = originalFindCover;
     }
   });
 
   it("rejects an old lookup when metadata and lookup settings change together", async function () {
-    const originalFindCover = CoverProvider.findCover;
+    const originalFindCover = CoverProvider.findCoverResult;
     const originalMetadataPref = getPref("fetchMetadataCover");
     const state = { title: "Before" };
     const item = {
@@ -340,36 +500,38 @@ describe("Cover provider", function () {
       getDisplayTitle: () => state.title,
       getField: () => "",
     } as unknown as Zotero.Item;
-    let resolveOld!: (cover: string) => void;
+    let resolveOld!: (cover: { uri: string; source: "online" }) => void;
     let calls = 0;
-    CoverProvider.findCover = (() => {
+    CoverProvider.findCoverResult = (() => {
       calls++;
       return calls === 1
-        ? new Promise<string>((resolve) => (resolveOld = resolve))
-        : Promise.resolve("new-cover");
-    }) as typeof CoverProvider.findCover;
+        ? new Promise((resolve) => (resolveOld = resolve))
+        : Promise.resolve({ uri: "new-cover", source: "attachment" });
+    }) as typeof CoverProvider.findCoverResult;
     try {
       CoverProvider.cacheCover(item);
       const old = CoverProvider.getCover(item.id);
       state.title = "After";
       setPref("fetchMetadataCover", !originalMetadataPref);
       CoverProvider.cacheCover(item);
-      resolveOld("old-cover");
+      resolveOld({ uri: "old-cover", source: "online" });
       assert.isNull(await old);
       assert.equal(await CoverProvider.getCover(item.id), "new-cover");
     } finally {
-      CoverProvider.findCover = originalFindCover;
+      CoverProvider.findCoverResult = originalFindCover;
       setPref("fetchMetadataCover", originalMetadataPref);
     }
   });
 
   it("refreshes a cached cover when ISBN fetching changes", async function () {
-    const originalFindCover = CoverProvider.findCover;
+    const originalFindCover = CoverProvider.findCoverResult;
     let calls = 0;
-    CoverProvider.findCover = (async () => {
+    CoverProvider.findCoverResult = (async () => {
       calls++;
-      return getPref("fetchISBNCover") ? "isbn-cover" : "placeholder";
-    }) as typeof CoverProvider.findCover;
+      return getPref("fetchISBNCover")
+        ? { uri: "isbn-cover", source: "online" }
+        : { uri: "placeholder", source: "placeholder" };
+    }) as typeof CoverProvider.findCoverResult;
     const item = { id: 102 } as Zotero.Item;
 
     try {
@@ -381,7 +543,7 @@ describe("Cover provider", function () {
       assert.equal(await CoverProvider.getCover(item.id), "isbn-cover");
       assert.equal(calls, 2);
     } finally {
-      CoverProvider.findCover = originalFindCover;
+      CoverProvider.findCoverResult = originalFindCover;
     }
   });
 
@@ -401,9 +563,11 @@ describe("Cover provider", function () {
     } as unknown as Zotero.Item;
     Zotero.Items.get = ((id: number) =>
       id === attachment.id ? attachment : false) as typeof originalGet;
-    const originalFindCover = CoverProvider.findCover;
-    CoverProvider.findCover = (async () =>
-      "old-cover") as typeof CoverProvider.findCover;
+    const originalFindCover = CoverProvider.findCoverResult;
+    CoverProvider.findCoverResult = async () => ({
+      uri: "old-cover",
+      source: "online",
+    });
 
     try {
       CoverProvider.cacheCover({ id: 42 } as Zotero.Item);
@@ -413,7 +577,7 @@ describe("Cover provider", function () {
       assert.isNull(await CoverProvider.getCover(42));
     } finally {
       CoverProvider.unregisterNotifier();
-      CoverProvider.findCover = originalFindCover;
+      CoverProvider.findCoverResult = originalFindCover;
     }
   });
 
@@ -423,7 +587,7 @@ describe("Cover provider", function () {
       observer = ref.notify;
       return "metadata-test-notifier";
     }) as typeof Zotero.Notifier.registerObserver;
-    const originalFindCover = CoverProvider.findCover;
+    const originalFindCover = CoverProvider.findCoverResult;
     const state = {
       title: "Before",
       creator: "Old Author",
@@ -452,10 +616,10 @@ describe("Cover provider", function () {
     const changes: number[] = [];
     const stop = CoverProvider.onCoverChanged((id) => changes.push(id));
     let lookups = 0;
-    CoverProvider.findCover = (async () => {
+    CoverProvider.findCoverResult = (async () => {
       lookups++;
-      return `cover-${lookups}`;
-    }) as typeof CoverProvider.findCover;
+      return { uri: `cover-${lookups}`, source: "placeholder" };
+    }) as typeof CoverProvider.findCoverResult;
     try {
       CoverProvider.registerNotifier();
       CoverProvider.cacheCover(item);
@@ -491,7 +655,7 @@ describe("Cover provider", function () {
     } finally {
       stop();
       CoverProvider.unregisterNotifier();
-      CoverProvider.findCover = originalFindCover;
+      CoverProvider.findCoverResult = originalFindCover;
     }
   });
 });

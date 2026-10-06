@@ -8,11 +8,6 @@
     preference="enableGridView"
     data-l10n-id="pref-enable-grid-view"
   />
-  <checkbox
-    id="zotero-prefpane-__addonRef__-show-authors"
-    preference="showAuthors"
-    data-l10n-id="pref-show-authors"
-  />
   <html:div class="cover-view-tile-size-setting">
     <html:label
       for="zotero-prefpane-__addonRef__-tile-size"
@@ -45,6 +40,37 @@
     />
     <html:span aria-hidden="true">%</html:span>
   </html:div>
+</groupbox>
+<groupbox>
+  <label><html:h2 data-l10n-id="pref-tile-appearance"></html:h2></label>
+  <checkbox
+    id="zotero-prefpane-__addonRef__-show-titles"
+    preference="showTitles"
+    data-l10n-id="pref-show-titles"
+  />
+  <checkbox
+    id="zotero-prefpane-__addonRef__-show-creators"
+    preference="showCreators"
+    data-l10n-id="pref-show-creators"
+  />
+  <checkbox
+    id="zotero-prefpane-__addonRef__-show-years"
+    preference="showYears"
+    data-l10n-id="pref-show-years"
+  />
+  <checkbox
+    id="zotero-prefpane-__addonRef__-show-item-type-icon"
+    preference="showItemTypeIcon"
+    data-l10n-id="pref-show-item-type-icon"
+  />
+  <checkbox
+    id="zotero-prefpane-__addonRef__-desaturate-online-covers"
+    preference="desaturateOnlineCovers"
+    data-l10n-id="pref-desaturate-online-covers"
+  />
+</groupbox>
+<groupbox>
+  <label><html:h2 data-l10n-id="pref-cover-sources"></html:h2></label>
   <checkbox
     id="zotero-prefpane-__addonRef__-fetch-isbn-cover"
     preference="fetchISBNCover"
