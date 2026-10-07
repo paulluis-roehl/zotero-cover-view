@@ -998,14 +998,13 @@ export class GridRenderer {
     }
   }
 
-  /** Refresh layout; an optional style update preserves the first visible item's offset. */
+  /** Preserve the first visible item's offset across explicit and automatic reflows. */
   refreshLayout(updateStyles?: () => void): void {
     if (this.destroyed) return;
     const scrollTop = this.host.scrollTop;
     if (this.viewportAnchor?.scrollTop !== scrollTop)
       this.viewportAnchor = undefined;
     if (
-      updateStyles &&
       this.viewportAnchor &&
       Date.now() - this.viewportAnchor.resizedAt > RESIZE_GESTURE_PAUSE_MS
     )
@@ -1013,19 +1012,18 @@ export class GridRenderer {
     // Capture from the old virtualization geometry before changing CSS. This
     // viewport anchor is independent of selection and keyboard focus.
     const firstRow =
-      updateStyles && this.isVisible()
+      this.layoutKey && this.isVisible()
         ? this.layoutRows.findIndex((row) => row.top + row.height > scrollTop)
         : -1;
     const oldRow = this.layoutRows[firstRow];
-    const anchor = updateStyles
-      ? (this.viewportAnchor ??
-        (oldRow && oldRow.top < scrollTop + this.host.clientHeight
-          ? {
-              itemID: this.renderItems[firstRow * this.layoutColumns].item.id,
-              offset: oldRow.top - scrollTop,
-            }
-          : undefined))
-      : undefined;
+    const anchor =
+      this.viewportAnchor ??
+      (oldRow && oldRow.top < scrollTop + this.host.clientHeight
+        ? {
+            itemID: this.renderItems[firstRow * this.layoutColumns].item.id,
+            offset: oldRow.top - scrollTop,
+          }
+        : undefined);
     updateStyles?.();
     // Hidden tabs report zero dimensions: retain the last valid geometry until
     // Zotero restores the library tab and calls us again.
@@ -1033,6 +1031,7 @@ export class GridRenderer {
     if (!this.host.contains(this.spacer)) this.host.append(this.spacer);
     // A spacer avoids Gecko's 10,000 explicit-grid-row limit. A second pass
     // accounts for the scrollbar reducing auto-fill widths after setting height.
+    let layoutChanged = false;
     for (let pass = 0; pass < 2; pass++) {
       const widths = this.getColumnWidths();
       const style = this.doc.defaultView!.getComputedStyle(this.host)!;
@@ -1051,7 +1050,7 @@ export class GridRenderer {
         style.lineHeight,
       ]);
       if (key === this.layoutKey) break;
-      if (!updateStyles) this.viewportAnchor = undefined;
+      layoutChanged = true;
       this.layoutRows = this.getLayoutRows(widths);
       this.layoutColumns = widths.length;
       this.layoutWidths = widths;
@@ -1061,6 +1060,12 @@ export class GridRenderer {
       this.spacer.style.height = `${lastRow ? lastRow.top + lastRow.height + lastRow.margin - paddingTop : 0}px`;
       for (const entry of this.entries.values())
         this.positionTile(entry, Number(entry.dataset.renderIndex));
+    }
+    // Observer notifications and navigation may refresh an unchanged layout.
+    // Do not scroll or extend the resize gesture on those no-op refreshes.
+    if (!layoutChanged) {
+      this.mountViewport();
+      return;
     }
     const anchorIndex = anchor
       ? this.renderItems.findIndex(({ item }) => item.id === anchor.itemID)

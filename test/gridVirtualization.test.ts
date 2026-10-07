@@ -102,6 +102,159 @@ describe("grid on-demand tiles", function () {
     }
   });
 
+  it("preserves the visible item through automatic width changes without drift or tile replacement", async function () {
+    const host = createRendererHost();
+    const wrapper = showCoverHost(host);
+    wrapper.style.width = "650px";
+    host.style.cssText +=
+      ";box-sizing:border-box;width:100%;padding:19px 23px;gap:31px 17px;grid-template-columns:repeat(auto-fill,minmax(var(--cover-view-tile-size),1fr))";
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      const tile = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      host.scrollTop = tile.offsetTop + 37;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const offset =
+        tile.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      for (const [width, columns] of [
+        [460, 2],
+        [850, 4],
+        [650, 3],
+        [460, 2],
+        [650, 3],
+      ]) {
+        wrapper.style.width = `${width}px`;
+        await Zotero.Promise.delay(60);
+        assert.equal(renderer.getVerticalDestination(-7, 1), -7 - columns);
+        assert.closeTo(
+          tile.getBoundingClientRect().top - host.getBoundingClientRect().top,
+          offset,
+          1,
+          `Offset at ${width}px`,
+        );
+        assert.strictEqual(host.querySelector('[data-item-id="-7"]'), tile);
+        assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 40);
+      }
+      const settled = host.scrollTop;
+      await Zotero.Promise.delay(400);
+      assert.equal(
+        host.scrollTop,
+        settled,
+        "Observer callbacks settle without layout loops",
+      );
+    } finally {
+      renderer.destroy();
+      wrapper.remove();
+    }
+  });
+
+  it("anchors automatic reflows across row gaps and clamps at both scroll boundaries", async function () {
+    const host = createRendererHost();
+    host.style.padding = "19px 23px";
+    host.style.gap = "80px 17px";
+    const renderer = new GridRenderer(host, () => {});
+    const resize = async (columns: number) => {
+      host.style.gridTemplateColumns = `repeat(${columns},180px)`;
+      await Zotero.Promise.delay(60);
+    };
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      const preceding = host.querySelector<HTMLElement>('[data-item-id="-4"]')!;
+      const anchor = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      host.scrollTop =
+        preceding.offsetTop + preceding.getBoundingClientRect().height + 10;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const offset =
+        anchor.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      assert.isAbove(offset, 0);
+      await resize(2);
+      assert.closeTo(
+        anchor.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        offset,
+        1,
+      );
+
+      host.scrollTop = 0;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const first = host.querySelector<HTMLElement>('[data-item-id="-1"]')!;
+      host.scrollTop =
+        first.offsetTop + first.getBoundingClientRect().height + 1;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      await resize(4);
+      assert.equal(host.scrollTop, 0);
+
+      host.scrollTop = host.scrollHeight;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      await resize(5);
+      assert.equal(host.scrollTop, host.scrollHeight - host.clientHeight);
+      assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 40);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("mounts newly exposed rows after a height-only resize without moving the viewport", async function () {
+    const host = createRendererHost();
+    const wrapper = showCoverHost(host);
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      assert.notExists(host.querySelector('[data-item-id="-16"]'));
+      host.style.height = "2000px";
+      await Zotero.Promise.delay(60);
+      assert.equal(host.clientHeight, 2000);
+      const exposed = host.querySelector<HTMLElement>('[data-item-id="-16"]');
+      assert.exists(exposed);
+      assert.isBelow(
+        exposed!.getBoundingClientRect().bottom,
+        host.getBoundingClientRect().bottom,
+      );
+      assert.equal(host.scrollTop, 0);
+      assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 30);
+    } finally {
+      renderer.destroy();
+      wrapper.remove();
+    }
+  });
+
+  it("restores against final columns when a scrollbar changes the available width", async function () {
+    // Overlay scrollbars consume no width. Exercise classic scrollbars even on
+    // systems whose desktop default is an overlay.
+    const pref = "ui.useOverlayScrollbars";
+    const original = Zotero.Prefs.get(pref, true);
+    Zotero.Prefs.set(pref, 0, true);
+    const host = createRendererHost();
+    host.style.cssText +=
+      ";box-sizing:border-box;width:619px;padding:19px;gap:20px;overflow-y:hidden;grid-template-columns:repeat(auto-fill,minmax(var(--cover-view-tile-size),1fr))";
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      assert.equal(renderer.getVerticalDestination(-7, 1), -10);
+      const anchor = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      host.scrollTop = anchor.offsetTop + 37;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const offset =
+        anchor.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      for (const overflow of ["auto", "hidden", "auto"]) {
+        host.style.overflowY = overflow;
+        await Zotero.Promise.delay(60);
+        assert.equal(
+          renderer.getVerticalDestination(-7, 1),
+          overflow === "auto" ? -9 : -10,
+        );
+        assert.closeTo(
+          anchor.getBoundingClientRect().top - host.getBoundingClientRect().top,
+          offset,
+          1,
+        );
+      }
+    } finally {
+      renderer.destroy();
+      if (original === undefined) Zotero.Prefs.clear(pref, true);
+      else Zotero.Prefs.set(pref, original, true);
+    }
+  });
+
   it("keeps a deeply clipped first visible item visible when shrinking its row", function () {
     const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});

@@ -68,6 +68,7 @@ describe("grid wheel resizing", function () {
       );
       tile(1).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
       await waitFor(() => pane.getSelectedItems(true)[0] === items[1].id);
+      await waitFor(() => !!tile(3).querySelector("img")?.getAttribute("src"));
       grid.scrollTop = tile(3).offsetTop + 37;
       grid.dispatchEvent(new win.Event("scroll"));
       const anchorID = items[3].id;
@@ -95,6 +96,28 @@ describe("grid wheel resizing", function () {
       assert.equal(grid.getAttribute("aria-activedescendant"), focused);
       assert.strictEqual(win.document.activeElement, active);
       assert.equal(grid.classList.contains("owns-focus"), ownsFocus);
+
+      // Width changes take the observer path, without a tile-size preference update.
+      const cover = tile(3).querySelector("img")!;
+      const coverURI = cover.getAttribute("src");
+      for (const [width, count] of [
+        [900, 4],
+        [700, 3],
+        [450, 2],
+        [630, 2],
+      ]) {
+        grid.style.width = `${width}px`;
+        await Zotero.Promise.delay(60);
+        await waitFor(() => columns() === count, `Width ${width}px`);
+        assert.closeTo(offset(), originalOffset, 1);
+        assert.deepEqual(pane.getSelectedItems(true), [items[1].id]);
+        assert.equal(grid.getAttribute("aria-activedescendant"), focused);
+        assert.strictEqual(win.document.activeElement, active);
+        assert.equal(grid.classList.contains("owns-focus"), ownsFocus);
+        assert.equal(getPref("tileSize"), 189);
+        assert.strictEqual(tile(3).querySelector("img"), cover);
+        assert.equal(cover.getAttribute("src"), coverURI);
+      }
 
       const preferencePane = Zotero.PreferencePanes.pluginPanes.find(
         (entry) => entry.pluginID === "coverview@insature.net",
