@@ -49,6 +49,7 @@ export class GridView {
   private wheelRemainder = 0;
   private dropContext?: string;
   private dropItemID?: number;
+  private dropPointer?: { x: number; y: number };
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -412,13 +413,30 @@ export class GridView {
     const itemID = tile ? Number(tile.dataset.itemId) : undefined;
     const context = this.tree.getDropContext();
     this.dropContext ??= context;
-    if (this.dropContext !== context) {
+    const pointer =
+      Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+        ? { x: event.clientX, y: event.clientY }
+        : undefined;
+    // Periodic dragover events must not silently retarget a stationary pointer
+    // when sorting or reflow moves a different item underneath it.
+    const stationaryTargetChanged =
+      pointer &&
+      this.dropPointer &&
+      pointer.x === this.dropPointer.x &&
+      pointer.y === this.dropPointer.y &&
+      this.dropItemID !== itemID;
+    if (
+      context === undefined ||
+      this.dropContext !== context ||
+      stationaryTargetChanged
+    ) {
       event.preventDefault();
       event.stopPropagation();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
       return;
     }
     this.dropItemID = itemID;
+    this.dropPointer = pointer;
     const hoverItems =
       tile && this.tree.canDropItems(event.dataTransfer, itemID!);
     const hoverFiles = this.tree.canHoverFiles(event.dataTransfer, itemID);
@@ -460,9 +478,11 @@ export class GridView {
     const itemID = tile ? Number(tile.dataset.itemId) : undefined;
     // Re-resolve native row indices below, but never redirect a stale hover to
     // another collection or a recycled tile with a different item identity.
+    const currentContext = this.tree.getDropContext();
     if (
-      context !== undefined &&
-      (context !== this.tree.getDropContext() || hoveredItemID !== itemID)
+      currentContext === undefined ||
+      (context !== undefined &&
+        (context !== currentContext || hoveredItemID !== itemID))
     ) {
       event.preventDefault();
       event.stopPropagation();
@@ -495,6 +515,7 @@ export class GridView {
     this.clearDropTile();
     this.dropContext = undefined;
     this.dropItemID = undefined;
+    this.dropPointer = undefined;
   };
 
   private readonly handleDragLeave = (event: DragEvent): void => {

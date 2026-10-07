@@ -19,6 +19,8 @@ describe("grid file drops", function () {
       ctrlKey?: boolean;
       metaKey?: boolean;
       altKey?: boolean;
+      clientX?: number;
+      clientY?: number;
     } = {},
   ): DragEvent {
     const event = new win.Event(type, {
@@ -164,11 +166,15 @@ describe("grid file drops", function () {
       libraryID,
       "attachmentRenameTemplate",
     );
-    const view = pane.itemsView as typeof pane.itemsView & {
-      onDrop: (event: DragEvent, row: number) => Promise<void>;
+    const waitForDrop = async (condition: () => boolean) => {
+      const deadline = Date.now() + 5000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(
+        condition(),
+        "Imported children become the native selection",
+      );
     };
-    const originalDrop = view.onDrop;
-    let completed: Promise<void> | undefined;
     try {
       Zotero.Prefs.set("autoRenameFiles", true);
       await Zotero.SyncedSettings.set(
@@ -191,17 +197,28 @@ describe("grid file drops", function () {
       const tile = () =>
         grid.querySelector(`[data-item-id="${parents[0].id}"]`)!;
       const transfer = fileTransfer(paths[0]);
-      drag(win, tile(), "dragover", transfer);
+      const pointer = { clientX: 100, clientY: 100 };
+      drag(win, tile(), "dragover", transfer, pointer);
       parents[0].setField("title", "Alpha parent");
       await parents[0].saveTx();
       await Zotero.Promise.delay(300);
-      view.onDrop = (event, row) => {
-        completed = originalDrop.call(view, event, row);
-        return completed;
-      };
+      const replacement = grid.querySelector(
+        `[data-item-id="${parents[1].id}"]`,
+      )!;
+      drag(win, replacement, "dragover", transfer, pointer);
+      drag(win, replacement, "drop", transfer, pointer);
+      await Zotero.Promise.delay(300);
+      assert.isEmpty(
+        parents[1].getAttachments(),
+        "Sorting cannot redirect a stationary pointer to a different parent",
+      );
+      drag(win, tile(), "dragover", transfer, { clientX: 200, clientY: 100 });
       drag(win, tile(), "drop", transfer);
-      assert.isDefined(completed);
-      await completed;
+      await waitForDrop(
+        () =>
+          parents[0].getAttachments().length === 1 &&
+          pane.getSelectedItems(true)[0] === parents[0].getAttachments()[0],
+      );
       const child = Zotero.Items.get(parents[0].getAttachments()[0]);
       assert.equal(
         PathUtils.filename((await child.getFilePathAsync())!),
@@ -219,10 +236,18 @@ describe("grid file drops", function () {
           fileTransfer(paths[index + 1]).mozGetDataAt(type, 0),
       });
       drag(win, tile(), "dragover", multiple);
-      completed = undefined;
       drag(win, tile(), "drop", multiple);
-      assert.isDefined(completed);
-      await completed;
+      await waitForDrop(
+        () =>
+          parents[0].getAttachments().length === 3 &&
+          pane.getSelectedItems(true).length === 2 &&
+          pane
+            .getSelectedItems(true)
+            .every(
+              (id) =>
+                id !== child.id && parents[0].getAttachments().includes(id),
+            ),
+      );
       const siblings = parents[0]
         .getAttachments()
         .filter((id) => id !== child.id)
@@ -245,7 +270,6 @@ describe("grid file drops", function () {
         siblings.map((item) => item.id),
       );
     } finally {
-      view.onDrop = originalDrop;
       Zotero.Prefs.set("autoRenameFiles", rename);
       if (template === null)
         await Zotero.SyncedSettings.clear(
@@ -287,6 +311,32 @@ describe("grid file drops", function () {
       parent.setField("title", "Shared drop parent");
       await parent.saveTx();
       if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectByID(`C${collections[0].id}`);
+      await Zotero.Promise.delay(300);
+      const native = pane.itemsView as typeof pane.itemsView & {
+        collectionTreeRows: unknown[];
+        changeCollectionTreeRows(rows: unknown[]): Promise<void>;
+      };
+      const previousRows = [...native.collectionTreeRows];
+      await pane.collectionsView!.selectByID(`C${collections[1].id}`);
+      const requestedRows = [...native.collectionTreeRows];
+      // Use Zotero's native view API to reproduce a displayed tree lagging
+      // behind the requested collection, without relying on load timing.
+      await native.changeCollectionTreeRows(previousRows);
+      try {
+        const pendingTransfer = fileTransfer(path);
+        drag(win, grid, "dragover", pendingTransfer);
+        drag(win, grid, "drop", pendingTransfer);
+      } finally {
+        await native.changeCollectionTreeRows(requestedRows);
+      }
+      await Zotero.Promise.delay(300);
+      for (const collection of collections)
+        assert.deepEqual(
+          collection.getChildItems(true),
+          [parent.id],
+          "A first drop during a collection transition does not import into either context",
+        );
       for (const onTile of [true, false]) {
         await pane.collectionsView!.selectByID(`C${collections[0].id}`);
         await Zotero.Promise.delay(300);
@@ -313,9 +363,11 @@ describe("grid file drops", function () {
         toggle.dispatchEvent(new win.Event("command"));
       await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
       // Clean up a standalone import even when this regression fails.
-      for (const id of collections[1].id
-        ? collections[1].getChildItems(true)
-        : [])
+      for (const id of new Set(
+        collections.flatMap((collection) =>
+          collection.id ? collection.getChildItems(true) : [],
+        ),
+      ))
         if (id !== parent.id) await Zotero.Items.get(id).eraseTx();
       if (parent.id) await parent.eraseTx();
       for (const collection of collections)

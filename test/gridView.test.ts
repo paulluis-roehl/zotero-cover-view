@@ -161,6 +161,9 @@ describe("grid view", function () {
 
   it("retains grid focus across reflow and switches focus between item views", async function () {
     const win = Zotero.getMainWindow()!;
+    // Native focus/layout restoration needs the main window's animation frames,
+    // which the scaffold window can otherwise suspend by occluding it.
+    win.focus();
     const pane = win.ZoteroPane;
     const grid = win.document.getElementById("cover-view-grid")!;
     const tree = win.document.getElementById("zotero-items-tree")!;

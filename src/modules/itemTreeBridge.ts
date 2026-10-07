@@ -50,18 +50,26 @@ export class ItemTreeBridge {
   }
 
   /** Snapshot both the displayed and requested collection contexts. */
-  getDropContext(): string {
+  getDropContext(): string | undefined {
     const collections = this.win.ZoteroPane
       .collectionsView as CollectionsView & {
       getSelectedRows?: () => CollectionDropRow[];
     };
     const identity = (rows: CollectionDropRow[] = []) =>
-      rows.map((row) => [row.id, row.ref?.libraryID, row.ref?.id]);
-    return JSON.stringify([
-      this.collectionGeneration,
-      identity(this.itemsView.collectionTreeRows),
-      identity(collections?.getSelectedRows?.()),
-    ]);
+      rows
+        .map((row) => JSON.stringify([row.id, row.ref?.libraryID, row.ref?.id]))
+        .sort();
+    const displayed = identity(this.itemsView.collectionTreeRows);
+    const requestedRows = collections?.getSelectedRows?.();
+    const requested = requestedRows && identity(requestedRows);
+    // During asynchronous collection loading the old item tree can still be
+    // displayed. It must not receive even a newly started hover/drop.
+    if (
+      !displayed.length ||
+      (requested && JSON.stringify(displayed) !== JSON.stringify(requested))
+    )
+      return undefined;
+    return JSON.stringify([this.collectionGeneration, displayed, requested]);
   }
 
   getItems(): Zotero.Item[] {
