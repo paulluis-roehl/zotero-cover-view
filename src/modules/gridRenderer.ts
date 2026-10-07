@@ -67,12 +67,14 @@ export class GridRenderer {
   private layoutRows: (GridRowGeometry & { margin: number })[] = [];
   private layoutColumns = 1;
   private layoutWidths: number[] = [];
+  private layoutHidden = false;
   private viewportAnchor?: {
     itemID: number;
     offset: number;
     scrollTop: number;
     resizedAt: number;
   };
+  private lastVisibleAnchor?: GridRenderer["viewportAnchor"];
   private readonly coverObserver: IntersectionObserver;
   private readonly captionObserver: ResizeObserver;
   private readonly entries = new Map<number, HTMLElement>();
@@ -387,12 +389,14 @@ export class GridRenderer {
       if (captionsChanged) {
         this.layoutKey = undefined;
         this.viewportAnchor = undefined;
+        this.lastVisibleAnchor = undefined;
       }
       this.refreshLayout();
       return;
     }
     this.renderKey = renderKey;
     this.viewportAnchor = undefined;
+    this.lastVisibleAnchor = undefined;
 
     this.renderItems = renderItems;
     this.layoutKey = undefined;
@@ -473,6 +477,11 @@ export class GridRenderer {
   }
 
   private readonly handleScroll = (): void => {
+    if (!this.isVisible()) return;
+    if (this.layoutHidden) {
+      this.refreshLayout();
+      return;
+    }
     if (this.viewportAnchor?.scrollTop !== this.host.scrollTop)
       this.viewportAnchor = undefined;
     this.mountViewport();
@@ -487,6 +496,7 @@ export class GridRenderer {
     const top = this.host.scrollTop - TILE_OVERSCAN;
     const bottom = this.host.scrollTop + this.host.clientHeight + TILE_OVERSCAN;
     const required = new Set<number>();
+    let visibleAnchor: GridRenderer["viewportAnchor"];
     // Jump directly to the first intersecting row instead of walking visited rows.
     let low = 0;
     let high = this.layoutRows.length;
@@ -500,6 +510,18 @@ export class GridRenderer {
       const geometry = this.layoutRows[row];
       if (geometry.top > bottom) break;
       if (geometry.top + geometry.height < top) continue;
+      if (
+        !visibleAnchor &&
+        geometry.top + geometry.height > this.host.scrollTop &&
+        geometry.top < this.host.scrollTop + this.host.clientHeight
+      ) {
+        visibleAnchor = {
+          itemID: this.renderItems[row * this.layoutColumns].item.id,
+          offset: geometry.top - this.host.scrollTop,
+          scrollTop: this.host.scrollTop,
+          resizedAt: Date.now(),
+        };
+      }
       const end = Math.min(
         (row + 1) * this.layoutColumns,
         this.renderItems.length,
@@ -521,6 +543,12 @@ export class GridRenderer {
       entry.remove();
     }
     this.updateActiveDescendant();
+    // Remember a measurable viewport even outside a resize gesture. Hidden
+    // scroll frames may lose their pixel offset before the next reflow.
+    this.lastVisibleAnchor =
+      this.viewportAnchor?.scrollTop === this.host.scrollTop
+        ? this.viewportAnchor
+        : visibleAnchor;
   }
 
   private releaseTileObservers(entry: HTMLElement): void {
@@ -1001,11 +1029,22 @@ export class GridRenderer {
   /** Preserve the first visible item's offset across explicit and automatic reflows. */
   refreshLayout(updateStyles?: () => void): void {
     if (this.destroyed) return;
+    // Invalid geometry cannot retire a resize anchor: hiding may clamp the DOM
+    // scroll offset, and a hidden tab can outlive the resize gesture timeout.
+    if (!this.isVisible()) {
+      this.layoutHidden = true;
+      this.viewportAnchor ??= this.lastVisibleAnchor;
+      updateStyles?.();
+      return;
+    }
+    const returningFromHidden = this.layoutHidden;
+    this.layoutHidden = false;
     const scrollTop = this.host.scrollTop;
-    if (this.viewportAnchor?.scrollTop !== scrollTop)
+    if (!returningFromHidden && this.viewportAnchor?.scrollTop !== scrollTop)
       this.viewportAnchor = undefined;
     if (
       this.viewportAnchor &&
+      !returningFromHidden &&
       Date.now() - this.viewportAnchor.resizedAt > RESIZE_GESTURE_PAUSE_MS
     )
       this.viewportAnchor = undefined;
@@ -1027,7 +1066,10 @@ export class GridRenderer {
     updateStyles?.();
     // Hidden tabs report zero dimensions: retain the last valid geometry until
     // Zotero restores the library tab and calls us again.
-    if (!this.isVisible()) return;
+    if (!this.isVisible()) {
+      this.layoutHidden = true;
+      return;
+    }
     if (!this.host.contains(this.spacer)) this.host.append(this.spacer);
     // A spacer avoids Gecko's 10,000 explicit-grid-row limit. A second pass
     // accounts for the scrollbar reducing auto-fill widths after setting height.
@@ -1063,7 +1105,11 @@ export class GridRenderer {
     }
     // Observer notifications and navigation may refresh an unchanged layout.
     // Do not scroll or extend the resize gesture on those no-op refreshes.
-    if (!layoutChanged) {
+    const needsHiddenScrollRestore =
+      returningFromHidden &&
+      this.viewportAnchor &&
+      this.viewportAnchor.scrollTop !== scrollTop;
+    if (!layoutChanged && !needsHiddenScrollRestore) {
       this.mountViewport();
       return;
     }
