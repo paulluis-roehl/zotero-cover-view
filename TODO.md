@@ -45,5 +45,3 @@
 
 This plugin is based on the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template).
 See setup and debug details there.
-
-
