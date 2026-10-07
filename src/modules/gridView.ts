@@ -47,6 +47,8 @@ export class GridView {
   private selectionWrites: Promise<void> = Promise.resolve();
   private focusOwner?: "grid" | "tree";
   private wheelRemainder = 0;
+  private dropContext?: string;
+  private dropItemID?: number;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -69,7 +71,7 @@ export class GridView {
     this.ui.host.addEventListener("drop", this.handleDrop);
     this.ui.host.addEventListener("dragleave", this.handleDragLeave);
     this.ui.host.addEventListener("scroll", this.clearDropTile);
-    this.win.document.addEventListener("dragend", this.clearDropTile);
+    this.win.document.addEventListener("dragend", this.resetDrop);
     this.tree.onItemsChanged(this.scheduleSync);
     this.stopCoverChanges = CoverProvider.onCoverChanged((itemID) => {
       this.tree.refreshRows();
@@ -122,7 +124,7 @@ export class GridView {
   }
 
   applyEnabledPreference(): void {
-    this.clearDropTile();
+    this.resetDrop();
     const enabled = !!getPref("enableGridView");
     const active = this.win.document.activeElement;
     const outgoingOwner = this.ui.ownsGridFocus(active)
@@ -140,25 +142,37 @@ export class GridView {
     if (!enabled) this.wheelRemainder = 0;
     if (!enabled) this.tree.refreshLayout();
     this.syncItems(enteringGrid);
-    if (outgoingOwner === (enabled ? "tree" : "grid")) {
-      if (enabled) this.ui.host.focus();
-      else {
-        // Zotero's virtualized tree is not focusable until its newly shown
-        // layout has completed after the preference observer runs.
-        const currentFocus = this.win.document.activeElement;
-        this.focusFrame = this.win.requestAnimationFrame(() => {
-          this.focusFrame = undefined;
+    if (
+      enabled &&
+      outgoingOwner === "tree" &&
+      Zotero.getActiveZoteroPane() === this.win.ZoteroPane
+    )
+      this.ui.host.focus();
+    if (!enabled) {
+      // Zotero's virtualized tree is not focusable until its newly shown
+      // layout has completed after the preference observer runs.
+      const currentFocus = this.win.document.activeElement;
+      this.focusFrame = this.win.requestAnimationFrame(() => {
+        this.focusFrame = undefined;
+        if (!getPref("enableGridView")) {
+          this.tree.refreshLayout();
+          const active = this.win.document.activeElement;
+          const gridBlurredToDocument =
+            this.ui.ownsGridFocus(currentFocus) &&
+            (active === this.win.document.body ||
+              active === this.win.document.documentElement);
           if (
-            !getPref("enableGridView") &&
-            this.win.document.activeElement === currentFocus
+            outgoingOwner === "grid" &&
+            Zotero.getActiveZoteroPane() === this.win.ZoteroPane &&
+            (active === currentFocus || gridBlurredToDocument)
           ) {
             this.tree.focus();
             if (this.ui.ownsTreeFocus(this.win.document.activeElement)) {
               this.focusOwner = "tree";
             }
           }
-        });
-      }
+        }
+      });
     }
   }
 
@@ -220,6 +234,9 @@ export class GridView {
   };
 
   destroy(): void {
+    const returnTreeFocus = this.ui.ownsGridFocus(
+      this.win.document.activeElement,
+    );
     if (this.focusFrame !== undefined)
       this.win.cancelAnimationFrame(this.focusFrame);
     this.win.clearInterval(this.selectionTimer);
@@ -229,8 +246,8 @@ export class GridView {
     this.ui.host.removeEventListener("drop", this.handleDrop);
     this.ui.host.removeEventListener("dragleave", this.handleDragLeave);
     this.ui.host.removeEventListener("scroll", this.clearDropTile);
-    this.win.document.removeEventListener("dragend", this.clearDropTile);
-    this.clearDropTile();
+    this.win.document.removeEventListener("dragend", this.resetDrop);
+    this.resetDrop();
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
@@ -238,6 +255,27 @@ export class GridView {
 
     this.renderer.destroy();
     this.ui.destroy();
+    if (this.win.closed) return;
+    this.tree.refreshLayout();
+    const currentFocus = this.win.document.activeElement;
+    // Shutdown and window detach use the same restoration as a mode switch,
+    // but must not steal focus if another pane or a replacement grid takes it.
+    this.focusFrame = this.win.requestAnimationFrame(() => {
+      this.focusFrame = undefined;
+      if (
+        this.win.closed ||
+        this.win.document.getElementById("cover-view-grid")
+      )
+        return;
+      this.tree.refreshLayout();
+      if (
+        returnTreeFocus &&
+        Zotero.getActiveZoteroPane() === this.win.ZoteroPane &&
+        this.win.document.activeElement === currentFocus
+      ) {
+        this.tree.focus();
+      }
+    });
   }
 
   readonly scheduleSync = (): void => {
@@ -335,6 +373,7 @@ export class GridView {
   };
 
   private readonly startItemDrag = (itemID: number, event: DragEvent): void => {
+    this.resetDrop();
     try {
       // Read the native selection at drag start. An unselected tile is dragged
       // alone without changing selection or queuing an asynchronous tree write.
@@ -371,6 +410,15 @@ export class GridView {
       ".grid-view-item",
     ) as HTMLElement | null;
     const itemID = tile ? Number(tile.dataset.itemId) : undefined;
+    const context = this.tree.getDropContext();
+    this.dropContext ??= context;
+    if (this.dropContext !== context) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+      return;
+    }
+    this.dropItemID = itemID;
     const hoverItems =
       tile && this.tree.canDropItems(event.dataTransfer, itemID!);
     const hoverFiles = this.tree.canHoverFiles(event.dataTransfer, itemID);
@@ -402,12 +450,25 @@ export class GridView {
   };
 
   private readonly handleDrop = (event: DragEvent): void => {
-    this.clearDropTile();
+    const context = this.dropContext;
+    const hoveredItemID = this.dropItemID;
+    this.resetDrop();
     if (!this.isGridDrop(event)) return;
     const tile = (event.target as Element).closest(
       ".grid-view-item",
     ) as HTMLElement | null;
     const itemID = tile ? Number(tile.dataset.itemId) : undefined;
+    // Re-resolve native row indices below, but never redirect a stale hover to
+    // another collection or a recycled tile with a different item identity.
+    if (
+      context !== undefined &&
+      (context !== this.tree.getDropContext() || hoveredItemID !== itemID)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+      return;
+    }
     if (event.dataTransfer?.types?.includes("zotero/item")) {
       if (!tile || !this.tree.canDropItems(event.dataTransfer, itemID!)) return;
       event.preventDefault();
@@ -430,8 +491,18 @@ export class GridView {
       tile.classList.remove("drop-target");
   };
 
+  private readonly resetDrop = (): void => {
+    this.clearDropTile();
+    this.dropContext = undefined;
+    this.dropItemID = undefined;
+  };
+
   private readonly handleDragLeave = (event: DragEvent): void => {
     const next = event.relatedTarget as Node | null;
+    if (!next || !this.ui.host.contains(next)) {
+      this.resetDrop();
+      return;
+    }
     if (next && this.ui.host.querySelector(".drop-target")?.contains(next))
       return;
     this.clearDropTile();

@@ -4,6 +4,11 @@ import { ItemTreeBridge } from "../src/modules/itemTreeBridge";
 describe("grid file drops", function () {
   this.timeout(120000);
 
+  afterEach(function () {
+    const win = Zotero.getMainWindow()!;
+    win.document.dispatchEvent(new win.Event("dragend"));
+  });
+
   function drag(
     win: _ZoteroTypes.MainWindow,
     target: Element,
@@ -37,6 +42,7 @@ describe("grid file drops", function () {
       mozGetDataAt: (type: string) =>
         type === "application/x-moz-file" ? file : null,
       dropEffect: "copy",
+      getData: () => "",
     } as unknown as DataTransfer;
   }
 
@@ -101,6 +107,17 @@ describe("grid file drops", function () {
       assert.isEmpty(child.getCollections());
       assert.equal(recognitionCalls, 0);
       assert.isTrue(await IOUtils.exists(path));
+      for (
+        let i = 0;
+        i < 50 && !pane.getSelectedItems(true).includes(child.id);
+        i++
+      )
+        await Zotero.Promise.delay(20);
+      assert.deepEqual(
+        pane.getSelectedItems(true),
+        [child.id],
+        "A parent-tile import selects its new child just like the native tree",
+      );
 
       // A grid gap hits the host itself, not the nearest tile.
       let completed: Promise<void> | undefined;
@@ -126,6 +143,183 @@ describe("grid file drops", function () {
       if (standalone?.id) await standalone.eraseTx();
       if (parent.id) await parent.eraseTx();
       if (collection.id) await collection.eraseTx();
+      await IOUtils.remove(path, { ignoreAbsent: true });
+    }
+  });
+
+  it("keeps the hovered parent after sorting, with native single-file renaming and multi-file titles", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const toggle = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const collection = new Zotero.Collection();
+    const parents = [new Zotero.Item("book"), new Zotero.Item("book")];
+    const paths = ["single.pdf", "first.pdf", "second.pdf"].map((name) =>
+      PathUtils.join(Zotero.DataDirectory.dir, name),
+    );
+    const libraryID = Zotero.Libraries.userLibraryID;
+    const rename = Zotero.Prefs.get("autoRenameFiles");
+    const template = Zotero.SyncedSettings.get(
+      libraryID,
+      "attachmentRenameTemplate",
+    );
+    const view = pane.itemsView as typeof pane.itemsView & {
+      onDrop: (event: DragEvent, row: number) => Promise<void>;
+    };
+    const originalDrop = view.onDrop;
+    let completed: Promise<void> | undefined;
+    try {
+      Zotero.Prefs.set("autoRenameFiles", true);
+      await Zotero.SyncedSettings.set(
+        libraryID,
+        "attachmentRenameTemplate",
+        "{{ title }}",
+      );
+      collection.name = "Native rename and sort";
+      await collection.saveTx();
+      for (const [index, parent] of parents.entries()) {
+        parent.setField("title", index === 0 ? "Zulu parent" : "Middle parent");
+        parent.addToCollection(collection.id);
+        await parent.saveTx();
+      }
+      for (const path of paths)
+        await IOUtils.write(path, new TextEncoder().encode("%PDF-1.4\n"));
+      await pane.collectionsView!.selectByID(`C${collection.id}`);
+      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      await Zotero.Promise.delay(300);
+      const tile = () =>
+        grid.querySelector(`[data-item-id="${parents[0].id}"]`)!;
+      const transfer = fileTransfer(paths[0]);
+      drag(win, tile(), "dragover", transfer);
+      parents[0].setField("title", "Alpha parent");
+      await parents[0].saveTx();
+      await Zotero.Promise.delay(300);
+      view.onDrop = (event, row) => {
+        completed = originalDrop.call(view, event, row);
+        return completed;
+      };
+      drag(win, tile(), "drop", transfer);
+      assert.isDefined(completed);
+      await completed;
+      const child = Zotero.Items.get(parents[0].getAttachments()[0]);
+      assert.equal(
+        PathUtils.filename((await child.getFilePathAsync())!),
+        "Alpha parent.pdf",
+      );
+      assert.isEmpty(
+        parents[1].getAttachments(),
+        "The old row index is not the destination",
+      );
+      assert.deepEqual(pane.getSelectedItems(true), [child.id]);
+
+      const multiple = Object.assign(fileTransfer(paths[1]), {
+        mozItemCount: 2,
+        mozGetDataAt: (type: string, index: number) =>
+          fileTransfer(paths[index + 1]).mozGetDataAt(type, 0),
+      });
+      drag(win, tile(), "dragover", multiple);
+      completed = undefined;
+      drag(win, tile(), "drop", multiple);
+      assert.isDefined(completed);
+      await completed;
+      const siblings = parents[0]
+        .getAttachments()
+        .filter((id) => id !== child.id)
+        .map((id) => Zotero.Items.get(id));
+      assert.lengthOf(siblings, 2);
+      assert.sameMembers(
+        await Promise.all(
+          siblings.map(async (item) =>
+            PathUtils.filename((await item.getFilePathAsync())!),
+          ),
+        ),
+        ["first.pdf", "second.pdf"],
+      );
+      assert.sameMembers(
+        siblings.map((item) => item.getField("title")),
+        ["first", "second"],
+      );
+      assert.sameMembers(
+        pane.getSelectedItems(true),
+        siblings.map((item) => item.id),
+      );
+    } finally {
+      view.onDrop = originalDrop;
+      Zotero.Prefs.set("autoRenameFiles", rename);
+      if (template === null)
+        await Zotero.SyncedSettings.clear(
+          libraryID,
+          "attachmentRenameTemplate",
+        );
+      else
+        await Zotero.SyncedSettings.set(
+          libraryID,
+          "attachmentRenameTemplate",
+          template,
+        );
+      if (grid.hidden !== originallyHidden)
+        toggle.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectLibrary(libraryID);
+      for (const parent of parents) if (parent.id) await parent.eraseTx();
+      if (collection.id) await collection.eraseTx();
+      for (const path of paths)
+        await IOUtils.remove(path, { ignoreAbsent: true });
+    }
+  });
+
+  it("does not redirect a pending file drop when the selected collection changes", async function () {
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const toggle = win.document.getElementById("cover-view-toggle")!;
+    const originallyHidden = grid.hidden;
+    const collections = [new Zotero.Collection(), new Zotero.Collection()];
+    const parent = new Zotero.Item("book");
+    const path = PathUtils.join(Zotero.DataDirectory.dir, "pending-drop.txt");
+    try {
+      await IOUtils.write(path, new TextEncoder().encode("pending drop"));
+      for (const [index, collection] of collections.entries()) {
+        collection.name = `Pending drop ${index}`;
+        await collection.saveTx();
+        parent.addToCollection(collection.id);
+      }
+      parent.setField("title", "Shared drop parent");
+      await parent.saveTx();
+      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
+      for (const onTile of [true, false]) {
+        await pane.collectionsView!.selectByID(`C${collections[0].id}`);
+        await Zotero.Promise.delay(300);
+        const target = () =>
+          onTile ? grid.querySelector(`[data-item-id="${parent.id}"]`)! : grid;
+        const transfer = fileTransfer(path);
+        drag(win, target(), "dragover", transfer);
+        await pane.collectionsView!.selectByID(`C${collections[1].id}`);
+        await Zotero.Promise.delay(300);
+        drag(win, target(), "drop", transfer);
+        await Zotero.Promise.delay(300);
+        assert.isEmpty(
+          parent.getAttachments(),
+          "A shared parent does not make a stale drag valid",
+        );
+        assert.deepEqual(
+          collections[1].getChildItems(true),
+          [parent.id],
+          "A gap drop does not import into the new collection",
+        );
+      }
+    } finally {
+      if (grid.hidden !== originallyHidden)
+        toggle.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
+      // Clean up a standalone import even when this regression fails.
+      for (const id of collections[1].id
+        ? collections[1].getChildItems(true)
+        : [])
+        if (id !== parent.id) await Zotero.Items.get(id).eraseTx();
+      if (parent.id) await parent.eraseTx();
+      for (const collection of collections)
+        if (collection.id) await collection.eraseTx();
       await IOUtils.remove(path, { ignoreAbsent: true });
     }
   });

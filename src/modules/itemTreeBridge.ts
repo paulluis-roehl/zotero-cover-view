@@ -12,9 +12,11 @@ type ItemsView = _ZoteroTypes.ItemTree & {
     transfer: DataTransfer,
   ) => boolean;
   onDrop?: (event: DragEvent, row: number) => Promise<void>;
+  onDragOver?: (event: DragEvent, row: number) => void;
   setDropEffect?: (event: DragEvent, effect: string) => void;
 };
 type CollectionDropRow = {
+  id?: string;
   ref: { libraryID: number; id?: number };
   isCollection(): boolean;
   isLibrary(root?: boolean): boolean;
@@ -26,6 +28,7 @@ type CollectionsView = _ZoteroTypes.CollectionTree & {
 export class ItemTreeBridge {
   private readonly itemsView: ItemsView;
   private readonly removeListeners = new Set<() => void>();
+  private collectionGeneration = 0;
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     const itemsView = win.ZoteroPane.itemsView as ItemsView | false;
@@ -33,6 +36,32 @@ export class ItemTreeBridge {
       throw new Error("Cannot attach grid view: itemsView is not available");
     }
     this.itemsView = itemsView;
+    const collections = win.ZoteroPane.collectionsView as
+      CollectionsView | false;
+    if (collections && collections.onSelect) {
+      const changed = () => {
+        this.collectionGeneration++;
+      };
+      collections.onSelect.addListener(changed);
+      this.removeListeners.add(() =>
+        collections.onSelect!.removeListener(changed),
+      );
+    }
+  }
+
+  /** Snapshot both the displayed and requested collection contexts. */
+  getDropContext(): string {
+    const collections = this.win.ZoteroPane
+      .collectionsView as CollectionsView & {
+      getSelectedRows?: () => CollectionDropRow[];
+    };
+    const identity = (rows: CollectionDropRow[] = []) =>
+      rows.map((row) => [row.id, row.ref?.libraryID, row.ref?.id]);
+    return JSON.stringify([
+      this.collectionGeneration,
+      identity(this.itemsView.collectionTreeRows),
+      identity(collections?.getSelectedRows?.()),
+    ]);
   }
 
   getItems(): Zotero.Item[] {
@@ -141,8 +170,17 @@ export class ItemTreeBridge {
         const file = entry?.QueryInterface?.(Ci.nsIFile) ?? entry;
         if (!file?.path || !file.isFile?.()) return false;
       }
+      const row =
+        itemID === undefined
+          ? -1
+          : this.itemsView.getRowIndexByID(String(itemID));
       return (
-        itemID !== undefined || this.itemsView.canDropCheck!(-1, -1, transfer)
+        row !== false &&
+        !!this.itemsView.canDropCheck!(
+          row,
+          itemID === undefined ? -1 : 0,
+          transfer,
+        )
       );
     } catch {
       return false;
@@ -209,11 +247,30 @@ export class ItemTreeBridge {
 
   async dropFiles(event: DragEvent, itemID?: number): Promise<void> {
     if (!this.canDropFiles(event.dataTransfer, itemID)) return;
-    if (itemID !== undefined) {
-      const parent = Zotero.Items.get(itemID);
-      if (parent) await this.attachFiles(event, parent);
-      return;
-    }
+    const row =
+      itemID === undefined
+        ? -1
+        : this.itemsView.getRowIndexByID(String(itemID));
+    if (row === false || !this.itemsView.onDragOver) return;
+    // Native hover computes orientation from the event target's geometry.
+    // Normalize to the tile center: every point on a tile means "on parent".
+    // Do this at drop time, when Gecko exposes protected file data and modifiers.
+    const target = event.currentTarget as Element;
+    const rect = target.getBoundingClientRect();
+    const hover = new this.win.DragEvent("dragover", {
+      cancelable: true,
+      clientY: rect.y + rect.height / 2,
+      shiftKey: event.shiftKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+    });
+    Object.defineProperties(hover, {
+      target: { value: target },
+      currentTarget: { value: target },
+      dataTransfer: { value: event.dataTransfer },
+    });
+    this.itemsView.onDragOver(hover, row);
     const dragDrop = Zotero as typeof Zotero & {
       DragDrop: {
         currentOrientation: number;
@@ -221,101 +278,9 @@ export class ItemTreeBridge {
       };
     };
     // onDrop(-1) explicitly means whitespace; its internal row=0 is not a
-    // tile target. Clear state left by another drop target before handing off.
-    dragDrop.DragDrop.currentOrientation = -1;
-    dragDrop.DragDrop.currentDropEffect = null;
-    await this.itemsView.onDrop!(event, -1);
-  }
-
-  private async attachFiles(
-    event: DragEvent,
-    parent: Zotero.Item,
-  ): Promise<void> {
-    const transfer = event.dataTransfer!;
-    const isMac = this.win.navigator.platform.startsWith("Mac");
-    const move = isMac ? event.metaKey : event.shiftKey;
-    const link = move && (isMac ? event.altKey : event.ctrlKey);
-    const library = Zotero.Libraries.get(parent.libraryID);
-    if (
-      !library ||
-      (link ? library.libraryType !== "user" : !library.filesEditable)
-    )
-      return;
-    const notifier = Zotero.Notifier as typeof Zotero.Notifier & {
-      Queue: new () => _ZoteroTypes.Notifier.Queue;
-    };
-    const queue = new notifier.Queue();
-    const saveOptions = {
-      notifierQueue: queue,
-    } as Zotero.DataObject.SaveOptions;
-    const attachments = Zotero.Attachments as typeof Zotero.Attachments & {
-      shouldAutoRenameFile(isLink: boolean, libraryID: number): boolean;
-    };
-    const added: Zotero.Item[] = [];
-    try {
-      const rename =
-        transfer.mozItemCount === 1 &&
-        attachments.shouldAutoRenameFile(link, parent.libraryID) &&
-        !parent.numNonHTMLFileAttachments();
-      const delayTitle = transfer.mozItemCount > 1;
-      for (let index = 0; index < transfer.mozItemCount; index++) {
-        const entry = transfer.mozGetDataAt("application/x-moz-file", index);
-        let file = (entry.QueryInterface?.(Ci.nsIFile) ?? entry).path as string;
-        if (!link && file.endsWith(".lnk")) continue;
-        const fileBaseName = rename
-          ? await Zotero.Attachments.getRenamedFileBaseNameIfAllowedType(
-              parent,
-              file,
-            )
-          : undefined;
-        if (link && fileBaseName) {
-          try {
-            const ext = Zotero.File.getExtension(file);
-            const name = await Zotero.File.rename(
-              file,
-              fileBaseName + (ext ? `.${ext}` : ""),
-              { unique: true },
-            );
-            if (name) file = PathUtils.join(PathUtils.parent(file)!, name);
-          } catch (error) {
-            ztoolkit.log("Failed to rename linked drop file", error);
-          }
-        }
-        const options = {
-          file,
-          parentItemID: parent.id,
-          title: delayTitle ? "" : undefined,
-          saveOptions,
-        };
-        const item = link
-          ? await Zotero.Attachments.linkFromFile(options)
-          : await Zotero.Attachments.importFromFile({
-              ...options,
-              libraryID: parent.libraryID,
-              fileBaseName,
-            });
-        if (item) {
-          added.push(item);
-          if (move && !link) {
-            try {
-              await IOUtils.remove(file);
-            } catch (error) {
-              ztoolkit.log("Failed to remove moved drop file", error);
-            }
-          }
-        }
-      }
-      if (delayTitle) {
-        for (const item of added) {
-          (
-            item as Zotero.Item & { setAutoAttachmentTitle(): void }
-          ).setAutoAttachmentTitle();
-          await item.saveTx(saveOptions);
-        }
-      }
-    } finally {
-      await Zotero.Notifier.commit(queue);
-    }
+    // tile target. Set orientation explicitly, independent of DOM geometry.
+    dragDrop.DragDrop.currentOrientation = itemID === undefined ? -1 : 0;
+    await this.itemsView.onDrop!(event, row);
   }
 
   focus(): void {
@@ -433,6 +398,14 @@ export class ItemTreeBridge {
     // invalidate() then rebuilds the visible rows and updates column widths.
     this.itemsView._treebox?.update();
     this.itemsView.tree?.invalidate();
+    // Selection may have scrolled while display:none clamped the DOM offset
+    // to zero. Once measurable, let Zotero reveal the selected native rows.
+    this.itemsView.ensureRowsAreVisible(this.itemsView.selection.selected);
+    // Native rowIsVisible() can include the overscan row below the viewport.
+    // The focused row's scroll helper checks the actual row bounds instead.
+    if (this.itemsView.selection.isSelected(this.itemsView.selection.focused)) {
+      this.itemsView.ensureRowIsVisible(this.itemsView.selection.focused);
+    }
   }
 
   refreshRows(): void {
