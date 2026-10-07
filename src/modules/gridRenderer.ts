@@ -12,6 +12,7 @@ import { getPageRow, GridRowGeometry } from "./gridLayout";
 // Focus retention ends when its identity changes/clears; drag retention ends on
 // drop/dragend. Destruction releases both. Selection and menus never pin tiles.
 const TILE_OVERSCAN = 400;
+const RESIZE_GESTURE_PAUSE_MS = 300;
 
 export type GridNavigationCommand =
   "left" | "right" | "up" | "down" | "home" | "end" | "page-up" | "page-down";
@@ -66,6 +67,12 @@ export class GridRenderer {
   private layoutRows: (GridRowGeometry & { margin: number })[] = [];
   private layoutColumns = 1;
   private layoutWidths: number[] = [];
+  private viewportAnchor?: {
+    itemID: number;
+    offset: number;
+    scrollTop: number;
+    resizedAt: number;
+  };
   private readonly coverObserver: IntersectionObserver;
   private readonly captionObserver: ResizeObserver;
   private readonly entries = new Map<number, HTMLElement>();
@@ -377,11 +384,15 @@ export class GridRenderer {
         }
       }
       this.renderItems = renderItems;
-      if (captionsChanged) this.layoutKey = undefined;
+      if (captionsChanged) {
+        this.layoutKey = undefined;
+        this.viewportAnchor = undefined;
+      }
       this.refreshLayout();
       return;
     }
     this.renderKey = renderKey;
+    this.viewportAnchor = undefined;
 
     this.renderItems = renderItems;
     this.layoutKey = undefined;
@@ -461,7 +472,11 @@ export class GridRenderer {
     this.updateActiveDescendant();
   }
 
-  private readonly handleScroll = (): void => this.mountViewport();
+  private readonly handleScroll = (): void => {
+    if (this.viewportAnchor?.scrollTop !== this.host.scrollTop)
+      this.viewportAnchor = undefined;
+    this.mountViewport();
+  };
 
   private isVisible(): boolean {
     return this.host.clientWidth > 0 && this.host.clientHeight > 0;
@@ -983,12 +998,38 @@ export class GridRenderer {
     }
   }
 
-  /** Refresh Gecko's scroll-frame layout after the grid becomes visible again. */
-  refreshLayout(): void {
+  /** Refresh layout; an optional style update preserves the first visible item's offset. */
+  refreshLayout(updateStyles?: () => void): void {
+    if (this.destroyed) return;
+    const scrollTop = this.host.scrollTop;
+    if (this.viewportAnchor?.scrollTop !== scrollTop)
+      this.viewportAnchor = undefined;
+    if (
+      updateStyles &&
+      this.viewportAnchor &&
+      Date.now() - this.viewportAnchor.resizedAt > RESIZE_GESTURE_PAUSE_MS
+    )
+      this.viewportAnchor = undefined;
+    // Capture from the old virtualization geometry before changing CSS. This
+    // viewport anchor is independent of selection and keyboard focus.
+    const firstRow =
+      updateStyles && this.isVisible()
+        ? this.layoutRows.findIndex((row) => row.top + row.height > scrollTop)
+        : -1;
+    const oldRow = this.layoutRows[firstRow];
+    const anchor = updateStyles
+      ? (this.viewportAnchor ??
+        (oldRow && oldRow.top < scrollTop + this.host.clientHeight
+          ? {
+              itemID: this.renderItems[firstRow * this.layoutColumns].item.id,
+              offset: oldRow.top - scrollTop,
+            }
+          : undefined))
+      : undefined;
+    updateStyles?.();
     // Hidden tabs report zero dimensions: retain the last valid geometry until
     // Zotero restores the library tab and calls us again.
-    if (this.destroyed || !this.isVisible()) return;
-    const scrollTop = this.host.scrollTop;
+    if (!this.isVisible()) return;
     if (!this.host.contains(this.spacer)) this.host.append(this.spacer);
     // A spacer avoids Gecko's 10,000 explicit-grid-row limit. A second pass
     // accounts for the scrollbar reducing auto-fill widths after setting height.
@@ -1010,6 +1051,7 @@ export class GridRenderer {
         style.lineHeight,
       ]);
       if (key === this.layoutKey) break;
+      if (!updateStyles) this.viewportAnchor = undefined;
       this.layoutRows = this.getLayoutRows(widths);
       this.layoutColumns = widths.length;
       this.layoutWidths = widths;
@@ -1020,8 +1062,39 @@ export class GridRenderer {
       for (const entry of this.entries.values())
         this.positionTile(entry, Number(entry.dataset.renderIndex));
     }
-    this.host.scrollTop = scrollTop > 0 ? scrollTop - 1 : 1;
-    this.host.scrollTop = scrollTop;
+    const anchorIndex = anchor
+      ? this.renderItems.findIndex(({ item }) => item.id === anchor.itemID)
+      : -1;
+    const anchorRow =
+      anchorIndex >= 0
+        ? this.layoutRows[Math.floor(anchorIndex / this.layoutColumns)]
+        : undefined;
+    const targetTop =
+      anchor && anchorRow
+        ? anchorRow.top - Math.max(anchor.offset, 1 - anchorRow.height)
+        : scrollTop;
+    // A deeply clipped row may shrink above the viewport. Preserve its offset
+    // unless that would hide it entirely; then retain at least one visible pixel.
+    // Let the scroll frame clamp at either boundary, before retiring/mounting
+    // tiles so unchanged covers in the restored viewport stay connected.
+    this.host.scrollTop = targetTop > 0 ? targetTop - 1 : 1;
+    this.host.scrollTop = targetTop;
+    if (anchor && anchorRow) {
+      // Reflow may place earlier items alongside the anchor. Keep its identity
+      // through subsequent resize ticks, until scrolling or item/layout changes.
+      this.viewportAnchor = {
+        itemID: anchor.itemID,
+        // Preserve the intended offset across ticks instead of accumulating
+        // Gecko's scroll-position rounding. Only boundaries change the target.
+        offset:
+          targetTop < 0 ||
+          targetTop > this.host.scrollHeight - this.host.clientHeight
+            ? anchorRow.top - this.host.scrollTop
+            : Math.max(anchor.offset, 1 - anchorRow.height),
+        scrollTop: this.host.scrollTop,
+        resizedAt: Date.now(),
+      };
+    }
     this.mountViewport();
     if (this.focusedItemID !== undefined) {
       const index = this.renderItems.findIndex(
@@ -1057,6 +1130,7 @@ export class GridRenderer {
     this.layoutRows = [];
     this.layoutKey = undefined;
     this.layoutWidths = [];
+    this.viewportAnchor = undefined;
     this.host.style.position = this.originalPosition;
     this.entries.clear();
     this.selectedIDs.clear();

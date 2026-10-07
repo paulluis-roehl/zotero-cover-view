@@ -13,6 +13,155 @@ describe("grid wheel resizing", function () {
     Reflect.deleteProperty(globalThis, "addon");
   });
 
+  it("preserves the visible item, native selection and selection anchor through wheel and preference resizing", async function () {
+    this.timeout(120000);
+    const win = Zotero.getMainWindow()!;
+    const pane = win.ZoteroPane;
+    const grid = win.document.getElementById("cover-view-grid")!;
+    const button = win.document.getElementById("cover-view-toggle")!;
+    const originalStyle = grid.style.cssText;
+    const originalSize = getPref("tileSize");
+    const originallyHidden = grid.hidden;
+    const collection = new Zotero.Collection();
+    const items: Zotero.Item[] = [];
+    let preferences: Window | undefined;
+    const waitFor = async (
+      condition: () => boolean,
+      message = "Resize condition",
+    ) => {
+      const deadline = Date.now() + 5000;
+      while (!condition() && Date.now() < deadline)
+        await Zotero.Promise.delay(20);
+      assert.isTrue(
+        condition(),
+        `${message}; columns ${columns()}, size ${getPref("tileSize")}, items ${grid.querySelectorAll(".grid-view-item").length}`,
+      );
+    };
+    const tile = (index: number) =>
+      grid.querySelector<HTMLElement>(`[data-item-id="${items[index].id}"]`)!;
+    const columns = () =>
+      win.getComputedStyle(grid)!.gridTemplateColumns.split(/\s+/).length;
+    try {
+      collection.name = `Resize anchor ${Date.now()}`;
+      collection.libraryID = Zotero.Libraries.userLibraryID;
+      await collection.saveTx();
+      await Zotero.DB.executeTransaction(async () => {
+        for (let index = 0; index < 40; index++) {
+          const item = new Zotero.Item("book");
+          item.setField(
+            "title",
+            `Resize anchor ${collection.id} ${String(index).padStart(2, "0")}`,
+          );
+          item.addToCollection(collection.id);
+          await item.save();
+          items.push(item);
+        }
+      });
+      await pane.collectionsView!.selectByID(`C${collection.id}`);
+      if (grid.hidden) button.dispatchEvent(new win.Event("command"));
+      grid.style.cssText +=
+        ";flex:none;box-sizing:border-box;width:630px;height:300px;padding:19px;gap:20px;grid-template-columns:repeat(auto-fill,minmax(var(--cover-view-tile-size),1fr))";
+      setPref("tileSize", 180);
+      await waitFor(
+        () => !!tile(6) && columns() === 3,
+        "Initial three-column layout",
+      );
+      tile(1).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await waitFor(() => pane.getSelectedItems(true)[0] === items[1].id);
+      grid.scrollTop = tile(3).offsetTop + 37;
+      grid.dispatchEvent(new win.Event("scroll"));
+      const anchorID = items[3].id;
+      const offset = () =>
+        grid
+          .querySelector<HTMLElement>(`[data-item-id="${anchorID}"]`)!
+          .getBoundingClientRect().top - grid.getBoundingClientRect().top;
+      const originalOffset = offset();
+      const focused = grid.getAttribute("aria-activedescendant");
+      const active = win.document.activeElement;
+      const ownsFocus = grid.classList.contains("owns-focus");
+      grid.dispatchEvent(
+        new win.WheelEvent("wheel", {
+          deltaY: -100,
+          bubbles: true,
+          cancelable: true,
+          ...(win.navigator.platform.startsWith("Mac")
+            ? { metaKey: true }
+            : { ctrlKey: true }),
+        }),
+      );
+      await waitFor(() => columns() === 2, "Wheel changes to two columns");
+      assert.closeTo(offset(), originalOffset, 1);
+      assert.deepEqual(pane.getSelectedItems(true), [items[1].id]);
+      assert.equal(grid.getAttribute("aria-activedescendant"), focused);
+      assert.strictEqual(win.document.activeElement, active);
+      assert.equal(grid.classList.contains("owns-focus"), ownsFocus);
+
+      const preferencePane = Zotero.PreferencePanes.pluginPanes.find(
+        (entry) => entry.pluginID === "coverview@insature.net",
+      )!;
+      preferences = Zotero.Utilities.Internal.openPreferences(
+        preferencePane.id,
+      )!;
+      await waitFor(
+        () =>
+          !!preferences!.document.getElementById(
+            "zotero-prefpane-coverview-tile-size-percent",
+          ),
+      );
+      const percentage = preferences.document.getElementById(
+        "zotero-prefpane-coverview-tile-size-percent",
+      ) as HTMLInputElement;
+      await Zotero.Promise.delay(400);
+      const preferenceAnchor = tile(2);
+      const preferenceOffset =
+        preferenceAnchor.getBoundingClientRect().top -
+        grid.getBoundingClientRect().top;
+      const inactiveOwner = grid.classList.contains("owns-focus");
+      const inactiveFocus = win.document.activeElement;
+      percentage.value = "100";
+      percentage.dispatchEvent(
+        new (preferences as Window & typeof globalThis).Event("input", {
+          bubbles: true,
+        }),
+      );
+      await waitFor(() => columns() === 3 && getPref("tileSize") === 180);
+      assert.closeTo(
+        preferenceAnchor.getBoundingClientRect().top -
+          grid.getBoundingClientRect().top,
+        preferenceOffset,
+        1,
+      );
+      assert.deepEqual(pane.getSelectedItems(true), [items[1].id]);
+      assert.equal(grid.getAttribute("aria-activedescendant"), focused);
+      assert.equal(grid.classList.contains("owns-focus"), inactiveOwner);
+      assert.strictEqual(win.document.activeElement, inactiveFocus);
+      grid.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitFor(() => pane.getSelectedItems(true).length === 2);
+      assert.sameMembers(
+        pane.getSelectedItems(true),
+        [items[1].id, items[2].id],
+        "Shift selection still extends from the original selection anchor",
+      );
+      assert.isAtMost(grid.querySelectorAll(".grid-view-item").length, 25);
+    } finally {
+      preferences?.close();
+      grid.style.cssText = originalStyle;
+      setPref("tileSize", originalSize);
+      if (grid.hidden !== originallyHidden)
+        button.dispatchEvent(new win.Event("command"));
+      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
+      for (const item of items) if (item.id) await item.eraseTx();
+      if (collection.id) await collection.eraseTx();
+    }
+  });
+
   it("resizes by five percent per notch and accumulates smooth and line deltas", async function () {
     const win = Zotero.getMainWindow()!;
     const grid = win.document.getElementById("cover-view-grid")!;

@@ -64,6 +64,283 @@ describe("grid on-demand tiles", function () {
     }
   });
 
+  it("preserves a partially visible item across tile and column changes in both directions", function () {
+    const host = createRendererHost();
+    host.style.padding = "19px 23px";
+    host.style.gap = "31px 17px";
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      const tile = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      host.scrollTop = tile.offsetTop + 37;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const offset =
+        tile.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(2,240px)";
+        host.style.setProperty("--cover-view-tile-size", "240px");
+      });
+      assert.equal(renderer.getVerticalDestination(-7, 1), -9);
+      assert.closeTo(
+        tile.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        offset,
+        1,
+      );
+      assert.strictEqual(host.querySelector('[data-item-id="-7"]'), tile);
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(3,180px)";
+        host.style.setProperty("--cover-view-tile-size", "180px");
+      });
+      assert.closeTo(
+        tile.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        offset,
+        1,
+      );
+      assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 24);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("keeps a deeply clipped first visible item visible when shrinking its row", function () {
+    const host = createRendererHost();
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      const tile = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      host.scrollTop = tile.offsetTop + tile.getBoundingClientRect().height - 2;
+      assert.closeTo(
+        tile.getBoundingClientRect().bottom - host.getBoundingClientRect().top,
+        2,
+        1,
+      );
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(4,90px)";
+        host.style.setProperty("--cover-view-tile-size", "90px");
+      });
+      assert.isAbove(
+        tile.getBoundingClientRect().bottom,
+        host.getBoundingClientRect().top,
+        "The original anchor must retain some visible pixels",
+      );
+      assert.isBelow(
+        tile.getBoundingClientRect().top,
+        host.getBoundingClientRect().top,
+      );
+      const offset =
+        tile.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(3,180px)";
+        host.style.setProperty("--cover-view-tile-size", "180px");
+      });
+      assert.closeTo(
+        tile.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        offset,
+        1,
+        "The next resize still anchors the same visible item",
+      );
+      const next = host.querySelector<HTMLElement>('[data-item-id="-13"]')!;
+      host.scrollTop = next.offsetTop + 20;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const nextOffset =
+        next.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(4,90px)";
+        host.style.setProperty("--cover-view-tile-size", "90px");
+      });
+      assert.closeTo(
+        next.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        nextOffset,
+        1,
+        "Scrolling establishes a new item anchor",
+      );
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("establishes a new anchor after scrolling away and back to the restored position", function () {
+    const host = createRendererHost();
+    const renderer = new GridRenderer(host, () => {});
+    const scroll = (top: number) => {
+      host.scrollTop = top;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+    };
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      const original = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      scroll(original.offsetTop + 20);
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(4,150px)";
+        host.style.setProperty("--cover-view-tile-size", "150px");
+      });
+      const restoredTop = host.scrollTop;
+      scroll(restoredTop + 600);
+      scroll(restoredTop);
+      const first = host.querySelector<HTMLElement>('[data-item-id="-5"]')!;
+      const offset =
+        first.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(3,180px)";
+        host.style.setProperty("--cover-view-tile-size", "180px");
+      });
+      assert.closeTo(
+        first.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        offset,
+        1,
+        "User scrolling replaces the retained resize anchor even at the same final position",
+      );
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("starts a fresh anchor at the current row after pausing between resize gestures", async function () {
+    const host = createRendererHost();
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      const original = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      host.scrollTop = original.offsetTop + 20;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(4,150px)";
+        host.style.setProperty("--cover-view-tile-size", "150px");
+      });
+      await Zotero.Promise.delay(400);
+      const first = host.querySelector<HTMLElement>('[data-item-id="-5"]')!;
+      const offset =
+        first.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(3,180px)";
+        host.style.setProperty("--cover-view-tile-size", "180px");
+      });
+      assert.closeTo(
+        first.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        offset,
+        1,
+        "A new gesture anchors the leading item of the current visible row",
+      );
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("preserves the item offset near maximum tile size when auto-fill changes from four columns to three", function () {
+    const host = createRendererHost();
+    host.style.cssText +=
+      ";box-sizing:border-box;width:1520px;height:600px;padding:19px;gap:20px;grid-template-columns:repeat(auto-fill,minmax(var(--cover-view-tile-size),1fr));--cover-view-tile-size:351px";
+    const renderer = new GridRenderer(host, () => {});
+    const columns = () =>
+      host.ownerDocument
+        .defaultView!.getComputedStyle(host)!
+        .gridTemplateColumns.split(/\s+/).length;
+    try {
+      renderer.setItems(items(3001), { showCreators: true });
+      assert.equal(columns(), 4);
+      const first = host.querySelector<HTMLElement>('[data-item-id="-1"]')!;
+      const secondRow = host.querySelector<HTMLElement>('[data-item-id="-5"]')!;
+      host.scrollTop =
+        first.offsetTop + (secondRow.offsetTop - first.offsetTop) * 10 + 37;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const anchor = host.querySelector<HTMLElement>('[data-item-id="-41"]')!;
+      const offset =
+        anchor.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      for (const [size, expectedColumns] of [
+        [360, 3],
+        [351, 4],
+        [360, 3],
+        [351, 4],
+      ]) {
+        renderer.refreshLayout(() =>
+          host.style.setProperty("--cover-view-tile-size", `${size}px`),
+        );
+        assert.equal(columns(), expectedColumns);
+        assert.closeTo(
+          anchor.getBoundingClientRect().top - host.getBoundingClientRect().top,
+          offset,
+          1,
+          `Offset at ${size}px`,
+        );
+      }
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("anchors the next visible row across gaps and clamps at the beginning and end", function () {
+    const host = createRendererHost();
+    host.style.padding = "19px 23px";
+    host.style.gap = "80px 17px";
+    const renderer = new GridRenderer(host, () => {});
+    const resize = (columns: number, size: number) =>
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = `repeat(${columns},${size}px)`;
+        host.style.setProperty("--cover-view-tile-size", `${size}px`);
+      });
+    try {
+      renderer.setItems(items(301), { showCreators: true });
+      const preceding = host.querySelector<HTMLElement>('[data-item-id="-4"]')!;
+      const anchor = host.querySelector<HTMLElement>('[data-item-id="-7"]')!;
+      host.scrollTop =
+        preceding.offsetTop + preceding.getBoundingClientRect().height + 10;
+      const offset =
+        anchor.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      assert.isAbove(offset, 0, "Viewport starts in the gap before the anchor");
+      resize(2, 240);
+      assert.closeTo(
+        anchor.getBoundingClientRect().top - host.getBoundingClientRect().top,
+        offset,
+        1,
+      );
+
+      host.scrollTop = 0;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      const first = host.querySelector<HTMLElement>('[data-item-id="-1"]')!;
+      host.scrollTop =
+        first.offsetTop + first.getBoundingClientRect().height + 1;
+      resize(4, 120);
+      assert.equal(
+        host.scrollTop,
+        0,
+        "Anchor moves into the first row and clamps at the beginning",
+      );
+
+      host.scrollTop = host.scrollHeight;
+      host.dispatchEvent(new host.ownerDocument.defaultView!.Event("scroll"));
+      resize(5, 90);
+      assert.equal(
+        host.scrollTop,
+        host.scrollHeight - host.clientHeight,
+        "Shrinking near the end clamps to the new scroll boundary",
+      );
+      assert.isAtMost(host.querySelectorAll(".grid-view-item").length, 40);
+    } finally {
+      renderer.destroy();
+    }
+  });
+
+  it("keeps empty and short grids stable when resizing with padding", function () {
+    const host = createRendererHost();
+    host.style.padding = "24px";
+    const renderer = new GridRenderer(host, () => {});
+    try {
+      for (const count of [0, 1, 3]) {
+        renderer.setItems(items(count), { showCreators: false });
+        for (const size of [90, 240, 180]) {
+          renderer.refreshLayout(() => {
+            host.style.gridTemplateColumns = `repeat(3,${size}px)`;
+            host.style.setProperty("--cover-view-tile-size", `${size}px`);
+          });
+          assert.equal(host.scrollTop, 0);
+          assert.equal(host.querySelectorAll(".grid-view-item").length, count);
+        }
+      }
+    } finally {
+      renderer.destroy();
+    }
+  });
+
   it("updates mounted row positions when column styles change without resizing the host", async function () {
     const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
@@ -227,6 +504,17 @@ describe("grid on-demand tiles", function () {
         "Remounted selection is inactive outside grid focus",
       );
       const uri = tile.querySelector("img")!.src;
+      renderer.refreshLayout(() => {
+        host.style.gridTemplateColumns = "repeat(2,240px)";
+        host.style.setProperty("--cover-view-tile-size", "240px");
+      });
+      assert.strictEqual(
+        host.querySelector(`[data-item-id="${item.id}"]`),
+        tile,
+      );
+      assert.equal(tile.querySelector("img")!.src, uri);
+      assert.isFalse(tile.querySelector("img")!.hidden);
+      assert.equal(pathReads, 1, "Resizing retains the loaded cover");
       renderer.setFocusedItem(undefined);
       host.scrollTop = host.scrollHeight;
       host.dispatchEvent(new win.Event("scroll"));
