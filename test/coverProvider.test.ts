@@ -4,6 +4,7 @@ import { CoverProvider } from "../src/modules/coverProvider";
 import { getPref, setPref } from "../src/utils/prefs";
 import { findISBNCoverURI } from "../src/modules/covers/isbnCover";
 import { findMetadataCoverURI } from "../src/modules/covers/metadataCover";
+import { coverImageFixture } from "./helpers/coverFixture";
 
 describe("Cover provider", function () {
   let originalGet: typeof Zotero.Items.get;
@@ -117,18 +118,8 @@ describe("Cover provider", function () {
   });
 
   it("caches intrinsic image dimensions before publishing a synchronously reusable cover", async function () {
-    const canvas = Zotero.getMainWindow()!.document.createElement("canvas");
-    canvas.width = 120;
-    canvas.height = 40;
-    canvas.getContext("2d")!.fillRect(0, 0, 120, 40);
     const path = PathUtils.join(fixtureDirectory, "cover.png");
-    await IOUtils.write(
-      path,
-      Uint8Array.from(
-        Zotero.getMainWindow()!.atob(canvas.toDataURL().split(",")[1]),
-        (c) => c.charCodeAt(0),
-      ),
-    );
+    await IOUtils.write(path, coverImageFixture(120, 40));
     const item = parent([attachment(1, "image/png", path)]);
     CoverProvider.cacheCover(item);
     assert.isUndefined(CoverProvider.getCachedCoverResult(item.id));

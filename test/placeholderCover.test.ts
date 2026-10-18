@@ -109,7 +109,7 @@ describe("placeholder families", function () {
 
   it("shares deterministic covers between grid and column independently of captions and grid decorations", async function () {
     const win = Zotero.getMainWindow()!;
-    const register = Zotero.ItemTreeManager.registerColumns;
+    const register = Zotero.ItemTreeManager.registerColumn;
     const observer = win.IntersectionObserver;
     const addonDescriptor = Object.getOwnPropertyDescriptor(
       globalThis,
@@ -152,8 +152,9 @@ describe("placeholder families", function () {
     });
     win.IntersectionObserver =
       Observer as unknown as typeof IntersectionObserver;
-    Zotero.ItemTreeManager.registerColumns = (async (options: unknown) => {
+    Zotero.ItemTreeManager.registerColumn = ((options: unknown) => {
       column = options as typeof column;
+      return false;
     }) as typeof register;
     const host = createRendererHost();
     const renderer = new GridRenderer(host, () => {});
@@ -205,6 +206,7 @@ describe("placeholder families", function () {
           false,
           win.document,
         );
+        host.append(cell);
         await Zotero.Promise.delay(0);
         assert.equal(image.src, uri);
         assert.equal(cell.querySelector("img")!.src, uri);
@@ -217,6 +219,7 @@ describe("placeholder families", function () {
         assert.notExists(tile.querySelector("figcaption"));
         assert.notExists(cell.querySelector(".grid-view-item-type-icon"));
         assert.equal(cell.querySelector("img")!.style.filter, "");
+        cell.remove();
         renderer.setItems([item], {
           showTitles: true,
           showCreators: true,
@@ -227,7 +230,7 @@ describe("placeholder families", function () {
       }
     } finally {
       renderer.destroy();
-      Zotero.ItemTreeManager.registerColumns = register;
+      Zotero.ItemTreeManager.registerColumn = register;
       win.IntersectionObserver = observer;
       keys.forEach((key, index) => setPref(key, saved[index]));
       if (addonDescriptor)

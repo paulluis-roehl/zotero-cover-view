@@ -599,10 +599,12 @@ describe("opt-in metadata cover lookup", function () {
 
   it("uses the same resolved cover in the grid and Cover column without eager grid requests", async function () {
     const win = Zotero.getMainWindow()!;
-    const originalRegister = Zotero.ItemTreeManager.registerColumns;
+    const originalRegister = Zotero.ItemTreeManager.registerColumn;
     const originalObserver = win.IntersectionObserver;
     const originalAddon = Object.getOwnPropertyDescriptor(globalThis, "addon");
     const item = book();
+    Zotero.Items.get = ((id: number | number[]) =>
+      id === item.id ? item : []) as typeof originalGet;
     const host = createRendererHost();
     let nearViewport: IntersectionObserverCallback | undefined;
     let column:
@@ -634,8 +636,9 @@ describe("opt-in metadata cover lookup", function () {
     });
     win.IntersectionObserver =
       FakeObserver as unknown as typeof IntersectionObserver;
-    Zotero.ItemTreeManager.registerColumns = (async (options: unknown) => {
+    Zotero.ItemTreeManager.registerColumn = ((options: unknown) => {
       column = options as typeof column;
+      return false;
     }) as typeof originalRegister;
     const renderer = new GridRenderer(host, () => {});
     try {
@@ -658,6 +661,7 @@ describe("opt-in metadata cover lookup", function () {
         false,
         win.document,
       );
+      host.append(cell);
       await CoverProvider.getCover(item.id);
       await Zotero.Promise.delay(0);
       assert.include(tile.querySelector("img")!.src, `${editionKey}.jpg`);
@@ -665,6 +669,7 @@ describe("opt-in metadata cover lookup", function () {
         cell.querySelector("img")!.src,
         tile.querySelector("img")!.src,
       );
+      cell.remove();
       assert.equal(
         requests.filter((url) => url.includes("search.json")).length,
         1,
@@ -697,6 +702,7 @@ describe("opt-in metadata cover lookup", function () {
         false,
         win.document,
       );
+      host.append(updatedCell);
       await CoverProvider.getCover(edited.id);
       await Zotero.Promise.delay(0);
       const gridCover = updatedTile.querySelector("img")!.src;
@@ -704,7 +710,7 @@ describe("opt-in metadata cover lookup", function () {
       assert.equal(updatedCell.querySelector("img")!.src, gridCover);
     } finally {
       renderer.destroy();
-      Zotero.ItemTreeManager.registerColumns = originalRegister;
+      Zotero.ItemTreeManager.registerColumn = originalRegister;
       win.IntersectionObserver = originalObserver;
       if (originalAddon)
         Object.defineProperty(globalThis, "addon", originalAddon);
