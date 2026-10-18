@@ -1,5 +1,6 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import { readFileSync } from "node:fs";
+import { releaseNotes } from "./scripts/release-notes.mjs";
 import pkg from "./package.json";
 
 export default defineConfig({
@@ -53,15 +54,12 @@ export default defineConfig({
 
   release: {
     github: {
-      releaseNote: (ctx) => {
-        const sections = readFileSync("CHANGELOG.md", "utf8").split(
-          /^## (.+)$/m,
-        );
-        const versionIndex = sections.indexOf(ctx.version);
-        return versionIndex < 0
-          ? ctx.release.changelog
-          : sections[versionIndex + 1].trim();
-      },
+      releaseNote: (ctx) =>
+        releaseNotes(
+          readFileSync("CHANGELOG.md", "utf8"),
+          ctx.version,
+          ctx.release.changelog,
+        ),
     },
   },
 
