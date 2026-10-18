@@ -15,7 +15,7 @@ const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 describe("opt-in metadata cover lookup", function () {
   let originalGet: typeof Zotero.Items.get;
   let originalRequest: typeof Zotero.HTTP.request;
-  let originalRead: typeof IOUtils.read;
+  let fixtureDirectory: string;
   let originalISBNPref: boolean;
   let originalMetadataPref: boolean | undefined;
   let toolkitDescriptor: PropertyDescriptor | undefined;
@@ -99,7 +99,8 @@ describe("opt-in metadata cover lookup", function () {
       attachmentReaderType: type === "application/pdf" ? "pdf" : "epub",
       isFileAttachment: () => true,
       isRegularItem: () => false,
-      getFilePathAsync: async () => "local-cover.pdf",
+      getFilePathAsync: async () =>
+        PathUtils.join(fixtureDirectory, "local-cover.pdf"),
     } as unknown as Zotero.Item;
   }
 
@@ -170,11 +171,12 @@ describe("opt-in metadata cover lookup", function () {
   beforeEach(async function () {
     originalGet = Zotero.Items.get;
     originalRequest = Zotero.HTTP.request;
-    originalRead = IOUtils.read;
-    IOUtils.read = ((path, options) =>
-      path === "local-cover.pdf"
-        ? Promise.resolve(new Uint8Array([1]))
-        : originalRead(path, options)) as typeof IOUtils.read;
+    fixtureDirectory = `/tmp/opencode/metadata-files-${Zotero.Utilities.randomString()}`;
+    await IOUtils.makeDirectory(fixtureDirectory, { createAncestors: true });
+    await IOUtils.write(
+      PathUtils.join(fixtureDirectory, "local-cover.pdf"),
+      new Uint8Array([1]),
+    );
     originalISBNPref = getPref("fetchISBNCover");
     originalMetadataPref = getPref(metadataPref);
     toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
@@ -232,7 +234,7 @@ describe("opt-in metadata cover lookup", function () {
   afterEach(async function () {
     Zotero.Items.get = originalGet;
     Zotero.HTTP.request = originalRequest;
-    IOUtils.read = originalRead;
+    await IOUtils.remove(fixtureDirectory, { recursive: true });
     setPref("fetchISBNCover", originalISBNPref);
     if (originalMetadataPref === undefined) clearPref(metadataPref);
     else setPref(metadataPref, originalMetadataPref);

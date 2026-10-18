@@ -11,7 +11,7 @@ describe("EPUB cover discovery", function () {
   const entries = new Map<string, string>();
   let originalPath: typeof Zotero.File.pathToFileURI;
   let originalGet: typeof Zotero.Items.get;
-  let originalRead: typeof IOUtils.read;
+  let fixtureDirectory: string;
   let toolkitDescriptor: PropertyDescriptor | undefined;
 
   function uri(path: string): string {
@@ -67,16 +67,19 @@ describe("EPUB cover discovery", function () {
     } as unknown as Zotero.Item;
   }
 
-  beforeEach(function () {
+  beforeEach(async function () {
     entries.clear();
     CoverProvider.clearCache();
     originalPath = Zotero.File.pathToFileURI;
     originalGet = Zotero.Items.get;
-    originalRead = IOUtils.read;
-    IOUtils.read = ((path, options) =>
-      ["first.epub", "second.epub"].includes(path)
-        ? Promise.resolve(new Uint8Array([1]))
-        : originalRead(path, options)) as typeof IOUtils.read;
+    fixtureDirectory = `/tmp/opencode/epub-files-${Zotero.Utilities.randomString()}`;
+    await IOUtils.makeDirectory(fixtureDirectory, { createAncestors: true });
+    for (const name of ["first.epub", "second.epub"]) {
+      await IOUtils.write(
+        PathUtils.join(fixtureDirectory, name),
+        new Uint8Array([1]),
+      );
+    }
     toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
     Object.defineProperty(globalThis, "ztoolkit", {
       configurable: true,
@@ -85,10 +88,10 @@ describe("EPUB cover discovery", function () {
     Zotero.File.pathToFileURI = () => archiveURI;
   });
 
-  afterEach(function () {
+  afterEach(async function () {
     Zotero.File.pathToFileURI = originalPath;
     Zotero.Items.get = originalGet;
-    IOUtils.read = originalRead;
+    await IOUtils.remove(fixtureDirectory, { recursive: true });
     if (toolkitDescriptor) {
       Object.defineProperty(globalThis, "ztoolkit", toolkitDescriptor);
     } else {
@@ -222,11 +225,11 @@ describe("EPUB cover discovery", function () {
           if (failure === "no cover") fixture("");
           if (failure === "bad XML")
             entries.set(uri("OPS/package.opf"), "<broken>");
-          return "first.epub";
+          return PathUtils.join(fixtureDirectory, "first.epub");
         });
         const second = attachment(2, async () => {
           entries.set(uri("OPS/package.opf"), validPackage);
-          return "second.epub";
+          return PathUtils.join(fixtureDirectory, "second.epub");
         });
         Zotero.Items.get = (() => [first, second]) as typeof originalGet;
         const parent = {

@@ -9,7 +9,7 @@ describe("Cover provider", function () {
   let originalGet: typeof Zotero.Items.get;
   let originalRegister: typeof Zotero.Notifier.registerObserver;
   let originalFetchISBNCover: boolean;
-  let originalRead: typeof IOUtils.read;
+  let fixtureDirectory: string;
   let toolkitDescriptor: PropertyDescriptor | undefined;
 
   function attachment(
@@ -28,7 +28,11 @@ describe("Cover provider", function () {
             : undefined,
       isFileAttachment: () => true,
       isRegularItem: () => false,
-      getFilePathAsync: async () => filePath,
+      getFilePathAsync: async () =>
+        filePath &&
+        (filePath.startsWith("/")
+          ? filePath
+          : PathUtils.join(fixtureDirectory, filePath)),
     } as unknown as Zotero.Item;
   }
 
@@ -46,17 +50,34 @@ describe("Cover provider", function () {
     } as unknown as Zotero.Item;
   }
 
-  beforeEach(function () {
+  beforeEach(async function () {
     originalGet = Zotero.Items.get;
     originalRegister = Zotero.Notifier.registerObserver;
     originalFetchISBNCover = getPref("fetchISBNCover");
-    originalRead = IOUtils.read;
-    // Relative paths are virtual extraction fixtures; absolute paths exercise
-    // real filesystem behavior, including the missing-image regression.
-    IOUtils.read = ((path, options) =>
-      path.includes("/")
-        ? originalRead(path, options)
-        : Promise.resolve(new Uint8Array([1]))) as typeof IOUtils.read;
+    fixtureDirectory = `/tmp/opencode/provider-files-${Zotero.Utilities.randomString()}`;
+    await IOUtils.makeDirectory(fixtureDirectory, { createAncestors: true });
+    for (const name of [
+      "fixture",
+      "book.pdf",
+      "cover.png",
+      "book.epub",
+      "missing.jpg",
+      "no-cover.pdf",
+      "broken.pdf",
+      "winner.pdf",
+      "later.pdf",
+      "unused.pdf",
+      "winner.png",
+      "later.png",
+      "broken.png",
+      "no-cover.epub",
+      "cover.webp",
+    ]) {
+      await IOUtils.write(
+        PathUtils.join(fixtureDirectory, name),
+        new Uint8Array([1]),
+      );
+    }
     toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
     Object.defineProperty(globalThis, "ztoolkit", {
       configurable: true,
@@ -65,9 +86,8 @@ describe("Cover provider", function () {
     setPref("fetchISBNCover", false);
   });
 
-  afterEach(function () {
+  afterEach(async function () {
     Zotero.Items.get = originalGet;
-    IOUtils.read = originalRead;
     Zotero.Notifier.registerObserver = originalRegister;
     setPref("fetchISBNCover", originalFetchISBNCover);
     if (toolkitDescriptor) {
@@ -76,6 +96,7 @@ describe("Cover provider", function () {
       Reflect.deleteProperty(globalThis, "ztoolkit");
     }
     CoverProvider.clearCache();
+    await IOUtils.remove(fixtureDirectory, { recursive: true });
   });
 
   it("reports online provenance without relying on the URI scheme", async function () {
@@ -231,7 +252,7 @@ describe("Cover provider", function () {
       await CoverProvider.findCover(
         item,
         async () => null,
-        async (filePath) => `cover:${filePath}`,
+        async (filePath) => `cover:${PathUtils.filename(filePath)}`,
       ),
       "cover:book.pdf",
     );
@@ -249,7 +270,7 @@ describe("Cover provider", function () {
         item,
         async () => "cover:book.epub",
         async () => "cover:book.pdf",
-        async (filePath) => `cover:${filePath}`,
+        async (filePath) => `cover:${PathUtils.filename(filePath)}`,
       ),
       "cover:book.pdf",
     );
@@ -289,9 +310,10 @@ describe("Cover provider", function () {
     ]);
     assert.deepEqual(
       await CoverProvider.findCoverResult(item, undefined, async (path) => {
-        if (path === "no-cover.pdf") return null;
-        if (path === "broken.pdf") throw new Error("Extraction failed");
-        return `cover:${path}`;
+        if (PathUtils.filename(path) === "no-cover.pdf") return null;
+        if (PathUtils.filename(path) === "broken.pdf")
+          throw new Error("Extraction failed");
+        return `cover:${PathUtils.filename(path)}`;
       }),
       { uri: "cover:winner.pdf", source: "attachment" },
     );
@@ -320,11 +342,9 @@ describe("Cover provider", function () {
 
   for (const type of ["image/png", "application/epub+zip", "application/pdf"]) {
     it(`skips an unreadable ${type} candidate before a usable image`, async function () {
-      const read = IOUtils.read;
-      IOUtils.read = ((path, options) =>
-        path === "unreadable"
-          ? Promise.reject(new Error("Access denied"))
-          : read(path, options)) as typeof IOUtils.read;
+      const path = PathUtils.join(fixtureDirectory, "unreadable");
+      await IOUtils.write(path, new Uint8Array([1]));
+      await IOUtils.setPermissions(path, 0);
       const item = parent([
         attachment(1, type, "unreadable"),
         attachment(2, "image/png", "winner.png"),
@@ -335,7 +355,7 @@ describe("Cover provider", function () {
           item,
           async () => "wrong-epub",
           async () => "wrong-pdf",
-          async (path) => `cover:${path}`,
+          async (path) => `cover:${PathUtils.filename(path)}`,
         ),
         { uri: "cover:winner.png", source: "attachment" },
       );
@@ -403,18 +423,18 @@ describe("Cover provider", function () {
     );
   });
 
-  it("consumes native ranking and refreshes cached covers through real Zotero notifications", async function () {
-    const directory = `/tmp/opencode/ranked-covers-${Zotero.Utilities.randomString()}`;
-    await IOUtils.makeDirectory(directory, { createAncestors: true });
-    const item = new Zotero.Item("book");
-    const other = new Zotero.Item("book");
-    const files: Zotero.Item[] = [];
-    const changes: number[] = [];
-    const stop = CoverProvider.onCoverChanged((id) => changes.push(id));
+  describe("native ranked covers and notifications", function () {
+    let item: Zotero.Item;
+    let other: Zotero.Item;
+    let a: Zotero.Item;
+    let b: Zotero.Item;
+    let files: Set<Zotero.Item>;
+    let changes: number[];
+    let stop: () => void;
     const urlA = "https://example.invalid/a";
     const urlB = "https://example.invalid/b";
     async function addImage(name: string, url: string, date: string) {
-      const path = PathUtils.join(directory, name);
+      const path = PathUtils.join(fixtureDirectory, name);
       await IOUtils.write(path, new Uint8Array([1]));
       const file = new Zotero.Item("attachment");
       file.parentItemID = item.id;
@@ -424,7 +444,7 @@ describe("Cover provider", function () {
       file.setField("url", url);
       file.setField("dateAdded", date);
       await file.saveTx();
-      files.push(file);
+      files.add(file);
       return file;
     }
     async function expectCover(parent: Zotero.Item, file: Zotero.Item) {
@@ -440,63 +460,92 @@ describe("Cover provider", function () {
       for (const parent of parents) assert.include(changes, parent.id);
       changes.length = 0;
     }
-    try {
+
+    beforeEach(async function () {
+      item = new Zotero.Item("book");
+      other = new Zotero.Item("book");
+      files = new Set();
+      changes = [];
+      stop = CoverProvider.onCoverChanged((id) => changes.push(id));
       item.setField("title", "Native ranked cover fixture");
       item.setField("url", urlA);
       await item.saveTx();
       await other.saveTx();
-      const a = await addImage("a.png", urlA, "2020-01-01 00:00:00");
-      const b = await addImage("b.png", urlB, "2021-01-01 00:00:00");
+      a = await addImage("a.png", urlA, "2020-01-01 00:00:00");
+      b = await addImage("b.png", urlB, "2021-01-01 00:00:00");
       CoverProvider.registerNotifier();
-      assert.equal((await item.getBestAttachments())[0].id, a.id);
-      await expectCover(item, a);
+    });
 
-      item.setField("url", urlB);
-      await item.saveTx();
-      assert.equal((await item.getBestAttachments())[0].id, b.id);
-      expectRefresh(item);
-      await expectCover(item, b);
-
-      b.setField("url", urlA);
-      await b.saveTx();
-      expectRefresh(item);
-      await expectCover(item, a);
-
-      const c = await addImage("c.png", urlB, "2022-01-01 00:00:00");
-      expectRefresh(item);
-      await expectCover(item, c);
-      CoverProvider.cacheCover(other);
-      assert.equal(
-        (await CoverProvider.getCoverResult(other.id))?.source,
-        "placeholder",
-      );
-      c.parentItemID = other.id;
-      await c.saveTx();
-      expectRefresh(item, other);
-      await expectCover(item, a);
-      await expectCover(other, c);
-
-      // b was ranked after the winner and never resolved, but is still tracked.
-      await b.eraseTx();
-      files.splice(files.indexOf(b), 1);
-      expectRefresh(item);
-      await expectCover(item, a);
-      await a.eraseTx();
-      files.splice(files.indexOf(a), 1);
-      expectRefresh(item);
-      CoverProvider.cacheCover(item);
-      assert.equal(
-        (await CoverProvider.getCoverResult(item.id))?.source,
-        "placeholder",
-      );
-    } finally {
+    afterEach(async function () {
       stop();
       CoverProvider.unregisterNotifier();
       for (const file of files) await file.eraseTx();
       if (item.id) await item.eraseTx();
       if (other.id) await other.eraseTx();
-      await IOUtils.remove(directory, { recursive: true });
-    }
+    });
+
+    it("consumes Zotero's native ranking through the public provider", async function () {
+      assert.equal((await item.getBestAttachments())[0].id, a.id);
+      await expectCover(item, a);
+    });
+
+    it("reconsiders cached native ranking after a parent URL edit", async function () {
+      await expectCover(item, a);
+      item.setField("url", urlB);
+      await item.saveTx();
+      assert.equal((await item.getBestAttachments())[0].id, b.id);
+      expectRefresh(item);
+      await expectCover(item, b);
+    });
+
+    it("reconsiders cached covers after an attachment URL edit", async function () {
+      item.setField("url", urlB);
+      await item.saveTx();
+      await expectCover(item, b);
+      changes.length = 0;
+      b.setField("url", urlA);
+      await b.saveTx();
+      expectRefresh(item);
+      await expectCover(item, a);
+    });
+
+    it("reconsiders cached covers when a new candidate is added", async function () {
+      await expectCover(item, a);
+      const c = await addImage("c.png", urlA, "2019-01-01 00:00:00");
+      expectRefresh(item);
+      await expectCover(item, c);
+    });
+
+    it("refreshes both parents when a previously considered candidate is reparented", async function () {
+      await expectCover(item, a);
+      CoverProvider.cacheCover(other);
+      assert.equal(
+        (await CoverProvider.getCoverResult(other.id))?.source,
+        "placeholder",
+      );
+      a.parentItemID = other.id;
+      await a.saveTx();
+      expectRefresh(item, other);
+      await expectCover(item, b);
+      await expectCover(other, a);
+    });
+
+    it("refreshes after removal of a later-ranked candidate", async function () {
+      await expectCover(item, a);
+      // b was ranked after the winner and never resolved, but is still tracked.
+      await b.eraseTx();
+      files.delete(b);
+      expectRefresh(item);
+      await expectCover(item, a);
+    });
+
+    it("uses the next ranked candidate after removal of the winner", async function () {
+      await expectCover(item, a);
+      await a.eraseTx();
+      files.delete(a);
+      expectRefresh(item);
+      await expectCover(item, b);
+    });
   });
 
   it("uses a PDF when EPUB attachments have no cover", async function () {
@@ -520,7 +569,7 @@ describe("Cover provider", function () {
       await CoverProvider.findCover(
         attachment(1, "application/pdf", "book.pdf"),
         async () => null,
-        async (filePath) => `cover:${filePath}`,
+        async (filePath) => `cover:${PathUtils.filename(filePath)}`,
       ),
       "cover:book.pdf",
     );
@@ -534,7 +583,7 @@ describe("Cover provider", function () {
         image,
         async () => null,
         async () => null,
-        async (filePath) => `cover:${filePath}`,
+        async (filePath) => `cover:${PathUtils.filename(filePath)}`,
       ),
       "cover:cover.webp",
     );
