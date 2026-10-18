@@ -18,6 +18,7 @@ Switch between the default list view and grid view using a toggle button in the 
   - display items in a grid instead of a list
   - switch between grid view and list view with a button in the toolbar
 - **List view**: provides 'Cover' column with thumbnail of cover
+- **Item pane**: displays cover image as extra section
 - **Cover extraction options**
   - from image attachments (including `.jpg` and `.png`)
   - first page of `.epub` or `.pdf` attachment
