@@ -7,6 +7,12 @@ import {
 } from "./modules/gridView";
 import { registerPreferences } from "./modules/preferences";
 import { CoverProvider } from "./modules/coverProvider";
+import {
+  attachItemPaneCoverWindow,
+  detachItemPaneCoverWindow,
+  registerItemPaneCover,
+  unregisterItemPaneCover,
+} from "./modules/itemPaneCover";
 
 async function onStartup() {
   await Promise.all([
@@ -19,6 +25,7 @@ async function onStartup() {
 
   registerPreferences();
   CoverProvider.registerNotifier();
+  registerItemPaneCover();
 
   await registerCoverColumn();
 
@@ -30,14 +37,17 @@ async function onStartup() {
 }
 
 function onMainWindowLoad(win: _ZoteroTypes.MainWindow): void {
+  attachItemPaneCoverWindow(win);
   attachGridView(win);
 }
 
 function onMainWindowUnload(win: Window): void {
+  detachItemPaneCoverWindow(win);
   detachGridView(win);
 }
 
 function onShutdown(): void {
+  unregisterItemPaneCover();
   destroyGridViews();
   CoverProvider.unregisterNotifier();
   CoverProvider.clearCache();

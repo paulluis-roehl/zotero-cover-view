@@ -1,4 +1,4 @@
-import { getPref } from "../utils/prefs";
+import { getPref, observePrefs } from "../utils/prefs";
 import { findEPUBCoverURI, isEPUBAttachment } from "./covers/epubCover";
 import { findImgCoverURI, isImgAttachment } from "./covers/imgCover";
 import { extractISBNs, findISBNCoverURI } from "./covers/isbnCover";
@@ -34,10 +34,18 @@ export class CoverProvider {
   private static attachmentParents = new Map<number, number>();
   private static notifierID: string | undefined;
   private static listeners = new Set<(itemID: number) => void>();
+  private static refreshListeners = new Set<() => void>();
+  private static stopObservingPreferences: (() => void) | undefined;
 
   static onCoverChanged(listener: (itemID: number) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Request that consumers re-resolve covers after lookup settings change. */
+  static onCoversRefreshRequested(listener: () => void): () => void {
+    this.refreshListeners.add(listener);
+    return () => this.refreshListeners.delete(listener);
   }
 
   static cacheCover(item: Zotero.Item): void {
@@ -230,6 +238,12 @@ export class CoverProvider {
 
   static registerNotifier(): void {
     if (this.notifierID) return;
+    this.stopObservingPreferences ??= observePrefs(
+      ["fetchISBNCover", "fetchMetadataCover"],
+      () => {
+        for (const listener of this.refreshListeners) listener();
+      },
+    );
     this.notifierID = Zotero.Notifier.registerObserver(
       {
         notify: (event, _type, ids, extraData) => {
@@ -288,6 +302,8 @@ export class CoverProvider {
   }
 
   static unregisterNotifier(): void {
+    this.stopObservingPreferences?.();
+    this.stopObservingPreferences = undefined;
     if (!this.notifierID) return;
     Zotero.Notifier.unregisterObserver(this.notifierID);
     this.notifierID = undefined;

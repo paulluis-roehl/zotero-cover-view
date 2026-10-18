@@ -17,8 +17,6 @@ const GRID_RENDER_PREFS = [
   "showYears",
   "showItemTypeIcon",
   "desaturateOnlineCovers",
-  "fetchISBNCover",
-  "fetchMetadataCover",
 ] as const;
 const WHEEL_PIXELS_PER_NOTCH = 100;
 const WHEEL_LINES_PER_NOTCH = 3;
@@ -33,6 +31,7 @@ export class GridView {
   private readonly renderer: GridRenderer;
   private readonly presentationObserverID: string;
   private readonly stopCoverChanges: () => void;
+  private readonly stopCoverRefresh: () => void;
   private readonly pendingCoverIDs = new Set<number>();
   private syncTimer?: number;
   private focusFrame?: number;
@@ -82,6 +81,9 @@ export class GridView {
         this.renderer.refreshCover(itemID);
       }
     });
+    this.stopCoverRefresh = CoverProvider.onCoversRefreshRequested(() =>
+      this.refreshCovers(),
+    );
     // Programmatic native selection changes do not emit row-provider updates.
     this.selectionTimer = win.setInterval(() => {
       if (!getPref("enableGridView") || this.pendingSelections) return;
@@ -252,6 +254,7 @@ export class GridView {
     this.cancelSync();
     this.tree.destroy();
     this.stopCoverChanges();
+    this.stopCoverRefresh();
     Zotero.Notifier.unregisterObserver(this.presentationObserverID);
 
     this.renderer.destroy();

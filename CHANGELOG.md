@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- covers are displayed in the Item Pane
+
 ### Changed
 
 - attachments are now ranked by Zotero's native ranking instead of by file type
