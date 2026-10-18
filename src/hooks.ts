@@ -1,5 +1,8 @@
 import { initLocale } from "./utils/locale";
-import { registerCoverColumn } from "./modules/coverColumn";
+import {
+  registerCoverColumn,
+  unregisterCoverColumn,
+} from "./modules/coverColumn";
 import {
   attachGridView,
   destroyGridViews,
@@ -47,6 +50,7 @@ function onMainWindowUnload(win: Window): void {
 }
 
 function onShutdown(): void {
+  unregisterCoverColumn();
   unregisterItemPaneCover();
   destroyGridViews();
   CoverProvider.unregisterNotifier();
