@@ -10,7 +10,6 @@ import { clearPref, getPref, setPref } from "../src/utils/prefs";
 const metadataPref = "fetchMetadataCover";
 const editionKey = "OL12345M";
 const recordedISBN = "0385472579";
-const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 
 describe("opt-in metadata cover lookup", function () {
   let originalGet: typeof Zotero.Items.get;
@@ -24,6 +23,7 @@ describe("opt-in metadata cover lookup", function () {
   let searchResultsForURL: ((url: string) => object) | undefined;
   let coverStatus: number;
   let recordedCoverStatus: number;
+  let jpeg: Uint8Array;
 
   function book(
     options: {
@@ -169,6 +169,15 @@ describe("opt-in metadata cover lookup", function () {
     assert.match(cover!, /^data:image\/svg\+xml;charset=utf-8,/);
 
   beforeEach(async function () {
+    const win = Zotero.getMainWindow()!;
+    const canvas = win.document.createElement("canvas");
+    canvas.width = 40;
+    canvas.height = 60;
+    canvas.getContext("2d")!.fillRect(0, 0, 40, 60);
+    jpeg = Uint8Array.from(
+      win.atob(canvas.toDataURL("image/jpeg").split(",")[1]),
+      (c) => c.charCodeAt(0),
+    );
     originalGet = Zotero.Items.get;
     originalRequest = Zotero.HTTP.request;
     fixtureDirectory = `/tmp/opencode/metadata-files-${Zotero.Utilities.randomString()}`;

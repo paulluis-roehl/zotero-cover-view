@@ -116,6 +116,34 @@ describe("Cover provider", function () {
     });
   });
 
+  it("caches intrinsic image dimensions before publishing a synchronously reusable cover", async function () {
+    const canvas = Zotero.getMainWindow()!.document.createElement("canvas");
+    canvas.width = 120;
+    canvas.height = 40;
+    canvas.getContext("2d")!.fillRect(0, 0, 120, 40);
+    const path = PathUtils.join(fixtureDirectory, "cover.png");
+    await IOUtils.write(
+      path,
+      Uint8Array.from(
+        Zotero.getMainWindow()!.atob(canvas.toDataURL().split(",")[1]),
+        (c) => c.charCodeAt(0),
+      ),
+    );
+    const item = parent([attachment(1, "image/png", path)]);
+    CoverProvider.cacheCover(item);
+    assert.isUndefined(CoverProvider.getCachedCoverResult(item.id));
+    const cover = await CoverProvider.getCoverResult(item.id);
+    assert.isNotNull(cover);
+    assert.deepEqual(CoverProvider.getCoverDimensions(cover!.uri), {
+      width: 120,
+      height: 40,
+    });
+    assert.strictEqual(CoverProvider.getCachedCoverResult(item.id), cover);
+    CoverProvider.clearCache();
+    assert.isUndefined(CoverProvider.getCachedCoverResult(item.id));
+    assert.isUndefined(CoverProvider.getCoverDimensions(cover!.uri));
+  });
+
   it("identifies image, EPUB, and PDF branches as attachment-derived, including standalone attachments", async function () {
     for (const [type, index] of [
       ["image/png", 2],

@@ -1,6 +1,17 @@
 import { assert } from "chai";
 import { getPref, setPref } from "../src/utils/prefs";
 
+type ItemDetails = HTMLElement & {
+  pinnedPane: string;
+  scrollToPane: (id: string, behavior: string) => Promise<void>;
+};
+
+async function settleLayout(win: Window): Promise<void> {
+  await new Promise<void>((resolve) =>
+    win.requestAnimationFrame(() => win.requestAnimationFrame(() => resolve())),
+  );
+}
+
 async function waitFor(condition: () => boolean): Promise<void> {
   const deadline = Date.now() + 8000;
   while (!condition() && Date.now() < deadline) await Zotero.Promise.delay(20);
@@ -38,10 +49,14 @@ describe("library Item Pane cover", function () {
     directory = `/tmp/opencode/item-pane-${Zotero.Utilities.randomString()}`;
     file = PathUtils.join(directory, "cover.png");
     await IOUtils.makeDirectory(directory, { createAncestors: true });
+    await writeCover(40, 60);
+  });
+
+  async function writeCover(width: number, height: number): Promise<void> {
     const canvas = win.document.createElement("canvas");
-    canvas.width = 40;
-    canvas.height = 60;
-    canvas.getContext("2d")!.fillRect(0, 0, 40, 60);
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d")!.fillRect(0, 0, width, height);
     jpeg = Uint8Array.from(
       win.atob(canvas.toDataURL("image/jpeg").split(",")[1]),
       (c) => c.charCodeAt(0),
@@ -52,7 +67,7 @@ describe("library Item Pane cover", function () {
         c.charCodeAt(0),
       ),
     );
-  });
+  }
 
   afterEach(async function () {
     for (const item of items.reverse()) if (item.id) await item.eraseTx();
@@ -85,6 +100,54 @@ describe("library Item Pane cover", function () {
     await waitFor(() => shows(attachment));
     await waitFor(() => image()!.complete && image()!.naturalWidth > 0);
     assert.isAbove(image()!.naturalWidth, 0);
+  });
+
+  it("retains pinned section alignment across repeated real and placeholder cover switches", async function () {
+    const covered = await book();
+    const attachment = await attach(covered);
+    const empty = await book();
+    const wide = await book();
+    await writeCover(120, 40);
+    const wideAttachment = await attach(wide);
+    await win.ZoteroPane.selectItems([wide.id], true);
+    await waitFor(() => shows(wideAttachment) && image()!.complete);
+    await settleLayout(win);
+    await win.ZoteroPane.selectItems([covered.id], true);
+    await waitFor(() => shows(attachment) && image()!.complete);
+    await settleLayout(win);
+    const details = section()!.closest("item-details")! as ItemDetails;
+    const previous = details.pinnedPane;
+    const scroller = details.querySelector<HTMLElement>(".zotero-view-item")!;
+    const info = details.querySelector<HTMLElement>('[data-pane="info"]')!;
+    const alignment = () =>
+      info.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    try {
+      details.pinnedPane = "info";
+      await details.scrollToPane("info", "instant");
+      assert.closeTo(alignment(), 0, 2, "initial pinned Info alignment");
+      for (let cycle = 0; cycle < 3; cycle++) {
+        for (const [item, cover] of [
+          [empty, undefined],
+          [covered, attachment],
+          [wide, wideAttachment],
+          [covered, attachment],
+        ] as const) {
+          await win.ZoteroPane.selectItems([item.id], true);
+          await waitFor(() =>
+            cover ? shows(cover) && image()!.complete : image()!.hidden,
+          );
+          await settleLayout(win);
+          assert.closeTo(
+            alignment(),
+            0,
+            2,
+            `pinned Info alignment, cycle ${cycle}, item ${item.id}`,
+          );
+        }
+      }
+    } finally {
+      details.pinnedPane = previous;
+    }
   });
 
   it("names the section and its sidebar tooltip Cover", async function () {

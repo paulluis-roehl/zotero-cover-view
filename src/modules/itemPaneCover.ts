@@ -1,10 +1,11 @@
-import { CoverProvider } from "./coverProvider";
+import { CoverProvider, type CoverResult } from "./coverProvider";
 import { getLocaleID, getString } from "../utils/locale";
 
 type SectionProps = _ZoteroTypes.ItemPaneManagerSection.SectionHookArgs;
 interface SectionState {
   props?: SectionProps;
   generation: number;
+  resize: () => void;
   stopSizing: () => void;
 }
 
@@ -40,6 +41,8 @@ function updateCover(props: SectionProps): void {
   const image = body.querySelector<HTMLImageElement>("img")!;
   image.hidden = true;
   image.removeAttribute("src");
+  image.style.removeProperty("width");
+  image.style.removeProperty("height");
   const selected = (
     doc.defaultView as _ZoteroTypes.MainWindow
   ).ZoteroPane.getSelectedItems(true);
@@ -53,7 +56,7 @@ function updateCover(props: SectionProps): void {
 
   // Resolve even while collapsed: native async rendering is visibility-dependent.
   CoverProvider.cacheCover(item);
-  void CoverProvider.getCoverResult(item.id).then((cover) => {
+  const showCover = (cover: CoverResult | null) => {
     if (
       sections.get(body) !== state ||
       state.generation !== generation ||
@@ -68,9 +71,15 @@ function updateCover(props: SectionProps): void {
       args: { title: item.getDisplayTitle() },
     });
     image.src = cover.uri;
+    state.resize();
     image.hidden = false;
     setEnabled(true);
-  });
+  };
+  // Establish known cover geometry before ItemDetails restores its scroll.
+  // Async rendering alone is too late, even for an already-resolved promise.
+  const cached = CoverProvider.getCachedCoverResult(item.id);
+  if (cached !== undefined) showCover(cached);
+  else void CoverProvider.getCoverResult(item.id).then(showCover);
 }
 
 function refreshItemPaneCovers(): void {
@@ -102,9 +111,10 @@ export function registerItemPaneCover(): void {
       const win = doc.defaultView as _ZoteroTypes.MainWindow;
       const image = body.querySelector<HTMLImageElement>("img")!;
       const resize = () => {
-        if (!image.naturalWidth || !image.naturalHeight) return;
+        const dimensions = CoverProvider.getCoverDimensions(image.src);
+        if (!dimensions) return;
         // Match Attachment Info's attachment-preview width/aspect/height rules.
-        const ratio = image.naturalWidth / image.naturalHeight;
+        const ratio = dimensions.width / dimensions.height;
         const height = Math.min(
           body.clientWidth / ratio,
           Math.max(win.screen.availHeight - 200, 600),
@@ -117,6 +127,7 @@ export function registerItemPaneCover(): void {
       image.addEventListener("load", resize);
       sections.set(body, {
         generation: 0,
+        resize,
         stopSizing: () => {
           observer.disconnect();
           image.removeEventListener("load", resize);

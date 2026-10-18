@@ -28,7 +28,12 @@ export class CoverProvider {
       metadata: string;
       promise: Promise<CoverResult | null>;
       uriPromise: Promise<string | null>;
+      result?: CoverResult | null;
     }
+  >();
+  private static dimensions = new Map<
+    string,
+    { width: number; height: number }
   >();
   private static generations = new Map<number, number>();
   private static attachmentParents = new Map<number, number>();
@@ -77,9 +82,21 @@ export class CoverProvider {
           ztoolkit.log("Failed to resolve cover", item.id, error);
           return null;
         })
-        .then((value) =>
-          this.currentGeneration(item.id) === generation ? value : null,
-        );
+        .then(async (value) => {
+          const dimensions =
+            value && value.source !== "placeholder"
+              ? await this.readCoverDimensions(value.uri)
+              : undefined;
+          const result =
+            this.currentGeneration(item.id) === generation ? value : null;
+          const entry = this.cache.get(item.id);
+          if (entry?.promise === cover) {
+            if (result && dimensions)
+              this.dimensions.set(result.uri, dimensions);
+            entry.result = result;
+          }
+          return result;
+        });
       this.cache.set(item.id, {
         generation,
         fetchISBNCover,
@@ -101,6 +118,35 @@ export class CoverProvider {
 
   static getCoverResult(itemID: number): Promise<CoverResult | null> {
     return this.cache.get(itemID)?.promise ?? Promise.resolve(null);
+  }
+
+  /** Undefined means the current lookup has not resolved yet. */
+  static getCachedCoverResult(itemID: number): CoverResult | null | undefined {
+    return this.cache.get(itemID)?.result;
+  }
+
+  static getCoverDimensions(
+    uri: string,
+  ): { width: number; height: number } | undefined {
+    return this.dimensions.get(uri);
+  }
+
+  private static async readCoverDimensions(
+    uri: string,
+  ): Promise<{ width: number; height: number } | undefined> {
+    const win = Zotero.getMainWindow();
+    if (!win) return;
+    // Decode the source image off-DOM, independently of any consumer's CSS size.
+    const image = new win.Image();
+    image.src = uri;
+    try {
+      await image.decode();
+      if (image.naturalWidth && image.naturalHeight)
+        return { width: image.naturalWidth, height: image.naturalHeight };
+    } catch {
+      // Keep dimension discovery best-effort, as cover lookup was before.
+    }
+    return undefined;
   }
 
   static shouldFetchISBNCover(): boolean {
@@ -219,6 +265,7 @@ export class CoverProvider {
 
   static clearCache(): void {
     this.cache.clear();
+    this.dimensions.clear();
     this.generations.clear();
     this.attachmentParents.clear();
   }
