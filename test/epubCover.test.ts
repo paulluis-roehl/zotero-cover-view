@@ -11,6 +11,7 @@ describe("EPUB cover discovery", function () {
   const entries = new Map<string, string>();
   let originalPath: typeof Zotero.File.pathToFileURI;
   let originalGet: typeof Zotero.Items.get;
+  let originalRead: typeof IOUtils.read;
   let toolkitDescriptor: PropertyDescriptor | undefined;
 
   function uri(path: string): string {
@@ -71,6 +72,11 @@ describe("EPUB cover discovery", function () {
     CoverProvider.clearCache();
     originalPath = Zotero.File.pathToFileURI;
     originalGet = Zotero.Items.get;
+    originalRead = IOUtils.read;
+    IOUtils.read = ((path, options) =>
+      ["first.epub", "second.epub"].includes(path)
+        ? Promise.resolve(new Uint8Array([1]))
+        : originalRead(path, options)) as typeof IOUtils.read;
     toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
     Object.defineProperty(globalThis, "ztoolkit", {
       configurable: true,
@@ -82,6 +88,7 @@ describe("EPUB cover discovery", function () {
   afterEach(function () {
     Zotero.File.pathToFileURI = originalPath;
     Zotero.Items.get = originalGet;
+    IOUtils.read = originalRead;
     if (toolkitDescriptor) {
       Object.defineProperty(globalThis, "ztoolkit", toolkitDescriptor);
     } else {
@@ -226,6 +233,7 @@ describe("EPUB cover discovery", function () {
           isFileAttachment: () => false,
           isRegularItem: () => true,
           getAttachments: () => [1, 2],
+          getBestAttachments: async () => [first, second],
         } as unknown as Zotero.Item;
         assert.equal(
           await CoverProvider.findCover(parent, (filePath) =>

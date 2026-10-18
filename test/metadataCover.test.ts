@@ -15,6 +15,7 @@ const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 describe("opt-in metadata cover lookup", function () {
   let originalGet: typeof Zotero.Items.get;
   let originalRequest: typeof Zotero.HTTP.request;
+  let originalRead: typeof IOUtils.read;
   let originalISBNPref: boolean;
   let originalMetadataPref: boolean | undefined;
   let toolkitDescriptor: PropertyDescriptor | undefined;
@@ -81,6 +82,7 @@ describe("opt-in metadata cover lookup", function () {
           creatorType: "author",
         })),
       getAttachments: () => attachments.map(({ id }) => id),
+      getBestAttachments: async () => attachments,
       setField: () => {
         throw new Error("Cover lookup must not edit the item");
       },
@@ -168,6 +170,11 @@ describe("opt-in metadata cover lookup", function () {
   beforeEach(async function () {
     originalGet = Zotero.Items.get;
     originalRequest = Zotero.HTTP.request;
+    originalRead = IOUtils.read;
+    IOUtils.read = ((path, options) =>
+      path === "local-cover.pdf"
+        ? Promise.resolve(new Uint8Array([1]))
+        : originalRead(path, options)) as typeof IOUtils.read;
     originalISBNPref = getPref("fetchISBNCover");
     originalMetadataPref = getPref(metadataPref);
     toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
@@ -225,6 +232,7 @@ describe("opt-in metadata cover lookup", function () {
   afterEach(async function () {
     Zotero.Items.get = originalGet;
     Zotero.HTTP.request = originalRequest;
+    IOUtils.read = originalRead;
     setPref("fetchISBNCover", originalISBNPref);
     if (originalMetadataPref === undefined) clearPref(metadataPref);
     else setPref(metadataPref, originalMetadataPref);

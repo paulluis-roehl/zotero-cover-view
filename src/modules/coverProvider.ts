@@ -120,55 +120,45 @@ export class CoverProvider {
     findMetadataCover: typeof findMetadataCoverURI = findMetadataCoverURI,
     fetchMetadataCover = this.shouldFetchMetadataCover(),
   ): Promise<CoverResult | null> {
-    for (const attachment of this.findAttachments(item, isImgAttachment)) {
-      this.rememberParent(attachment, item);
+    const attachments = await this.findAttachments(item);
+    // Remember the entire ranked list, including candidates after the winner,
+    // so removal or reparenting can invalidate the former parent's choice.
+    for (const attachment of attachments) this.rememberParent(attachment, item);
+    for (const attachment of attachments) {
       try {
+        if (!this.isSupportedAttachment(attachment)) continue;
         const filePath = await attachment.getFilePathAsync();
         if (!filePath) continue;
+        // A URI (or a cached PDF cover) alone does not prove the candidate is
+        // available. Probe readability without introducing image decoding.
+        if (item.isRegularItem?.()) {
+          await IOUtils.read(filePath, { maxBytes: 1 });
+        }
 
-        const cover = await findImgCover(filePath);
-        if (cover) return { uri: cover, source: "attachment" };
-      } catch (error) {
-        ztoolkit.log("Failed to find image cover", attachment.id, error);
-      }
-    }
-
-    for (const attachment of this.findAttachments(item, isEPUBAttachment)) {
-      this.rememberParent(attachment, item);
-      try {
-        const filePath = await attachment.getFilePathAsync();
-        if (!filePath) continue;
-
-        const cover = await findEPUBCover(filePath);
-        if (cover) return { uri: cover, source: "attachment" };
-      } catch (error) {
-        ztoolkit.log("Failed to find EPUB cover", attachment.id, error);
-      }
-    }
-
-    for (const attachment of this.findAttachments(item, isPDFAttachment)) {
-      this.rememberParent(attachment, item);
-      try {
-        const filePath = await attachment.getFilePathAsync();
-        if (!filePath) continue;
-
-        const signature = createPDFCacheSignature(attachment, filePath);
-        const cached =
-          findPDFCover === findPDFCoverURI
-            ? await getCachedPDFCover(item.id, signature)
-            : null;
-        const cover = cached ?? (await findPDFCover(filePath));
-        if (
-          cover &&
-          findPDFCover === findPDFCoverURI &&
-          !cached &&
-          this.currentGeneration(item.id) === generation
-        ) {
-          await cachePDFCover(item.id, signature, cover);
+        let cover: string | null;
+        if (isImgAttachment(attachment)) {
+          cover = await findImgCover(filePath);
+        } else if (isEPUBAttachment(attachment)) {
+          cover = await findEPUBCover(filePath);
+        } else {
+          const signature = createPDFCacheSignature(attachment, filePath);
+          const cached =
+            findPDFCover === findPDFCoverURI
+              ? await getCachedPDFCover(item.id, signature)
+              : null;
+          cover = cached ?? (await findPDFCover(filePath));
+          if (
+            cover &&
+            findPDFCover === findPDFCoverURI &&
+            !cached &&
+            this.currentGeneration(item.id) === generation
+          ) {
+            await cachePDFCover(item.id, signature, cover);
+          }
         }
         if (cover) return { uri: cover, source: "attachment" };
       } catch (error) {
-        ztoolkit.log("Failed to find PDF cover", attachment.id, error);
+        ztoolkit.log("Failed to find attachment cover", attachment.id, error);
       }
     }
 
@@ -234,6 +224,7 @@ export class CoverProvider {
       item.getCreatorsJSON?.(),
       item.getField?.("date"),
       item.getField?.("ISBN"),
+      item.getField?.("url"),
     ]);
   }
 
@@ -265,11 +256,14 @@ export class CoverProvider {
             const knownParent = this.attachmentParents.get(id);
             if (knownParent) parentIDs.add(knownParent);
             if (attachment && attachment.isFileAttachment()) {
-              if (this.isSupportedAttachment(attachment)) {
-                if (attachment.parentItemID)
-                  parentIDs.add(attachment.parentItemID);
-                this.rememberParent(attachment, attachment);
+              if (attachment.parentItemID) {
+                parentIDs.add(attachment.parentItemID);
+                this.attachmentParents.set(id, attachment.parentItemID);
+              } else {
+                this.attachmentParents.delete(id);
               }
+            } else if (event === "delete") {
+              this.attachmentParents.delete(id);
             }
             const data =
               extraData?.[rawID] ?? extraData?.[String(id)] ?? extraData;
@@ -331,16 +325,15 @@ export class CoverProvider {
     );
   }
 
-  private static findAttachments(
+  private static async findAttachments(
     item: Zotero.Item,
-    isSupported: (attachment: Zotero.Item) => boolean,
-  ): Zotero.Item[] {
+  ): Promise<Zotero.Item[]> {
     if (item.isFileAttachment()) {
-      return isSupported(item) ? [item] : [];
+      return [item];
     }
     if (!item.isRegularItem()) {
       return [];
     }
-    return Zotero.Items.get(item.getAttachments()).filter(isSupported);
+    return item.getBestAttachments();
   }
 }

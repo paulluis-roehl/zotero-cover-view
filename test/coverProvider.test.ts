@@ -9,6 +9,7 @@ describe("Cover provider", function () {
   let originalGet: typeof Zotero.Items.get;
   let originalRegister: typeof Zotero.Notifier.registerObserver;
   let originalFetchISBNCover: boolean;
+  let originalRead: typeof IOUtils.read;
   let toolkitDescriptor: PropertyDescriptor | undefined;
 
   function attachment(
@@ -19,7 +20,12 @@ describe("Cover provider", function () {
     return {
       id,
       attachmentContentType: contentType,
-      attachmentReaderType: contentType === "application/pdf" ? "pdf" : "epub",
+      attachmentReaderType:
+        contentType === "application/pdf"
+          ? "pdf"
+          : contentType === "application/epub+zip"
+            ? "epub"
+            : undefined,
       isFileAttachment: () => true,
       isRegularItem: () => false,
       getFilePathAsync: async () => filePath,
@@ -33,7 +39,8 @@ describe("Cover provider", function () {
       firstCreator: "Test Author",
       isFileAttachment: () => false,
       isRegularItem: () => true,
-      getAttachments: () => attachments.map(({ id }) => id),
+      getAttachments: () => attachments.map(({ id }) => id).reverse(),
+      getBestAttachments: async () => attachments,
       getDisplayTitle: () => "Test Book",
       getField: (field: string) => (field === "ISBN" ? isbn : ""),
     } as unknown as Zotero.Item;
@@ -43,6 +50,13 @@ describe("Cover provider", function () {
     originalGet = Zotero.Items.get;
     originalRegister = Zotero.Notifier.registerObserver;
     originalFetchISBNCover = getPref("fetchISBNCover");
+    originalRead = IOUtils.read;
+    // Relative paths are virtual extraction fixtures; absolute paths exercise
+    // real filesystem behavior, including the missing-image regression.
+    IOUtils.read = ((path, options) =>
+      path.includes("/")
+        ? originalRead(path, options)
+        : Promise.resolve(new Uint8Array([1]))) as typeof IOUtils.read;
     toolkitDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ztoolkit");
     Object.defineProperty(globalThis, "ztoolkit", {
       configurable: true,
@@ -53,6 +67,7 @@ describe("Cover provider", function () {
 
   afterEach(function () {
     Zotero.Items.get = originalGet;
+    IOUtils.read = originalRead;
     Zotero.Notifier.registerObserver = originalRegister;
     setPref("fetchISBNCover", originalFetchISBNCover);
     if (toolkitDescriptor) {
@@ -222,33 +237,22 @@ describe("Cover provider", function () {
     );
   });
 
-  it("prefers an image cover over EPUB and PDF covers", async function () {
+  it("uses Zotero's ranked order rather than image-first format priority", async function () {
     const image = attachment(1, "image/png", "cover.png");
     const item = parent([
-      image,
-      attachment(2, "application/epub+zip", "book.epub"),
       attachment(3, "application/pdf", "book.pdf"),
+      attachment(2, "application/epub+zip", "book.epub"),
+      image,
     ]);
-    let epubLookups = 0;
-    let pdfLookups = 0;
-
     assert.equal(
       await CoverProvider.findCover(
         item,
-        async () => {
-          epubLookups++;
-          return "cover:book.epub";
-        },
-        async () => {
-          pdfLookups++;
-          return "cover:book.pdf";
-        },
+        async () => "cover:book.epub",
+        async () => "cover:book.pdf",
         async (filePath) => `cover:${filePath}`,
       ),
-      "cover:cover.png",
+      "cover:book.pdf",
     );
-    assert.equal(epubLookups, 0);
-    assert.equal(pdfLookups, 0);
   });
 
   it("uses an EPUB when image attachments have no cover", async function () {
@@ -268,25 +272,231 @@ describe("Cover provider", function () {
     );
   });
 
-  it("prefers an EPUB cover over a PDF cover", async function () {
+  it("falls through unsupported candidates, missing paths, path errors, and extraction failures in ranked order", async function () {
+    const missingPath = attachment(2, "application/pdf", "");
+    const pathError = attachment(3, "application/pdf", "unused.pdf");
+    pathError.getFilePathAsync = async () => {
+      throw new Error("Path unavailable");
+    };
+    const item = parent([
+      attachment(1, "text/plain", "unsupported.txt"),
+      missingPath,
+      pathError,
+      attachment(4, "application/pdf", "no-cover.pdf"),
+      attachment(5, "application/pdf", "broken.pdf"),
+      attachment(6, "application/pdf", "winner.pdf"),
+      attachment(7, "application/pdf", "later.pdf"),
+    ]);
+    assert.deepEqual(
+      await CoverProvider.findCoverResult(item, undefined, async (path) => {
+        if (path === "no-cover.pdf") return null;
+        if (path === "broken.pdf") throw new Error("Extraction failed");
+        return `cover:${path}`;
+      }),
+      { uri: "cover:winner.pdf", source: "attachment" },
+    );
+  });
+
+  it("does not let a real missing image URI hide the next ranked cover", async function () {
+    const directory = `/tmp/opencode/missing-cover-${Zotero.Utilities.randomString()}`;
+    await IOUtils.makeDirectory(directory, { createAncestors: true });
+    try {
+      const item = parent([
+        attachment(1, "image/png", PathUtils.join(directory, "missing.png")),
+        attachment(2, "application/pdf", "book.pdf"),
+      ]);
+      assert.deepEqual(
+        await CoverProvider.findCoverResult(
+          item,
+          undefined,
+          async () => "cover:book.pdf",
+        ),
+        { uri: "cover:book.pdf", source: "attachment" },
+      );
+    } finally {
+      await IOUtils.remove(directory);
+    }
+  });
+
+  for (const type of ["image/png", "application/epub+zip", "application/pdf"]) {
+    it(`skips an unreadable ${type} candidate before a usable image`, async function () {
+      const read = IOUtils.read;
+      IOUtils.read = ((path, options) =>
+        path === "unreadable"
+          ? Promise.reject(new Error("Access denied"))
+          : read(path, options)) as typeof IOUtils.read;
+      const item = parent([
+        attachment(1, type, "unreadable"),
+        attachment(2, "image/png", "winner.png"),
+        attachment(3, "image/png", "later.png"),
+      ]);
+      assert.deepEqual(
+        await CoverProvider.findCoverResult(
+          item,
+          async () => "wrong-epub",
+          async () => "wrong-pdf",
+          async (path) => `cover:${path}`,
+        ),
+        { uri: "cover:winner.png", source: "attachment" },
+      );
+    });
+  }
+
+  it("falls back to ISBN, optional metadata, then placeholder only after all ranked candidates fail", async function () {
+    const item = parent(
+      [
+        attachment(1, "image/png", "broken.png"),
+        attachment(2, "application/epub+zip", "no-cover.epub"),
+        attachment(3, "application/pdf", "broken.pdf"),
+      ],
+      "9783570402931",
+    );
+    Object.assign(item, {
+      itemType: "book",
+      getField: (field: string) =>
+        field === "title"
+          ? "Test Book"
+          : field === "ISBN"
+            ? "9783570402931"
+            : "",
+      getCreatorsJSON: () => [{ lastName: "Author", creatorType: "author" }],
+    });
+    for (const expected of ["isbn", "metadata", "placeholder"]) {
+      const result = await CoverProvider.findCoverResult(
+        item,
+        async () => null,
+        async () => {
+          throw new Error("PDF extraction failed");
+        },
+        async () => {
+          throw new Error("Image resolver failed");
+        },
+        async () => (expected === "isbn" ? "cover:isbn" : null),
+        undefined,
+        true,
+        async () => (expected === "metadata" ? "cover:metadata" : null),
+        true,
+      );
+      if (expected === "placeholder") {
+        assert.equal(result?.source, "placeholder");
+      } else {
+        assert.deepEqual(result, {
+          uri: `cover:${expected}`,
+          source: "online",
+        });
+      }
+    }
+  });
+
+  it("preserves a supplied EPUB-before-PDF ranking", async function () {
     const item = parent([
       attachment(1, "application/epub+zip", "book.epub"),
       attachment(2, "application/pdf", "book.pdf"),
     ]);
-    let pdfLookups = 0;
-
     assert.equal(
       await CoverProvider.findCover(
         item,
         async () => "cover:book.epub",
-        async () => {
-          pdfLookups++;
-          return "cover:book.pdf";
-        },
+        async () => "cover:book.pdf",
       ),
       "cover:book.epub",
     );
-    assert.equal(pdfLookups, 0);
+  });
+
+  it("consumes native ranking and refreshes cached covers through real Zotero notifications", async function () {
+    const directory = `/tmp/opencode/ranked-covers-${Zotero.Utilities.randomString()}`;
+    await IOUtils.makeDirectory(directory, { createAncestors: true });
+    const item = new Zotero.Item("book");
+    const other = new Zotero.Item("book");
+    const files: Zotero.Item[] = [];
+    const changes: number[] = [];
+    const stop = CoverProvider.onCoverChanged((id) => changes.push(id));
+    const urlA = "https://example.invalid/a";
+    const urlB = "https://example.invalid/b";
+    async function addImage(name: string, url: string, date: string) {
+      const path = PathUtils.join(directory, name);
+      await IOUtils.write(path, new Uint8Array([1]));
+      const file = new Zotero.Item("attachment");
+      file.parentItemID = item.id;
+      file.attachmentLinkMode = Zotero.Attachments.LINK_MODE_LINKED_FILE;
+      file.attachmentContentType = "image/png";
+      file.attachmentPath = path;
+      file.setField("url", url);
+      file.setField("dateAdded", date);
+      await file.saveTx();
+      files.push(file);
+      return file;
+    }
+    async function expectCover(parent: Zotero.Item, file: Zotero.Item) {
+      CoverProvider.cacheCover(parent);
+      assert.deepEqual(await CoverProvider.getCoverResult(parent.id), {
+        uri: Zotero.File.pathToFileURI(
+          (await file.getFilePathAsync()) as string,
+        ),
+        source: "attachment",
+      });
+    }
+    function expectRefresh(...parents: Zotero.Item[]) {
+      for (const parent of parents) assert.include(changes, parent.id);
+      changes.length = 0;
+    }
+    try {
+      item.setField("title", "Native ranked cover fixture");
+      item.setField("url", urlA);
+      await item.saveTx();
+      await other.saveTx();
+      const a = await addImage("a.png", urlA, "2020-01-01 00:00:00");
+      const b = await addImage("b.png", urlB, "2021-01-01 00:00:00");
+      CoverProvider.registerNotifier();
+      assert.equal((await item.getBestAttachments())[0].id, a.id);
+      await expectCover(item, a);
+
+      item.setField("url", urlB);
+      await item.saveTx();
+      assert.equal((await item.getBestAttachments())[0].id, b.id);
+      expectRefresh(item);
+      await expectCover(item, b);
+
+      b.setField("url", urlA);
+      await b.saveTx();
+      expectRefresh(item);
+      await expectCover(item, a);
+
+      const c = await addImage("c.png", urlB, "2022-01-01 00:00:00");
+      expectRefresh(item);
+      await expectCover(item, c);
+      CoverProvider.cacheCover(other);
+      assert.equal(
+        (await CoverProvider.getCoverResult(other.id))?.source,
+        "placeholder",
+      );
+      c.parentItemID = other.id;
+      await c.saveTx();
+      expectRefresh(item, other);
+      await expectCover(item, a);
+      await expectCover(other, c);
+
+      // b was ranked after the winner and never resolved, but is still tracked.
+      await b.eraseTx();
+      files.splice(files.indexOf(b), 1);
+      expectRefresh(item);
+      await expectCover(item, a);
+      await a.eraseTx();
+      files.splice(files.indexOf(a), 1);
+      expectRefresh(item);
+      CoverProvider.cacheCover(item);
+      assert.equal(
+        (await CoverProvider.getCoverResult(item.id))?.source,
+        "placeholder",
+      );
+    } finally {
+      stop();
+      CoverProvider.unregisterNotifier();
+      for (const file of files) await file.eraseTx();
+      if (item.id) await item.eraseTx();
+      if (other.id) await other.eraseTx();
+      await IOUtils.remove(directory, { recursive: true });
+    }
   });
 
   it("uses a PDF when EPUB attachments have no cover", async function () {
@@ -405,6 +615,7 @@ describe("Cover provider", function () {
       isFileAttachment: () => false,
       isRegularItem: () => true,
       getAttachments: () => [],
+      getBestAttachments: async () => [],
     } as unknown as Zotero.Item;
 
     const first = await CoverProvider.findCover(item);
