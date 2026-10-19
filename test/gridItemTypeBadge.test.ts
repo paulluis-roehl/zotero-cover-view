@@ -210,28 +210,35 @@ describe("native item-type badges", function () {
               `${size}px`,
           );
           for (const { item, icon, type } of items) {
-            grid.scrollTop = 0;
-            grid.dispatchEvent(new win.Event("scroll"));
             const selector = `[data-item-id="${item.id}"]`;
-            while (
-              !grid.querySelector(selector) &&
-              grid.scrollTop < grid.scrollHeight - grid.clientHeight
-            ) {
-              grid.scrollTop += Math.max(grid.clientHeight, 1);
-              grid.dispatchEvent(new win.Event("scroll"));
-            }
-            await waitFor(
-              () => !!grid.querySelector(selector),
-              `${icon}: viewport traversal reveals tile`,
-            );
+            // Theme/size changes and pending item updates can retire tiles.
+            // Reacquire and reveal the current tile on every poll rather than
+            // waiting for an image on a detached, no-longer-observed element.
+            await waitFor(() => {
+              if (!grid.querySelector(selector)) {
+                grid.scrollTop = 0;
+                grid.dispatchEvent(new win.Event("scroll"));
+              }
+              while (
+                !grid.querySelector(selector) &&
+                grid.scrollTop < grid.scrollHeight - grid.clientHeight
+              ) {
+                grid.scrollTop += Math.max(grid.clientHeight, 1);
+                grid.dispatchEvent(new win.Event("scroll"));
+              }
+              const current = grid.querySelector<HTMLElement>(selector);
+              current?.scrollIntoView({ block: "nearest" });
+              const image = current?.querySelector("img");
+              return (
+                !!image &&
+                !image.hidden &&
+                image.complete &&
+                image.naturalWidth > 0
+              );
+            }, `${icon}: loaded cover at tile size ${size}, theme ${theme}`);
             const tile = grid.querySelector<HTMLElement>(
               `[data-item-id="${item.id}"]`,
             )!;
-            tile.scrollIntoView({ block: "nearest" });
-            await waitFor(
-              () => !!tile.querySelector<HTMLImageElement>("img:not([hidden])"),
-              `${icon}: ${tile.querySelector("img")?.src}`,
-            );
             const cover = tile.querySelector<HTMLImageElement>("img")!;
             assert.isTrue(
               item === image || item === linkedImage
