@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - attachments are now ranked by Zotero's native ranking instead of by file type
+- pdf covers are stored in higher resolution
 
 ## [0.5.3] - 2026-10-08
 

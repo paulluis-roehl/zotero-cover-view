@@ -1,5 +1,7 @@
-const DEFAULT_COVER_WIDTH = 300;
-const DEFAULT_PAGE_WIDTH = 612;
+// One shared bitmap supports previews up to 1024 CSS px at 2x density without
+// tying cache entries or PDF extraction to a particular window or pane size.
+const DEFAULT_COVER_EDGE = 2048;
+const MAX_CANVAS_EDGE = 4096;
 const MAX_CANVAS_PIXELS = 16_777_216;
 const PDFJS_MODULE_URL = "resource://zotero/reader/pdf/build/pdf.mjs";
 const PDFJS_WORKER_URL = "resource://zotero/reader/pdf/build/pdf.worker.mjs";
@@ -55,7 +57,7 @@ export function createPDFCacheSignature(
   attachment: Zotero.Item,
   filePath: string,
 ): string {
-  return `v2:${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
+  return `v3:${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
 }
 
 export async function getCachedPDFCover(
@@ -116,9 +118,12 @@ export async function deleteCachedPDFCover(itemID: number): Promise<void> {
  */
 export async function findPDFCoverURI(
   filePath: string,
-  targetWidth = DEFAULT_COVER_WIDTH,
+  targetWidth?: number,
 ): Promise<string | null> {
-  if (!Number.isFinite(targetWidth) || targetWidth <= 0) {
+  if (
+    targetWidth !== undefined &&
+    (!Number.isFinite(targetWidth) || targetWidth <= 0)
+  ) {
     throw new Error("PDF cover width must be a positive number");
   }
 
@@ -142,13 +147,13 @@ export async function findPDFCoverURI(
     const page = await document.getPage(1);
     const bounds = page.getViewport({ scale: 1 });
     const scale = Math.min(
-      targetWidth / DEFAULT_PAGE_WIDTH,
+      coverScale(bounds.width, bounds.height, targetWidth),
       Math.sqrt(MAX_CANVAS_PIXELS / (bounds.width * bounds.height)),
     );
     const viewport = page.getViewport({ scale });
     const canvas = win.document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
+    canvas.width = Math.ceil(Math.min(viewport.width, MAX_CANVAS_EDGE));
+    canvas.height = Math.ceil(Math.min(viewport.height, MAX_CANVAS_EDGE));
     const context = canvas.getContext("2d", {
       alpha: false,
     }) as CanvasRenderingContext2D | null;
@@ -160,9 +165,21 @@ export async function findPDFCoverURI(
   }
 }
 
+function coverScale(
+  width: number,
+  height: number,
+  targetWidth?: number,
+): number {
+  const edge = Math.max(width, height);
+  return Math.min(
+    targetWidth === undefined ? DEFAULT_COVER_EDGE / edge : targetWidth / width,
+    MAX_CANVAS_EDGE / edge,
+  );
+}
+
 async function renderWithDocumentWorker(
   filePath: string,
-  targetWidth: number,
+  targetWidth?: number,
 ): Promise<string | null> {
   const bytes = new Uint8Array(await IOUtils.read(filePath));
   const buf = bytes.buffer.slice(
@@ -170,18 +187,34 @@ async function renderWithDocumentWorker(
     bytes.byteOffset + bytes.byteLength,
   ) as ArrayBuffer;
   const worker = Zotero.PDFWorker as ZoteroPDFWorker;
-  const result = await worker._enqueue(() =>
-    worker._query<{ buf: ArrayBuffer | null }>(
+  const render = (scale: number) => {
+    const input = buf.slice(0);
+    return worker._query<{ buf: ArrayBuffer | null }>(
       "pdf.renderArea",
       {
-        buf,
+        buf: input,
         pageIndex: 0,
         rect: [-1e7, -1e7, 1e7, 1e7],
-        scale: targetWidth / DEFAULT_PAGE_WIDTH,
+        scale,
       },
-      [buf],
-    ),
-  );
+      [input],
+    );
+  };
+  const result = await worker._enqueue(async () => {
+    // The older worker exposes scale, not page bounds. Probe at unit scale to
+    // discover the rotated page size rather than assuming US Letter. Its own
+    // renderArea pixel budget bounds both passes; provider caching avoids
+    // repeating these passes on redraws or pane resizes.
+    const probe = await render(1);
+    if (!probe.buf) return probe;
+    const header = new DataView(probe.buf);
+    const scale = coverScale(
+      header.getUint32(16),
+      header.getUint32(20),
+      targetWidth,
+    );
+    return scale === 1 ? probe : render(scale);
+  });
   return result.buf ? `${PNG_DATA_PREFIX}${encodeBase64(result.buf)}` : null;
 }
 

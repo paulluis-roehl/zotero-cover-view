@@ -2,15 +2,24 @@ import { assert } from "chai";
 import { CoverProvider } from "../src/modules/coverProvider";
 import {
   cachePDFCover,
+  createPDFCacheSignature,
   deleteCachedPDFCover,
   findPDFCoverURI,
   getCachedPDFCover,
 } from "../src/modules/covers/pdfCover";
 
 describe("PDF cover rendering", function () {
-  it("renders a real PDF with Zotero's document worker", async function () {
-    const filePath = PathUtils.join(
+  let filePath: string;
+
+  before(async function () {
+    const directory = PathUtils.join(
       PathUtils.tempDir,
+      "opencode",
+      "pdf-cover-sharpness",
+    );
+    await IOUtils.makeDirectory(directory, { createAncestors: true });
+    filePath = PathUtils.join(
+      directory,
       `cover-view-${Zotero.Utilities.randomString()}.pdf`,
     );
     const objects = [
@@ -37,24 +46,59 @@ describe("PDF cover rendering", function () {
     pdf += `startxref\n${xrefOffset}\n%%EOF\n`;
 
     await IOUtils.write(filePath, new TextEncoder().encode(pdf));
-    try {
-      const cover = await findPDFCoverURI(filePath, 100);
-      assert.match(cover!, /^data:image\/png;base64,/);
+  });
 
-      const image = Zotero.getMainWindow()!.document.createElement("img");
-      await new Promise<void>((resolve, reject) => {
-        image.addEventListener("load", () => resolve(), { once: true });
-        image.addEventListener(
-          "error",
-          () => reject(new Error("Image failed to load")),
-          { once: true },
-        );
-        image.src = cover!;
-      });
-      assert.isAbove(image.naturalWidth, 0);
-      assert.isAbove(image.naturalHeight, 0);
+  after(async function () {
+    await IOUtils.remove(filePath, { ignoreAbsent: true });
+  });
+
+  async function dimensions(cover: string | null) {
+    assert.match(cover!, /^data:image\/png;base64,/);
+    const image = new (Zotero.getMainWindow()!.Image)();
+    image.src = cover!;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  }
+
+  it("renders a complete sharp page for a 2x Item Pane preview", async function () {
+    const cover = await findPDFCoverURI(filePath);
+    const image = await dimensions(cover);
+    assert.isAtLeast(image.width, 1200);
+    assert.isAtLeast(image.height, 1800);
+    assert.closeTo(image.width / image.height, 2 / 3, 0.001);
+  });
+
+  it("uses actual page width for an explicit thumbnail size", async function () {
+    assert.deepEqual(await dimensions(await findPDFCoverURI(filePath, 100)), {
+      width: 100,
+      height: 150,
+    });
+  });
+
+  it("bounds oversized requests while retaining the complete page ratio", async function () {
+    const image = await dimensions(await findPDFCoverURI(filePath, 1e9));
+    assert.isAtMost(image.width, 4096);
+    assert.isAtMost(image.height, 4096);
+    assert.isAtMost(image.width * image.height, 16_777_216);
+    assert.closeTo(image.width / image.height, 2 / 3, 0.001);
+  });
+
+  it("regenerates covers cached before the sharp-preview policy", async function () {
+    const itemID = Math.floor(Math.random() * 1_000_000_000);
+    const attachment = { id: 42, dateModified: "2026-10-18" } as Zotero.Item;
+    const signature = createPDFCacheSignature(attachment, filePath);
+    const legacySignature = `v2:42:2026-10-18:${filePath}`;
+    const legacyCover = "data:image/png;base64,iVBORw0KGgo=";
+    try {
+      await cachePDFCover(itemID, legacySignature, legacyCover);
+      assert.isNull(await getCachedPDFCover(itemID, signature));
+      const cover = await findPDFCoverURI(filePath);
+      await cachePDFCover(itemID, signature, cover!);
+      const cached = await getCachedPDFCover(itemID, signature);
+      assert.equal(cached, cover);
+      assert.isAtLeast((await dimensions(cached)).height, 1800);
     } finally {
-      await IOUtils.remove(filePath, { ignoreAbsent: true });
+      await deleteCachedPDFCover(itemID);
     }
   });
 
@@ -66,6 +110,23 @@ describe("PDF cover rendering", function () {
       error = caught;
     }
     assert.match(String(error), /positive number/);
+  });
+
+  it("keeps older Zotero's worker fallback sharp on a small page", async function () {
+    const win = Zotero.getMainWindow()!;
+    const originalEval = win.eval;
+    // Simulate the missing ES module on older Zotero, but use the real worker.
+    win.eval = () => {
+      throw new Error("Reader ES module unavailable");
+    };
+    try {
+      const image = await dimensions(await findPDFCoverURI(filePath));
+      assert.isAtLeast(image.width, 1200);
+      assert.isAtLeast(image.height, 1800);
+      assert.closeTo(image.width / image.height, 2 / 3, 0.001);
+    } finally {
+      win.eval = originalEval;
+    }
   });
 
   it("hits, misses, and removes the persistent PDF cache", async function () {
