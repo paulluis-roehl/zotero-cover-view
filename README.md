@@ -24,6 +24,7 @@ Switch between the default list view and grid view using a toggle button in the 
   - first page of `.epub` or `.pdf` attachment
   - optional: fetch missing covers from web using ISBN
   - optional: fetch missing covers from web using metadata (may yield the wrong cover)
+    - to manually overwrite a fetched cover, drag a custom cover image into the item entry
 - **Settings**
   - customize the appearance of the grid tiles
   - change the grid size

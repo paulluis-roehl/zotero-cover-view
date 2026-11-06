@@ -13,6 +13,7 @@
 - [ ] grid item aspect ratio
   - update in `coverView.css` and also `placeholderCover.ts` default cover svg
 - [ ] save fetched cover(s) as attachment (maybe also in right click menu) (warning: in large libraries, this may create a lot of attachments)
+- [ ] option to overwrite default covers
 
 **UI/UX**
 
@@ -32,6 +33,7 @@
   - [ ] only target items that actually need refreshing
   - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
 - [ ] check [ZoteroThumbLibrary](https://github.com/gchapron/ZoteroThumbLibrary) for improvements to current architecture
+- [ ] improve pdf handling
 
 **Bugs**
 
