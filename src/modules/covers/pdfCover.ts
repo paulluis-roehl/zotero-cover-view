@@ -158,8 +158,8 @@ export async function findPDFCoverURI(
     standardFontDataUrl: `${PDFJS_WEB_URL}standard_fonts/`,
     iccUrl: `${PDFJS_WEB_URL}iccs/`,
     wasmUrl: `${PDFJS_WEB_URL}wasm/`,
-    // Ignored by newer PDF.js, which no longer evaluates PDF code when
-    // rendering; older bundled builds honour it.
+    // Defence in depth: PDF.js 5 never evaluates PDF code when rendering and
+    // ignores this option; PDF.js 4 and earlier honour it.
     isEvalSupported: false,
   }).promise;
   try {
