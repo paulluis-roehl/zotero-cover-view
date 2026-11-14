@@ -13,8 +13,11 @@ import {
   epubBytes,
   EPUBOptions,
   imageBytes,
+  imagePaint,
   imageSize,
   pdfBytes,
+  PDFOptions,
+  pdfStream,
   scratchFile,
 } from "./helpers/testEnvironment";
 
@@ -42,11 +45,11 @@ async function attachEPUB(
 }
 
 async function attachPDF(
-  page: { width: number; height: number },
+  options: PDFOptions,
   parent?: Zotero.Item,
 ): Promise<Zotero.Item> {
   return attach(
-    await scratchFile("book.pdf", pdfBytes(page)),
+    await scratchFile("book.pdf", pdfBytes(options)),
     "application/pdf",
     { parent },
   );
@@ -287,6 +290,96 @@ describe("attachment-derived cover", function () {
       const cover = await findCover(await attachPDF(PORTRAIT_PAGE));
       await assertCover(cover, "attachment", 2 / 3);
       assert.isAtLeast((await imageSize(cover.uri)).width, 1200);
+    });
+
+    /** How the cover of a square page with the given contents paints. */
+    async function paintedPage(options: PDFOptions) {
+      const cover = await findCover(
+        await attachPDF({ width: 100, height: 100, ...options }),
+      );
+      await assertCover(cover, "attachment");
+      return imagePaint(cover.uri);
+    }
+
+    it("shows glyphs of a standard font the PDF does not embed", async function () {
+      // A ZapfDingbats black square, filling most of the page.
+      const { inked } = await paintedPage({
+        content: "BT /F1 120 Tf 5 10 Td (n) Tj ET",
+        objects: ["<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>"],
+      });
+      assert.isAbove(inked, 0.4);
+    });
+
+    // Glyphs come from a system CJK font, so this assumes one is installed.
+    it("shows CJK text encoded with a predefined CMap", async function () {
+      const { inked } = await paintedPage({
+        width: 136,
+        height: 72,
+        content: "BT /F1 64 Tf 4 10 Td <65E5672C> Tj ET",
+        objects: [
+          "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Mincho /Encoding /UniJIS-UCS2-H /DescendantFonts [6 0 R] >>",
+          "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /MS-Mincho /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /FontDescriptor 7 0 R /DW 1000 >>",
+          "<< /Type /FontDescriptor /FontName /MS-Mincho /Flags 6 /FontBBox [0 -141 1000 859] /ItalicAngle 0 /Ascent 859 /Descent -141 /CapHeight 700 /StemV 80 >>",
+        ],
+      });
+      assert.isAbove(inked, 0.03);
+    });
+
+    /** A page filled with one image of the given dictionary entries and data. */
+    function imagePage(dictionary: string, data: string): PDFOptions {
+      return {
+        content: "q 100 0 0 100 0 0 cm /Im1 Do Q",
+        page: "/Resources << /XObject << /Im1 5 0 R >> >>",
+        objects: [
+          pdfStream(`/Type /XObject /Subtype /Image ${dictionary}`, data),
+        ],
+      };
+    }
+
+    it("shows a CMYK image in its colours", async function () {
+      const {
+        colour: [red, green, blue],
+      } = await paintedPage(
+        imagePage(
+          "/Width 2 /Height 2 /ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /ASCIIHexDecode",
+          `${"FF000000".repeat(4)}>`,
+        ),
+      );
+      // Cyan.
+      assert.isBelow(red, 100);
+      assert.isAbove(green, 100);
+      assert.isAbove(blue, 180);
+    });
+
+    it("shows a CCITT-compressed scanned image", async function () {
+      // Eight Group 3 (K 0) rows of 8 px, each a white run of 0 then a black
+      // run of 8.
+      const { inked } = await paintedPage(
+        imagePage(
+          "/Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter [/ASCIIHexDecode /CCITTFaxDecode] /DecodeParms [null << /K 0 /Columns 8 /Rows 8 >>]",
+          "3514D453514D453514D453514D45>",
+        ),
+      );
+      assert.isAbove(inked, 0.95);
+    });
+
+    it("shows annotation appearances stored in the PDF", async function () {
+      const {
+        colour: [red, green, blue],
+      } = await paintedPage({
+        content: "",
+        page: "/Annots [5 0 R]",
+        objects: [
+          "<< /Type /Annot /Subtype /Square /Rect [0 0 100 100] /F 4 /AP << /N 6 0 R >> >>",
+          pdfStream(
+            "/Type /XObject /Subtype /Form /BBox [0 0 100 100]",
+            "1 0 0 rg 0 0 100 100 re f",
+          ),
+        ],
+      });
+      assert.isAbove(red, 200);
+      assert.isBelow(green, 80);
+      assert.isBelow(blue, 80);
     });
 
     it("is rendered by older Zotero versions without the reader module", async function () {

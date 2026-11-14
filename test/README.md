@@ -59,7 +59,10 @@ as the viewport anchor across many layout changes.
 - `scratchDirectory`/`scratchFile`: files under a per-run
   `zotero-cover-view-*` directory in the OS temp directory, removed after the run;
 - `imageBytes`, `pdfBytes`, `epubBytes`: generated PNG/JPEG images, minimal
-  PDFs and real EPUB archives;
+  PDFs (optionally with custom page contents and objects) and real EPUB
+  archives;
+- `imageSize`, `imagePaint`: an image's natural size, and its average colour
+  and share of non-white pixels;
 - `inventBook`: invented titles, creators, years and publishers;
 - `uniqueISBN`, `uniqueEditionKey`: per-test identifiers that name no real
   book (ISBNs in group 979-5) and are removed from the cover cache after the

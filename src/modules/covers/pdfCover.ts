@@ -5,19 +5,30 @@ const MAX_CANVAS_EDGE = 4096;
 const MAX_CANVAS_PIXELS = 16_777_216;
 const PDFJS_MODULE_URL = "resource://zotero/reader/pdf/build/pdf.mjs";
 const PDFJS_WORKER_URL = "resource://zotero/reader/pdf/build/pdf.worker.mjs";
-const PDFJS_WASM_URL = "resource://zotero/reader/pdf/web/wasm/";
+const PDFJS_WEB_URL = "resource://zotero/reader/pdf/web/";
+// PDF.js "enable": paint annotation appearances stored in the PDF itself.
+const PDFJS_ANNOTATION_MODE_ENABLE = 1;
 
 interface PDFPage {
   getViewport(options: { scale: number }): { width: number; height: number };
   render(options: {
     canvasContext: CanvasRenderingContext2D;
     viewport: { width: number; height: number };
+    annotationMode: number;
   }): { promise: Promise<void> };
 }
 
 interface PDFJSModule {
   GlobalWorkerOptions: { workerSrc: string };
-  getDocument(options: { data: Uint8Array; wasmUrl: string }): {
+  getDocument(options: {
+    data: Uint8Array;
+    cMapUrl: string;
+    cMapPacked: boolean;
+    standardFontDataUrl: string;
+    iccUrl: string;
+    wasmUrl: string;
+    isEvalSupported: boolean;
+  }): {
     promise: Promise<{
       getPage(index: number): Promise<PDFPage>;
       destroy(): Promise<void>;
@@ -57,7 +68,7 @@ export function createPDFCacheSignature(
   attachment: Zotero.Item,
   filePath: string,
 ): string {
-  return `v3:${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
+  return `v4:${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
 }
 
 export async function getCachedPDFCover(
@@ -141,7 +152,15 @@ export async function findPDFCoverURI(
   pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
   const document = await pdfjs.getDocument({
     data: new Uint8Array(await IOUtils.read(filePath)),
-    wasmUrl: PDFJS_WASM_URL,
+    // Zotero's bundled resources only: local resource:// URLs, no network.
+    cMapUrl: `${PDFJS_WEB_URL}cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `${PDFJS_WEB_URL}standard_fonts/`,
+    iccUrl: `${PDFJS_WEB_URL}iccs/`,
+    wasmUrl: `${PDFJS_WEB_URL}wasm/`,
+    // Ignored by newer PDF.js, which no longer evaluates PDF code when
+    // rendering; older bundled builds honour it.
+    isEvalSupported: false,
   }).promise;
   try {
     const page = await document.getPage(1);
@@ -158,7 +177,11 @@ export async function findPDFCoverURI(
       alpha: false,
     }) as CanvasRenderingContext2D | null;
     if (!context) throw new Error("Cannot create PDF cover canvas");
-    await page.render({ canvasContext: context, viewport }).promise;
+    await page.render({
+      canvasContext: context,
+      viewport,
+      annotationMode: PDFJS_ANNOTATION_MODE_ENABLE,
+    }).promise;
     return canvas.toDataURL("image/png");
   } finally {
     await document.destroy();
@@ -177,6 +200,8 @@ function coverScale(
   );
 }
 
+// Older Zotero: the PDF worker's renderArea accepts no PDF.js loading or
+// rendering options, so covers use whatever resources the worker itself loads.
 async function renderWithDocumentWorker(
   filePath: string,
   targetWidth?: number,

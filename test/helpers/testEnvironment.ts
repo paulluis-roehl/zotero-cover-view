@@ -153,18 +153,40 @@ export function imageBytes(
   );
 }
 
-/** A minimal valid one-page PDF with the given page size in points. */
+export interface PDFOptions {
+  /** Page size in points. */
+  width?: number;
+  height?: number;
+  /** The page's content stream. Defaults to "Cover" in Helvetica. */
+  content?: string;
+  /** Raw page dictionary entries besides /MediaBox and /Contents. */
+  page?: string;
+  /**
+   * Raw objects numbered from 5 on; 1 to 4 are the catalog, page tree, page
+   * and content stream.
+   */
+  objects?: string[];
+}
+
+/** A PDF stream object with the given dictionary entries and ASCII data. */
+export function pdfStream(dictionary: string, data: string): string {
+  return `<< ${dictionary} /Length ${data.length} >>\nstream\n${data}\nendstream`;
+}
+
+/** A minimal valid one-page PDF, by default with the given page size in points. */
 export function pdfBytes({
   width = 200,
   height = 300,
-}: { width?: number; height?: number } = {}): Uint8Array {
-  const content = `BT /F1 24 Tf 30 ${Math.round(height / 2)} Td (Cover) Tj ET`;
+  content = `BT /F1 24 Tf 30 ${Math.round(height / 2)} Td (Cover) Tj ET`,
+  page = "/Resources << /Font << /F1 5 0 R >> >>",
+  objects: extra = ["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"],
+}: PDFOptions = {}): Uint8Array {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`,
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] ${page} /Contents 4 0 R >>`,
+    pdfStream("", content),
+    ...extra,
   ];
   let pdf = "%PDF-1.4\n";
   const offsets: number[] = [];
@@ -611,4 +633,35 @@ export async function imageSize(
   image.src = uri;
   await image.decode();
   return { width: image.naturalWidth, height: image.naturalHeight };
+}
+
+/**
+ * Coarse visual features of the image at `uri`: its average colour as
+ * `[red, green, blue]`, and the share of its pixels that are not near white.
+ */
+export async function imagePaint(
+  uri: string,
+): Promise<{ colour: [number, number, number]; inked: number }> {
+  const win = Zotero.getMainWindow()!;
+  const image = new win.Image();
+  image.src = uri;
+  await image.decode();
+  const canvas = win.document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d")! as CanvasRenderingContext2D;
+  context.drawImage(image, 0, 0);
+  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+  const sum: [number, number, number] = [0, 0, 0];
+  let inked = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    for (let channel = 0; channel < 3; channel++)
+      sum[channel] += data[index + channel];
+    if (Math.min(data[index], data[index + 1], data[index + 2]) < 200) inked++;
+  }
+  const pixels = data.length / 4;
+  return {
+    colour: sum.map((value) => value / pixels) as [number, number, number],
+    inked: inked / pixels,
+  };
 }
