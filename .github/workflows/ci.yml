@@ -38,7 +38,16 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build
+    env:
+      # The scaffold otherwise tests against the latest Zotero beta.
+      ZOTERO_VERSION: 10.0.8
     steps:
       - name: Setup JS
         uses: zotero-plugin-dev/workflows/setup-js@main
+      - name: Install Zotero
+        run: |
+          mkdir -p "$RUNNER_TEMP/zotero"
+          curl -fsSL "https://www.zotero.org/download/client/dl?platform=linux-x86_64&version=$ZOTERO_VERSION" \
+            | tar -xJ -C "$RUNNER_TEMP/zotero" --strip-components=1
+          echo "ZOTERO_PLUGIN_ZOTERO_BIN_PATH=$RUNNER_TEMP/zotero/zotero" >> "$GITHUB_ENV"
       - run: npm run test
