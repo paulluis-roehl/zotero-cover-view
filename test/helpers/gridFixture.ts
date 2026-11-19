@@ -97,7 +97,7 @@ function prepareRun(shared: SharedState) {
       synchronous = await Zotero.DB.valueQueryAsync("PRAGMA synchronous");
       await Zotero.DB.queryAsync("PRAGMA synchronous = OFF");
       const pane = mainWindow().ZoteroPane;
-      home = pane.getCollectionTreeRow()?.id;
+      home = selectedRow(pane);
       emptyCollection = new Zotero.Collection();
       emptyCollection.name = `Cover View test run ${inventBook().title}`;
       emptyCollection.libraryID = Zotero.Libraries.userLibraryID;
@@ -223,6 +223,17 @@ function collectionsView(
   if (!pane.collectionsView)
     throw new Error("The native collection tree is not loaded");
   return pane.collectionsView;
+}
+
+/**
+ * The ID of the first selected collection tree row, such as `C12`. Zotero 10
+ * removed the single-row getter in favour of `getCollectionTreeRows()`.
+ */
+export function selectedRow(pane: _ZoteroTypes.ZoteroPane): string | undefined {
+  const rows = (
+    pane as unknown as { getCollectionTreeRows(): { id: string }[] }
+  ).getCollectionTreeRows();
+  return rows[0]?.id;
 }
 
 /** Resolves once the window's grid view reflects the native item tree. */
@@ -1236,7 +1247,7 @@ export class GridWindow extends GridViewport {
   async showRow(rowID: string, items: ItemRef[] = []): Promise<void> {
     await collectionsView(this.pane).selectByID(rowID);
     await until(
-      () => this.pane.getCollectionTreeRow()?.id === rowID,
+      () => selectedRow(this.pane) === rowID,
       `the collection tree row ${rowID} to be selected`,
     );
     await this.showsItems(items);
@@ -1771,10 +1782,10 @@ export async function openGrid({
 } = {}): Promise<GridFixture> {
   const win = mainWindow();
   const pane = win.ZoteroPane;
-  const previousRow = pane.getCollectionTreeRow()?.id;
+  const previousRow = selectedRow(pane);
   const previousSelection = pane.getSelectedItems(true) as number[];
   onTeardown(async () => {
-    if (previousRow && pane.getCollectionTreeRow()?.id !== previousRow)
+    if (previousRow && selectedRow(pane) !== previousRow)
       await collectionsView(pane).selectByID(previousRow);
     const existing = previousSelection.filter((id) => Zotero.Items.get(id));
     if (existing.length) await pane.selectItems(existing);
@@ -1798,10 +1809,10 @@ export async function openGrid({
  */
 export async function showEmptyCollection(): Promise<void> {
   const pane = mainWindow().ZoteroPane;
-  if (state.emptyRow && pane.getCollectionTreeRow()?.id === state.emptyRow) {
+  if (state.emptyRow && selectedRow(pane) === state.emptyRow) {
     // Tests can still select another row; the fixture should then restore it.
     onTeardown(async () => {
-      if (pane.getCollectionTreeRow()?.id !== state.emptyRow)
+      if (selectedRow(pane) !== state.emptyRow)
         await collectionsView(pane).selectByID(state.emptyRow!);
     });
     return;

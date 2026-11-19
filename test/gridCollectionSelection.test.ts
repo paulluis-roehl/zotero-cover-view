@@ -1,5 +1,10 @@
 import { assert } from "chai";
-import { createCollection, createItems, openGrid } from "./helpers/gridFixture";
+import {
+  createCollection,
+  createItems,
+  openGrid,
+  selectedRow,
+} from "./helpers/gridFixture";
 
 describe("collection selection", function () {
   this.timeout(30000);
@@ -21,9 +26,6 @@ describe("collection selection", function () {
     grid.click(second);
     await grid.settled();
     assert.deepEqual(grid.selectedItems(), [second.id]);
-    assert.equal(
-      grid.pane.getCollectionTreeRow()?.id,
-      `C${grid.collection.id}`,
-    );
+    assert.equal(selectedRow(grid.pane), `C${grid.collection.id}`);
   });
 });

@@ -8,6 +8,7 @@ import {
   openMainWindow,
   openPreferences,
   patch,
+  selectedRow,
   setPref,
   setSyncedSetting,
 } from "./helpers/gridFixture";
@@ -48,7 +49,7 @@ describe("grid fixture", function () {
     const view = new GridWindow(win);
     const viewItems = pane.viewItems;
     const showTitles = getPref("showTitles");
-    const previousRow = pane.getCollectionTreeRow()?.id;
+    const previousRow = selectedRow(pane);
     const previousWindows = Zotero.getMainWindows().length;
     const libraryID = Zotero.Libraries.userLibraryID;
     const renameTemplate = Zotero.SyncedSettings.get(
@@ -110,7 +111,7 @@ describe("grid fixture", function () {
     assert.strictEqual(dragDrop.currentDragSource, dragSource);
     assert.isFalse(getPref("enableGridView"));
     assert.isFalse(view.showsGrid, "the native item tree is shown again");
-    assert.equal(pane.getCollectionTreeRow()?.id, previousRow);
+    assert.equal(selectedRow(pane), previousRow);
     assert.lengthOf(touched.windows, 2);
     for (const opened of touched.windows) assert.isTrue(opened.closed);
     assert.lengthOf(Zotero.getMainWindows(), previousWindows);
