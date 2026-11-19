@@ -49,6 +49,8 @@ export class GridView {
   private dropContext?: string;
   private dropItemID?: number;
   private dropPointer?: { x: number; y: number };
+  private destroyed = false;
+  private progressWaiters: (() => void)[] = [];
 
   constructor(private readonly win: _ZoteroTypes.MainWindow) {
     this.tree = new ItemTreeBridge(win);
@@ -96,6 +98,7 @@ export class GridView {
       }
     }, 150);
     win.document.addEventListener("focusin", this.trackFocus);
+    win.document.addEventListener("visibilitychange", this.notifyProgress);
     this.presentationObserverID = Zotero.Notifier.registerObserver(
       {
         notify: (event, type, ids) => {
@@ -145,6 +148,7 @@ export class GridView {
     if (!enabled) this.wheelRemainder = 0;
     if (!enabled) this.tree.refreshLayout();
     this.syncItems(enteringGrid);
+    this.notifyProgress();
     if (
       enabled &&
       outgoingOwner === "tree" &&
@@ -236,7 +240,68 @@ export class GridView {
     }
   };
 
+  /** Resolves once the grid view reflects the native item tree. */
+  async settled(): Promise<void> {
+    while (!this.destroyed) {
+      if (this.hasPendingWork()) {
+        await this.nextProgress();
+      } else if (
+        this.isPresenting() &&
+        // Intersection updates, like animation frames, may stop while hidden.
+        !this.win.document.hidden &&
+        this.renderer.coversPending
+      ) {
+        await Promise.race([
+          this.nextProgress(),
+          this.renderer.coversSettled(),
+        ]);
+      } else {
+        return;
+      }
+    }
+  }
+
+  endResizeGesture(): void {
+    this.renderer.endResizeGesture();
+  }
+
+  private isPresenting(): boolean {
+    return (
+      !!getPref("enableGridView") &&
+      this.win.Zotero_Tabs.selectedType === "library"
+    );
+  }
+
+  private hasPendingWork(): boolean {
+    // The native-focus frame is not awaited: it does not affect the grid, and
+    // animation frames can be suspended while the window is occluded.
+    if (this.syncTimer !== undefined || this.pendingSelections) return true;
+    if (!this.isPresenting()) return false;
+    const itemIDs = this.tree.getItems().map((item) => item.id);
+    if (
+      !sameIDs(this.tree.getSelectedIDs(), this.selectedIDs) ||
+      itemIDs.length !== this.itemIDs.length ||
+      itemIDs.some((id, index) => id !== this.itemIDs[index])
+    ) {
+      // Programmatic native changes are otherwise noticed by the next poll.
+      this.scheduleSync();
+      return true;
+    }
+    return false;
+  }
+
+  private nextProgress(): Promise<void> {
+    return new Promise((resolve) => this.progressWaiters.push(resolve));
+  }
+
+  private readonly notifyProgress = (): void => {
+    const waiters = this.progressWaiters;
+    this.progressWaiters = [];
+    for (const resolve of waiters) resolve();
+  };
+
   destroy(): void {
+    this.destroyed = true;
     const returnTreeFocus = this.ui.ownsGridFocus(
       this.win.document.activeElement,
     );
@@ -244,6 +309,10 @@ export class GridView {
       this.win.cancelAnimationFrame(this.focusFrame);
     this.win.clearInterval(this.selectionTimer);
     this.win.document.removeEventListener("focusin", this.trackFocus);
+    this.win.document.removeEventListener(
+      "visibilitychange",
+      this.notifyProgress,
+    );
     this.ui.host.removeEventListener("wheel", this.handleWheel);
     this.ui.host.removeEventListener("dragover", this.handleDragOver);
     this.ui.host.removeEventListener("drop", this.handleDrop);
@@ -259,6 +328,7 @@ export class GridView {
 
     this.renderer.destroy();
     this.ui.destroy();
+    this.notifyProgress();
     if (this.win.closed) return;
     this.tree.refreshLayout();
     const currentFocus = this.win.document.activeElement;
@@ -288,7 +358,11 @@ export class GridView {
     this.cancelSync();
     this.syncTimer = this.win.setTimeout(() => {
       this.syncTimer = undefined;
-      this.syncItems();
+      try {
+        this.syncItems();
+      } finally {
+        this.notifyProgress();
+      }
     }, 60);
   };
 
@@ -365,6 +439,7 @@ export class GridView {
         if (getPref("enableGridView")) {
           this.renderer.setSelection(this.selectedIDs);
         }
+        this.notifyProgress();
       }
     });
   }
@@ -866,6 +941,18 @@ export function detachGridView(win: Window): void {
   gridView.destroy();
   gridViews.delete(win);
   if (!gridViews.size) unregisterPreferenceObserver();
+}
+
+function sameIDs(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((id) => b.includes(id));
+}
+
+export function gridViewSettled(win: Window): Promise<void> {
+  return gridViews.get(win)?.settled() ?? Promise.resolve();
+}
+
+export function endGridResizeGesture(win: Window): void {
+  gridViews.get(win)?.endResizeGesture();
 }
 
 export function destroyGridViews(): void {

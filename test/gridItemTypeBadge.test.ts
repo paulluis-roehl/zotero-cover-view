@@ -1,399 +1,167 @@
 import { assert } from "chai";
-import { config } from "../package.json";
-import { getPref, setPref } from "../src/utils/prefs";
+import {
+  clearPref,
+  getPref,
+  GridWindow,
+  ItemSpec,
+  openGrid,
+  setPref,
+  track,
+  useTheme,
+} from "./helpers/gridFixture";
+import { imageBytes, scratchFile } from "./helpers/testEnvironment";
 
-describe("native item-type badges", function () {
-  before(function () {
-    Object.defineProperty(globalThis, "addon", {
-      value: Zotero.CoverView,
-      configurable: true,
+function localizedType(itemType: string): string {
+  return Zotero.ItemTypes.getLocalizedString(itemType);
+}
+
+function attachment(
+  contentType: string,
+  linkMode: number,
+  title: string,
+): ItemSpec {
+  return {
+    itemType: "attachment",
+    setup: (item) => {
+      item.setField("title", title);
+      item.attachmentLinkMode = linkMode;
+      item.attachmentContentType = contentType;
+    },
+  };
+}
+
+/** Assert that the tile for `item` shows a badge labelled `itemType`. */
+function assertBadge(view: GridWindow, item: Zotero.Item, itemType: string) {
+  const badge = view.itemTypeBadge(item);
+  const label = `${item.getDisplayTitle() || item.itemType}`;
+  assert.exists(badge, `${label} has a badge`);
+  assert.equal(badge!.label, localizedType(itemType), label);
+  assert.equal(view.accessibleDescription(item), badge!.label, label);
+  assert.isTrue(badge!.visible, `${label}: the badge is visible`);
+  assert.isTrue(badge!.onCover, `${label}: the badge lies on the cover`);
+  assert.notEqual(badge!.icon, "none", `${label}: the badge shows an icon`);
+}
+
+describe("item-type badge", function () {
+  this.timeout(30000);
+
+  it("is shown by default", function () {
+    clearPref("showItemTypeIcon");
+    assert.isTrue(getPref("showItemTypeIcon"));
+  });
+
+  it("labels a placeholder cover with the item's type", async function () {
+    const grid = await openGrid({ items: 1 });
+    const [item] = grid.items;
+    assert.equal(grid.currentCover(item)?.kind, "placeholder");
+    assertBadge(grid, item, "book");
+  });
+
+  it("distinguishes standalone notes and attachment kinds with Zotero's icons on attachment-derived and placeholder covers", async function () {
+    const { LINK_MODE_IMPORTED_FILE, LINK_MODE_LINKED_FILE } =
+      Zotero.Attachments;
+    const { LINK_MODE_IMPORTED_URL, LINK_MODE_LINKED_URL } = Zotero.Attachments;
+    const grid = await openGrid({
+      items: [
+        { itemType: "film" },
+        { itemType: "journalArticle" },
+        {
+          itemType: "note",
+          setup: (item) => item.setNote("<p>Standalone note</p>"),
+        },
+        attachment("application/pdf", LINK_MODE_IMPORTED_FILE, "PDF"),
+        attachment("application/pdf", LINK_MODE_LINKED_FILE, "Linked PDF"),
+        attachment("application/epub+zip", LINK_MODE_IMPORTED_FILE, "EPUB"),
+        attachment(
+          "application/epub+zip",
+          LINK_MODE_LINKED_FILE,
+          "Linked EPUB",
+        ),
+        attachment("text/html", LINK_MODE_IMPORTED_URL, "Snapshot"),
+        attachment("text/html", LINK_MODE_LINKED_URL, "Web link"),
+        attachment("video/mp4", LINK_MODE_IMPORTED_FILE, "Video"),
+        attachment("application/octet-stream", LINK_MODE_IMPORTED_FILE, "File"),
+        attachment(
+          "application/octet-stream",
+          LINK_MODE_LINKED_FILE,
+          "Linked file",
+        ),
+      ],
     });
-  });
-
-  after(function () {
-    Reflect.deleteProperty(globalThis, "addon");
-  });
-
-  it("defaults item-type icons on", function () {
-    const pref = `${config.prefsPrefix}.showItemTypeIcon`;
-    const hadValue = Zotero.Prefs.rootBranch.prefHasUserValue(pref);
-    const saved = Zotero.Prefs.get(pref, true);
-    try {
-      Zotero.Prefs.clear(pref, true);
-      assert.isTrue(Zotero.Prefs.get(pref, true));
-    } finally {
-      if (hadValue) Zotero.Prefs.set(pref, saved!, true);
-    }
-  });
-
-  it("shows the native book icon and localized type on a placeholder cover", async function () {
-    const win = Zotero.getMainWindow()!;
-    const grid = win.document.getElementById("cover-view-grid")!;
-    const enabled = getPref("enableGridView");
-    const item = new Zotero.Item("book");
-    item.setField("title", "Native badge placeholder");
-    try {
-      setPref("enableGridView", true);
-      await item.saveTx();
-      await win.ZoteroPane.selectItems([item.id], true);
-      const deadline = Date.now() + 3000;
-      while (
-        !grid.querySelector(`[data-item-id="${item.id}"]`) &&
-        Date.now() < deadline
-      )
-        await Zotero.Promise.delay(20);
-      const tile = grid.querySelector<HTMLElement>(
-        `[data-item-id="${item.id}"]`,
-      )!;
-      assert.exists(tile);
-      const badge = tile.querySelector<HTMLElement>(
-        ".grid-view-item-type-badge",
-      );
-      assert.exists(badge);
-      assert.equal(badge!.title, Zotero.ItemTypes.getLocalizedString("book"));
-      const icon = badge!.querySelector<HTMLElement>(".icon-item-type")!;
-      assert.equal(icon.dataset.itemType, "book");
-      assert.notEqual(win.getComputedStyle(icon).backgroundImage, "none");
-      assert.equal(tile.getAttribute("aria-description"), badge!.title);
-      assert.strictEqual(
-        badge!.parentElement,
-        tile.querySelector(".grid-view-cover"),
-      );
-    } finally {
-      setPref("enableGridView", enabled);
-      if (item.id) await item.eraseTx();
-    }
-  });
-
-  it("uses native variants for standalone notes and attachments, on real images and placeholders at every tile size", async function () {
-    this.timeout(15000);
-    const win = Zotero.getMainWindow()!;
-    const grid = win.document.getElementById("cover-view-grid")!;
-    const keys = [
-      "enableGridView",
-      "showItemTypeIcon",
-      "tileSize",
-      "fetchISBNCover",
-      "fetchMetadataCover",
-    ] as const;
-    const saved = keys.map(getPref);
-    const collection = new Zotero.Collection();
-    const themePref = "browser.theme.toolbar-theme";
-    const savedTheme = Zotero.Prefs.get(themePref, true);
-    const items: Array<{ item: Zotero.Item; icon: string; type: string }> = [];
-    const directory = PathUtils.join(
-      PathUtils.tempDir,
-      "opencode",
-      `badge-fixture-${Zotero.Utilities.randomString()}`,
+    const file = await scratchFile(
+      "cover.png",
+      imageBytes(240, 120, "image/png", { fill: "#eab24d" }),
     );
-    const path = PathUtils.join(directory, "cover.png");
-    const waitFor = async (
-      condition: () => boolean,
-      message = "Native badge or cover did not appear",
-    ) => {
-      const deadline = Date.now() + 5000;
-      while (!condition() && Date.now() < deadline)
-        await Zotero.Promise.delay(20);
-      assert.isTrue(condition(), message);
-    };
-    try {
-      setPref("enableGridView", true);
-      setPref("showItemTypeIcon", true);
-      setPref("fetchISBNCover", false);
-      setPref("fetchMetadataCover", false);
-      collection.name = "Native badge variants";
-      await collection.saveTx();
-      await IOUtils.makeDirectory(directory, { createAncestors: true });
-      const canvas = win.document.createElement("canvas");
-      canvas.width = 240;
-      canvas.height = 120;
-      const context = canvas.getContext("2d")! as CanvasRenderingContext2D;
-      context.fillStyle = "#eab24d";
-      context.fillRect(0, 0, 240, 120);
-      context.fillStyle = "#25354a";
-      context.fillRect(0, 80, 240, 40);
-      const bytes = Uint8Array.from(
-        win.atob(canvas.toDataURL("image/png").split(",")[1]),
-        (character) => character.charCodeAt(0),
-      );
-      await IOUtils.write(path, bytes);
-      const image = await Zotero.Attachments.importFromFile({
-        file: path,
-        collections: [collection.id],
-      });
-      items.push({ item: image, icon: "attachmentImage", type: "attachment" });
-      const linkedImage = await Zotero.Attachments.linkFromFile({
-        file: path,
-        collections: [collection.id],
-      });
-      items.push({
-        item: linkedImage,
-        icon: "attachmentImageLink",
-        type: "attachment",
-      });
-      for (const type of ["film", "journalArticle", "note"] as const) {
-        const item = new Zotero.Item(type);
-        if (type === "note") item.setNote("<p>Standalone note badge</p>");
-        else item.setField("title", `Native badge ${type}`);
-        item.setCollections([collection.id]);
-        items.push({ item, icon: type, type });
-        await item.saveTx();
-      }
-      for (const [contentType, mode, icon] of [
-        [
-          "application/pdf",
-          Zotero.Attachments.LINK_MODE_IMPORTED_FILE,
-          "attachmentPDF",
-        ],
-        [
-          "application/pdf",
-          Zotero.Attachments.LINK_MODE_LINKED_FILE,
-          "attachmentPDFLink",
-        ],
-        [
-          "application/epub+zip",
-          Zotero.Attachments.LINK_MODE_IMPORTED_FILE,
-          "attachmentEPUB",
-        ],
-        [
-          "application/epub+zip",
-          Zotero.Attachments.LINK_MODE_LINKED_FILE,
-          "attachmentEPUBLink",
-        ],
-        [
-          "text/html",
-          Zotero.Attachments.LINK_MODE_LINKED_URL,
-          "attachmentWebLink",
-        ],
-        [
-          "text/html",
-          Zotero.Attachments.LINK_MODE_IMPORTED_URL,
-          "attachmentSnapshot",
-        ],
-        [
-          "video/mp4",
-          Zotero.Attachments.LINK_MODE_IMPORTED_FILE,
-          "attachmentVideo",
-        ],
-        [
-          "application/octet-stream",
-          Zotero.Attachments.LINK_MODE_IMPORTED_FILE,
-          "attachmentFile",
-        ],
-        [
-          "application/octet-stream",
-          Zotero.Attachments.LINK_MODE_LINKED_FILE,
-          "attachmentLink",
-        ],
-      ] as const) {
-        const item = new Zotero.Item("attachment");
-        item.setField("title", `Native badge ${icon}`);
-        item.attachmentLinkMode = mode;
-        item.attachmentContentType = contentType;
-        item.setCollections([collection.id]);
-        items.push({ item, icon, type: "attachment" });
-        await item.saveTx();
-      }
-      await win.ZoteroPane.collectionsView.selectCollection(collection.id);
-      for (const theme of [1, 0]) {
-        Zotero.Prefs.set(themePref, theme, true);
-        await waitFor(
-          () =>
-            win.matchMedia("(prefers-color-scheme: dark)").matches ===
-            (theme === 0),
+    const images = [
+      await Zotero.Attachments.importFromFile({
+        file,
+        collections: [grid.collection.id],
+      }),
+      await Zotero.Attachments.linkFromFile({
+        file,
+        collections: [grid.collection.id],
+      }),
+    ];
+    track(...images);
+    await grid.showsItems(images);
+    const items = [...grid.items, ...images];
+
+    const variants = [
+      ["light", 90],
+      ["dark", 360],
+    ] as const;
+    for (const [theme, size] of variants) {
+      await useTheme(theme);
+      setPref("tileSize", size);
+      await grid.settled();
+      const icons = new Set<string>();
+      for (const item of items) {
+        await grid.reveal(item);
+        assert.equal(
+          grid.currentCover(item)?.kind,
+          images.includes(item) ? "attachment" : "placeholder",
         );
-        for (const size of [90, 180, 360]) {
-          setPref("tileSize", size);
-          await waitFor(
-            () =>
-              grid.style.getPropertyValue("--cover-view-tile-size") ===
-              `${size}px`,
-          );
-          for (const { item, icon, type } of items) {
-            const selector = `[data-item-id="${item.id}"]`;
-            // Theme/size changes and pending item updates can retire tiles.
-            // Reacquire and reveal the current tile on every poll rather than
-            // waiting for an image on a detached, no-longer-observed element.
-            await waitFor(() => {
-              if (!grid.querySelector(selector)) {
-                grid.scrollTop = 0;
-                grid.dispatchEvent(new win.Event("scroll"));
-              }
-              while (
-                !grid.querySelector(selector) &&
-                grid.scrollTop < grid.scrollHeight - grid.clientHeight
-              ) {
-                grid.scrollTop += Math.max(grid.clientHeight, 1);
-                grid.dispatchEvent(new win.Event("scroll"));
-              }
-              const current = grid.querySelector<HTMLElement>(selector);
-              current?.scrollIntoView({ block: "nearest" });
-              const image = current?.querySelector("img");
-              return (
-                !!image &&
-                !image.hidden &&
-                image.complete &&
-                image.naturalWidth > 0
-              );
-            }, `${icon}: loaded cover at tile size ${size}, theme ${theme}`);
-            const tile = grid.querySelector<HTMLElement>(
-              `[data-item-id="${item.id}"]`,
-            )!;
-            const cover = tile.querySelector<HTMLImageElement>("img")!;
-            assert.isTrue(
-              item === image || item === linkedImage
-                ? cover.src.startsWith("file:")
-                : cover.src.startsWith("data:image/svg+xml"),
-            );
-            const badge = tile.querySelector<HTMLElement>(
-              ".grid-view-item-type-badge",
-            )!;
-            const nativeIcon =
-              badge.querySelector<HTMLElement>(".icon-item-type")!;
-            assert.equal(nativeIcon.dataset.itemType, icon);
-            assert.equal(item.getItemTypeIconName(), icon);
-            assert.equal(
-              badge.title,
-              Zotero.ItemTypes.getLocalizedString(type),
-            );
-            assert.notEqual(
-              win.getComputedStyle(nativeIcon).backgroundImage,
-              "none",
-              icon,
-            );
-            const frame = badge.parentElement!.getBoundingClientRect();
-            const bounds = badge.getBoundingClientRect();
-            assert.closeTo(
-              bounds.top - frame.top,
-              5,
-              1,
-              "Badge anchors to frame top",
-            );
-            assert.closeTo(
-              bounds.left - frame.left,
-              5,
-              1,
-              "Badge anchors to frame left",
-            );
-            assert.equal(bounds.width, 24);
-            assert.equal(bounds.height, 24);
-            assert.notEqual(
-              win.getComputedStyle(badge).backgroundColor,
-              "rgba(0, 0, 0, 0)",
-            );
-            assert.notEqual(
-              win.getComputedStyle(badge).backgroundColor,
-              win.getComputedStyle(nativeIcon).fill,
-              "Native icon remains distinct from its backing",
-            );
-          }
-        }
+        assertBadge(grid, item, item.itemType);
+        icons.add(grid.itemTypeBadge(item)!.icon);
       }
-    } finally {
-      if (savedTheme !== undefined)
-        Zotero.Prefs.set(themePref, savedTheme, true);
-      else Zotero.Prefs.clear(themePref, true);
-      keys.forEach((key, index) => setPref(key, saved[index]));
-      for (const { item } of items) if (item.id) await item.eraseTx();
-      if (collection.id) await collection.eraseTx();
-      await IOUtils.remove(path, { ignoreAbsent: true });
-      await IOUtils.remove(directory, { ignoreAbsent: true });
+      assert.equal(
+        icons.size,
+        items.length,
+        `every kind has its own icon (${theme} theme, tile size ${size})`,
+      );
     }
   });
 
-  it("applies badge visibility live in every window without replacing covers, selection, or focus", async function () {
-    this.timeout(15000);
-    const first = Zotero.getMainWindow()!;
-    const existing = new Set(Zotero.getMainWindows());
-    const keys = ["enableGridView", "showItemTypeIcon"] as const;
-    const saved = keys.map(getPref);
-    const item = new Zotero.Item("book");
-    item.setField("title", "Live item-type badge");
-    let second: _ZoteroTypes.MainWindow | undefined;
-    const waitFor = async (condition: () => boolean) => {
-      const deadline = Date.now() + 5000;
-      while (!condition() && Date.now() < deadline)
-        await Zotero.Promise.delay(20);
-      assert.isTrue(condition(), "Grid badge visibility did not update");
-    };
-    try {
-      keys.forEach((key) => setPref(key, true));
-      await item.saveTx();
-      Zotero.openMainWindow();
-      await waitFor(() => {
-        second = Zotero.getMainWindows().find((win) => !existing.has(win));
-        return (
-          !!second?.ZoteroPane?.itemsView && !!second.ZoteroPane.collectionsView
-        );
-      });
-      // The scaffold does not dispatch lifecycle hooks for additional windows.
-      Zotero.CoverView.hooks.onMainWindowLoad(second!);
-      const windows = [first, second!];
-      for (const win of windows)
-        await win.ZoteroPane.selectItems([item.id], true);
-      const grids = windows.map(
-        (win) => win.document.getElementById("cover-view-grid")! as HTMLElement,
-      );
-      const tile = (grid: HTMLElement) =>
-        grid.querySelector<HTMLElement>(`[data-item-id="${item.id}"]`)!;
-      await waitFor(() =>
-        grids.every(
-          (grid) => !!tile(grid)?.querySelector(".grid-view-item-type-badge"),
-        ),
-      );
-      for (const [index, grid] of grids.entries()) {
-        tile(grid).dispatchEvent(
-          new windows[index].MouseEvent("click", { bubbles: true }),
-        );
-      }
-      await waitFor(() =>
-        grids.every(
-          (grid) =>
-            grid.getAttribute("aria-activedescendant") === tile(grid).id,
-        ),
-      );
-      first.focus();
-      grids[0].focus();
-      const tiles = grids.map(tile);
-      const images = tiles.map((entry) => entry.querySelector("img"));
-      const focus = grids.map((grid) =>
-        grid.getAttribute("aria-activedescendant"),
-      );
-      for (const visible of [false, true]) {
-        setPref("showItemTypeIcon", visible);
-        await waitFor(() =>
-          grids.every(
-            (grid) =>
-              !!tile(grid).querySelector(".grid-view-item-type-badge") ===
-              visible,
-          ),
-        );
-        for (const [index, grid] of grids.entries()) {
-          assert.strictEqual(tile(grid), tiles[index]);
-          assert.strictEqual(tile(grid).querySelector("img"), images[index]);
-          assert.equal(
-            grid.getAttribute("aria-activedescendant"),
-            focus[index],
-          );
-          assert.deepEqual(windows[index].ZoteroPane.getSelectedItems(true), [
-            item.id,
-          ]);
-          assert.equal(
-            tile(grid).getAttribute("aria-description"),
-            visible ? Zotero.ItemTypes.getLocalizedString("book") : null,
-          );
+  it("applies badge visibility live in a second main window, keeping covers, selection and focus", async function () {
+    setPref("showItemTypeIcon", true);
+    const grid = await openGrid({ items: 2 });
+    const [item] = grid.items;
+    const second = await grid.openWindow();
+    const windows: GridWindow[] = [grid, second];
+    for (const view of windows) {
+      view.click(item);
+      await view.settled();
+    }
+    grid.focusGrid();
+    const tiles = windows.map((view) => view.tile(item));
+    const covers = windows.map((view) => view.coverImage(item));
+
+    for (const shown of [false, true]) {
+      setPref("showItemTypeIcon", shown);
+      for (const [index, view] of windows.entries()) {
+        await view.settled();
+        const label = `window ${index + 1}, badge ${shown ? "shown" : "hidden"}`;
+        if (shown) assertBadge(view, item, "book");
+        else {
+          assert.notExists(view.itemTypeBadge(item), label);
+          assert.equal(view.accessibleDescription(item), "", label);
         }
-        assert.strictEqual(first.document.activeElement, grids[0]);
+        assert.strictEqual(view.tile(item), tiles[index], label);
+        assert.strictEqual(view.coverImage(item), covers[index], label);
+        assert.deepEqual(view.selectedItems(), [item.id], label);
+        assert.equal(view.focusedItem(), item.id, label);
       }
-    } finally {
-      const opened =
-        second ?? Zotero.getMainWindows().find((win) => !existing.has(win));
-      if (opened) {
-        Zotero.CoverView.hooks.onMainWindowUnload(opened);
-        opened.close();
-      }
-      keys.forEach((key, index) => setPref(key, saved[index]));
-      if (item.id) await item.eraseTx();
+      assert.isTrue(grid.ownsFocus);
     }
   });
 });

@@ -1,275 +1,139 @@
 import { assert } from "chai";
-import { ItemTreeBridge } from "../src/modules/itemTreeBridge";
+import {
+  createCollection,
+  openGrid,
+  track,
+  until,
+} from "./helpers/gridFixture";
+import { pdfBytes, scratchFile } from "./helpers/testEnvironment";
 
-describe("grid native item drag", function () {
-  it("exports standalone attachment files but not a parent tile's child files", async function () {
-    const win = Zotero.getMainWindow()!;
-    const bridge = new ItemTreeBridge(win);
-    const path = PathUtils.join(
-      Zotero.DataDirectory.dir,
-      `cover-view-drag-${Zotero.Utilities.randomString()}.pdf`,
+describe("grid item drag", function () {
+  this.timeout(60000);
+
+  it("carries a standalone attachment's file, but not a parent's child files", async function () {
+    const grid = await openGrid({ items: 1 });
+    const [parent] = grid.items;
+    const path = await scratchFile("dragged.pdf", pdfBytes());
+    const standalone = await Zotero.Attachments.importFromFile({
+      file: path,
+      collections: [grid.collection.id],
+    });
+    const child = await Zotero.Attachments.importFromFile({
+      file: path,
+      parentItemID: parent.id,
+    });
+    track(standalone);
+    assert.equal(child.parentItemID, parent.id);
+    await grid.showsItems([standalone]);
+
+    const fromAttachment = grid.startDrag(standalone)!;
+    grid.endDrag();
+    assert.equal(fromAttachment.getData("zotero/item"), String(standalone.id));
+    assert.include(
+      Array.from(fromAttachment.types),
+      "application/x-moz-file",
+      "the attachment's file is dragged",
     );
-    const parent = new Zotero.Item("book");
-    let attachment: Zotero.Item | undefined;
-    let child: Zotero.Item | undefined;
-    const dragDrop = (
-      Zotero as typeof Zotero & {
-        DragDrop: { currentDragSource: unknown };
-      }
-    ).DragDrop;
-    const originalSource = dragDrop.currentDragSource;
-    try {
-      await IOUtils.write(path, new TextEncoder().encode("file drag fixture"));
-      parent.setField("title", "Parent without exported child files");
-      await parent.saveTx();
-      attachment = await Zotero.Attachments.linkFromFile({ file: path });
-      child = await Zotero.Attachments.linkFromFile({
-        file: path,
-        parentItemID: parent.id,
-      });
-      assert.equal(child.parentItemID, parent.id);
-      const entries: Array<{ type: string; value: unknown }> = [];
-      const data = new Map<string, string>();
-      const transfer = {
-        effectAllowed: "uninitialized",
-        setDragImage: () => {},
-        setData: (type: string, value: string) => data.set(type, String(value)),
-        mozSetDataAt: (type: string, value: unknown) =>
-          entries.push({ type, value }),
-      };
-      const tile = win.document.createElement("figure");
-      tile.className = "grid-view-item";
-      win.document.documentElement.append(tile);
-      try {
-        for (const item of [parent, attachment]) {
-          const event = new win.Event("dragstart", {
-            bubbles: true,
-          }) as DragEvent;
-          Object.defineProperty(event, "dataTransfer", { value: transfer });
-          tile.addEventListener(
-            "dragstart",
-            () => bridge.startItemDrag(event, [item.id]),
-            { once: true },
-          );
-          tile.dispatchEvent(event);
-          assert.equal(data.get("zotero/item"), String(item.id));
-          assert.equal(
-            entries.filter((entry) => entry.type === "application/x-moz-file")
-              .length,
-            item === attachment ? 1 : 0,
-          );
-          entries.length = 0;
-        }
-      } finally {
-        tile.remove();
-      }
-    } finally {
-      dragDrop.currentDragSource = originalSource;
-      bridge.destroy();
-      if (attachment?.id) await attachment.eraseTx();
-      if (child?.id) await child.eraseTx();
-      if (parent.id) await parent.eraseTx();
-      await IOUtils.remove(path, { ignoreAbsent: true });
-    }
+
+    const fromParent = grid.startDrag(parent)!;
+    grid.endDrag();
+    assert.equal(fromParent.getData("zotero/item"), String(parent.id));
+    assert.notInclude(
+      Array.from(fromParent.types),
+      "application/x-moz-file",
+      "the child's file is not dragged",
+    );
   });
 
-  it("drags mounted and unmounted selected items in native order without changing selection", async function () {
-    this.timeout(120000);
-    const win = Zotero.getMainWindow()!;
-    const pane = win.ZoteroPane;
-    const grid = win.document.getElementById("cover-view-grid")!;
-    const toggle = win.document.getElementById("cover-view-toggle")!;
-    const originallyHidden = grid.hidden;
-    const collection = new Zotero.Collection();
-    const destination = new Zotero.Collection();
-    const items: Zotero.Item[] = [];
-    const internal = Zotero.Utilities.Internal as unknown as {
-      onDragItems: (event: DragEvent, ids: number[], image: Element) => void;
-    };
-    const nativeHelper = internal.onDragItems;
-    const dragDrop = (
-      Zotero as typeof Zotero & {
-        DragDrop: {
-          currentDragSource: unknown;
-          currentOrientation: number;
-          currentDropEffect: string | null;
-        };
-      }
-    ).DragDrop;
-    const originalSource = dragDrop.currentDragSource;
-    const originalOrientation = dragDrop.currentOrientation;
-    const originalEffect = dragDrop.currentDropEffect;
-    const quickCopy = Zotero.QuickCopy as {
-      getFormatFromURL: (url: string) => string;
-      unserializeSetting: (setting: string) => unknown;
-      getContentFromItems: (...args: unknown[]) => unknown;
-    };
-    const originalFormat = quickCopy.getFormatFromURL;
-    const originalUnserialize = quickCopy.unserializeSetting;
-    const originalContent = quickCopy.getContentFromItems;
-    const calls: Array<{ ids: number[]; source: unknown; image: Element }> = [];
-    const waitFor = async (condition: () => boolean) => {
-      const deadline = Date.now() + 5000;
-      while (!condition() && Date.now() < deadline)
-        await Zotero.Promise.delay(20);
-      assert.isTrue(condition(), "Grid did not update");
-    };
-    try {
-      collection.name = `Grid drag ${Date.now()}`;
-      collection.libraryID = Zotero.Libraries.userLibraryID;
-      await collection.saveTx();
-      destination.name = `Grid drag destination ${Date.now()}`;
-      destination.libraryID = collection.libraryID;
-      await destination.saveTx();
-      for (let index = 0; index < 121; index++) {
-        const item = new Zotero.Item("book");
-        item.setField("title", `Grid drag ${String(index).padStart(3, "0")}`);
-        item.addToCollection(collection.id);
-        await item.saveTx();
-        items.push(item);
-      }
-      await pane.collectionsView!.selectByID(`C${collection.id}`);
-      if (grid.hidden) toggle.dispatchEvent(new win.Event("command"));
-      await waitFor(
-        () => !!grid.querySelector(`[data-item-id="${items[1].id}"]`),
-      );
-      const tiles = Array.from(
-        grid.querySelectorAll<HTMLElement>(".grid-view-item"),
-      );
-      const ids = items.map((item) => item.id);
-      await pane.selectItems([ids[120], ids[60], ids[0]]);
-      assert.notExists(grid.querySelector(`[data-item-id="${ids[60]}"]`));
-      const source = (
-        pane.itemsView as typeof pane.itemsView & {
-          collectionTreeRows: unknown[];
-        }
-      ).collectionTreeRows[0];
-      internal.onDragItems = (_event, dragIDs, image) => {
-        calls.push({
-          ids: [...dragIDs],
-          source: dragDrop.currentDragSource,
-          image,
-        });
-      };
-      const drag = (tile: HTMLElement) => {
-        const event = new win.Event("dragstart", {
-          bubbles: true,
-          cancelable: true,
-        }) as DragEvent;
-        Object.defineProperty(event, "dataTransfer", { value: {} });
-        tile.querySelector(".grid-view-title")!.dispatchEvent(event);
-        assert.isFalse(event.defaultPrevented);
-      };
-      drag(tiles[0]);
-      assert.deepEqual(calls[0].ids, [ids[0], ids[60], ids[120]]);
-      assert.strictEqual(calls[0].source, source);
-      assert.strictEqual(calls[0].image, tiles[0]);
-      drag(tiles[1]);
-      assert.deepEqual(calls[1].ids, [ids[1]]);
-      assert.deepEqual(
-        pane.getSelectedItems(true).sort(),
-        [ids[0], ids[60], ids[120]].sort(),
-      );
-      assert.isTrue(tiles[0].draggable);
-      assert.isFalse(tiles[0].querySelector("img")!.draggable);
+  it("drags mounted and unmounted selected items in displayed order without changing the selection", async function () {
+    const grid = await openGrid({ items: 150 });
+    const order = grid.displayedItems();
+    const [first, second] = order;
+    const middle = order[75];
+    const last = order.at(-1)!;
+    await grid.select([last, middle, first]);
+    assert.isNull(grid.findTile(middle), "the middle item is not mounted");
 
-      // Exercise the installed helper, not a duplicate file/Quick Copy implementation.
-      internal.onDragItems = nativeHelper;
-      quickCopy.getFormatFromURL = () => "test-bibliography";
-      quickCopy.unserializeSetting = () => ({ mode: "bibliography" });
-      quickCopy.getContentFromItems = () => ({
-        text: "Grid citation",
-        html: "<p>Grid citation</p>",
-      });
-      const data = new Map<string, string>();
-      const transfer = {
-        effectAllowed: "uninitialized",
-        setDragImage: () => {},
-        setData: (type: string, value: string) => data.set(type, String(value)),
-      };
-      const event = new win.Event("dragstart", {
-        bubbles: true,
-        cancelable: true,
-      }) as DragEvent;
-      Object.defineProperty(event, "dataTransfer", { value: transfer });
-      tiles[0].dispatchEvent(event);
-      assert.equal(data.get("zotero/item"), `${ids[0]},${ids[60]},${ids[120]}`);
-      assert.isTrue(
-        data.has("text/plain"),
-        "Native Quick Copy text is exposed",
-      );
-      assert.equal(data.get("text/html"), "<p>Grid citation</p>");
+    const transfer = grid.startDrag(first)!;
+    grid.endDrag();
+    assert.equal(
+      transfer.getData("zotero/item"),
+      [first, middle, last].join(","),
+    );
+    assert.sameMembers(grid.selectedItems(), [first, middle, last]);
 
-      grid.scrollTop = grid.scrollHeight;
-      grid.dispatchEvent(new win.Event("scroll"));
-      assert.isTrue(
-        grid.contains(tiles[0]),
-        "Scrolling retains the native drag source",
-      );
-      assert.notExists(grid.querySelector(`[data-item-id="${ids[1]}"]`));
-      assert.equal(data.get("zotero/item"), `${ids[0]},${ids[60]},${ids[120]}`);
-      assert.sameMembers(pane.getSelectedItems(true), [
-        ids[0],
-        ids[60],
-        ids[120],
-      ]);
-      tiles[0].dispatchEvent(new win.Event("dragend", { bubbles: true }));
+    const alone = grid.startDrag(second)!;
+    grid.endDrag();
+    assert.equal(alone.getData("zotero/item"), String(second));
+    await grid.settled();
+    assert.sameMembers(grid.selectedItems(), [first, middle, last]);
+  });
 
-      // Hand the actual payload to Zotero's collection drop handler. The grid
-      // does not emulate the collection tree's add/move/copy rules.
-      const collectionTree =
-        pane.collectionsView! as typeof pane.collectionsView & {
-          canDropCheck: (
-            row: number,
-            orientation: number,
-            transfer: unknown,
-          ) => boolean;
-          onDrop: (event: unknown, row: number) => Promise<void>;
-        };
-      const transferForDrop = {
-        types: [...data.keys()],
-        getData: (type: string) => data.get(type) ?? "",
-        dropEffect: "copy",
-        effectAllowed: "copyMove",
-      };
-      const sourceIndex = collectionTree.getRowIndexByID(`C${collection.id}`);
-      const targetIndex = collectionTree.getRowIndexByID(`C${destination.id}`);
-      assert.isNumber(sourceIndex);
-      assert.isNumber(targetIndex);
-      assert.isFalse(
-        collectionTree.canDropCheck(sourceIndex as number, 0, transferForDrop),
-      );
-      assert.isTrue(
-        collectionTree.canDropCheck(targetIndex as number, 0, transferForDrop),
-      );
-      dragDrop.currentOrientation = 0;
-      dragDrop.currentDropEffect = "copy";
-      await collectionTree.onDrop(
-        { dataTransfer: transferForDrop },
-        targetIndex as number,
-      );
-      assert.isTrue(destination.hasItem(ids[0]));
-      assert.isTrue(destination.hasItem(ids[60]));
-      assert.isTrue(destination.hasItem(ids[120]));
-      assert.isTrue(
-        collection.hasItem(ids[0]),
-        "Copy keeps source collection membership",
-      );
-    } finally {
-      win.document.dispatchEvent(new win.Event("dragend", { bubbles: true }));
-      internal.onDragItems = nativeHelper;
-      quickCopy.getFormatFromURL = originalFormat;
-      quickCopy.unserializeSetting = originalUnserialize;
-      quickCopy.getContentFromItems = originalContent;
-      dragDrop.currentDragSource = originalSource;
-      dragDrop.currentOrientation = originalOrientation;
-      dragDrop.currentDropEffect = originalEffect;
-      if (grid.hidden !== originallyHidden)
-        toggle.dispatchEvent(new win.Event("command"));
-      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
-      for (const item of items) await item.eraseTx();
-      if (destination.id) await destination.eraseTx();
-      if (collection.id) await collection.eraseTx();
-    }
+  it("offers the item's Quick Copy text", async function () {
+    // Zotero loads the citation styles Quick Copy needs on first use.
+    await Zotero.Styles.init();
+    const grid = await openGrid({ items: 1 });
+    const [item] = grid.items;
+    const transfer = grid.startDrag(item)!;
+    grid.endDrag();
+    assert.include(
+      transfer.getData("text/plain").toLowerCase(),
+      item.getField("title").toLowerCase(),
+    );
+  });
+
+  it("keeps the dragged tile while the grid scrolls during the drag", async function () {
+    const grid = await openGrid({ items: 150 });
+    const [, dragged] = grid.displayedItems();
+    assert.notEqual(
+      grid.focusedItem(),
+      dragged,
+      "the dragged tile is not kept as the focused one",
+    );
+    grid.startDrag(dragged);
+    grid.scroll(grid.grid.scrollHeight);
+    await grid.settled();
+    assert.isFalse(
+      grid.isVisible(dragged),
+      "the dragged tile is scrolled away",
+    );
+    assert.isNotNull(grid.findTile(dragged), "the dragged tile stays mounted");
+
+    grid.endDrag();
+    await grid.settled();
+    assert.isNull(
+      grid.findTile(dragged),
+      "the tile is released after the drag",
+    );
+  });
+
+  it("adds items dropped on another collection while keeping them in their own", async function () {
+    const grid = await openGrid({ items: 2 });
+    const [first, second] = grid.displayedItems();
+    const destination = await createCollection();
+    await grid.select([first, second]);
+
+    const ownRow = grid.collectionRow(grid.collection);
+    assert.isFalse(
+      grid.dragOver(ownRow, grid.startDrag(first)!).accepted,
+      "their own collection refuses them",
+    );
+    grid.endDrag();
+
+    const transfer = grid.startDrag(first)!;
+    const row = grid.collectionRow(destination);
+    const { accepted, dropEffect } = grid.dragOver(row, transfer);
+    assert.isTrue(accepted, "the collection accepts the items");
+    assert.equal(dropEffect, "copy");
+    grid.drop(row, transfer);
+    grid.endDrag();
+
+    await until(
+      () => destination.hasItem(first) && destination.hasItem(second),
+      "the destination collection to receive the items",
+      { observe: () => destination.getChildItems(true) },
+    );
+    assert.isTrue(grid.collection.hasItem(first));
+    assert.isTrue(grid.collection.hasItem(second));
   });
 });

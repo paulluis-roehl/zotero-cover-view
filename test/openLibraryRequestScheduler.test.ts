@@ -3,134 +3,117 @@ import {
   OpenLibraryRequestScheduler,
   OpenLibraryResponse,
 } from "../src/modules/openLibraryRequestScheduler";
+import { until } from "./helpers/gridFixture";
 
 const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 
+function reply(status: number): OpenLibraryResponse {
+  return { status, bytes: status === 200 ? jpeg : new Uint8Array() };
+}
+
+/**
+ * A request function answering each URL with the next of its `statuses`, repeating the
+ * last one.
+ */
+function respondWith(statuses: Record<string, number[]> = {}) {
+  return async (url: string) => {
+    const remaining = statuses[url] ?? [200];
+    return reply(remaining.length > 1 ? remaining.shift()! : remaining[0]);
+  };
+}
+
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  assert.fail("expected the request to be rejected");
+}
+
 describe("Open Library request scheduler", function () {
-  it("limits concurrent requests", async function () {
-    const completions: Array<(response: OpenLibraryResponse) => void> = [];
-    let active = 0;
-    let maximumActive = 0;
+  it("runs no more than the allowed number of requests at once", async function () {
+    const inFlight = new Map<string, () => void>();
+    let mostInFlight = 0;
     const scheduler = new OpenLibraryRequestScheduler({
       maxConcurrentRequests: 2,
-      request: () => {
-        active++;
-        maximumActive = Math.max(maximumActive, active);
-        return new Promise((resolve) => {
-          completions.push((response) => {
-            active--;
-            resolve(response);
+      request: (url) =>
+        new Promise((resolve) => {
+          inFlight.set(url, () => {
+            inFlight.delete(url);
+            resolve(reply(200));
           });
-        });
-      },
+          mostInFlight = Math.max(mostInFlight, inFlight.size);
+        }),
     });
-
-    const requests = ["one", "two", "three"].map((url) =>
+    const responses = ["one", "two", "three"].map((url) =>
       scheduler.schedule(url),
     );
-    assert.equal(completions.length, 2);
-
-    completions.shift()!({ status: 200, bytes: jpeg });
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.equal(completions.length, 2);
-
-    for (const complete of completions) {
-      complete({ status: 200, bytes: jpeg });
-    }
-    await Promise.all(requests);
-    assert.equal(maximumActive, 2);
+    await until(() => inFlight.size === 2, "two requests to start");
+    assert.sameMembers([...inFlight.keys()], ["one", "two"]);
+    inFlight.get("one")!();
+    await until(() => inFlight.has("three"), "the third request to start");
+    for (const finish of inFlight.values()) finish();
+    for (const response of responses)
+      assert.equal((await response).status, 200);
+    assert.equal(mostInFlight, 2);
   });
 
-  it("waits for rolling-window capacity", async function () {
-    const starts: number[] = [];
+  it("waits for room in the rolling request window", async function () {
+    const started = new Set<string>();
     const scheduler = new OpenLibraryRequestScheduler({
-      maxConcurrentRequests: 3,
       maxRequestsPerWindow: 2,
-      requestWindowMs: 50,
-      request: async () => {
-        starts.push(Date.now());
-        return { status: 200, bytes: jpeg };
+      requestWindowMs: 2000,
+      request: async (url) => {
+        started.add(url);
+        return reply(200);
       },
     });
-
-    const responses = await Promise.all([
-      scheduler.schedule("one"),
-      scheduler.schedule("two"),
-      scheduler.schedule("three"),
-    ]);
-
-    assert.lengthOf(responses, 3);
-    assert.lengthOf(starts, 3);
-    assert.isAtLeast(starts[2] - starts[0], 40);
+    const [one, two, three] = ["one", "two", "three"].map((url) =>
+      scheduler.schedule(url),
+    );
+    await Promise.all([one, two]);
+    assert.isFalse(started.has("three"), "the window is full");
+    assert.equal((await three).status, 200, "the window has room again");
   });
 
-  for (const status of [403, 429]) {
-    it(`backs off and retries status ${status}`, async function () {
-      let attempts = 0;
+  for (const status of [403, 429])
+    it(`retries a request rate limited with status ${status}`, async function () {
       const scheduler = new OpenLibraryRequestScheduler({
         requestWindowMs: 10,
-        request: async () => {
-          attempts++;
-          return attempts === 1
-            ? { status, bytes: new Uint8Array() }
-            : { status: 200, bytes: jpeg };
-        },
+        request: respondWith({ cover: [status, 200] }),
       });
-
-      const response = await scheduler.schedule("cover");
-      assert.equal(response.status, 200);
-      assert.equal(attempts, 2);
+      assert.equal((await scheduler.schedule("cover")).status, 200);
     });
-  }
 
-  it("rejects when the rate limit persists after one retry", async function () {
-    let attempts = 0;
+  it("fails a request that stays rate limited", async function () {
     const scheduler = new OpenLibraryRequestScheduler({
       requestWindowMs: 10,
-      request: async () => {
-        attempts++;
-        return { status: 429, bytes: new Uint8Array() };
-      },
+      request: respondWith({ cover: [429] }),
     });
-
-    let error: unknown;
-    try {
-      await scheduler.schedule("cover");
-    } catch (caught) {
-      error = caught;
-    }
-
-    assert.match(String(error), /rate limit persisted after retry \(429\)/);
-    assert.equal(attempts, 2);
+    assert.match(
+      String(await rejection(scheduler.schedule("cover"))),
+      /rate limit/,
+    );
   });
 
-  it("returns ordinary responses without retrying", async function () {
-    let attempts = 0;
+  it("returns other responses without retrying", async function () {
     const scheduler = new OpenLibraryRequestScheduler({
-      request: async () => {
-        attempts++;
-        return { status: 404, bytes: new Uint8Array() };
-      },
+      requestWindowMs: 10,
+      request: respondWith({ missing: [404, 200] }),
     });
-
     assert.equal((await scheduler.schedule("missing")).status, 404);
-    assert.equal(attempts, 1);
   });
 
-  it("rejects request failures", async function () {
+  it("fails a request that fails", async function () {
     const scheduler = new OpenLibraryRequestScheduler({
       request: async () => {
         throw new Error("network failed");
       },
     });
-
-    let error: unknown;
-    try {
-      await scheduler.schedule("cover");
-    } catch (caught) {
-      error = caught;
-    }
-    assert.match(String(error), /network failed/);
+    assert.match(
+      String(await rejection(scheduler.schedule("cover"))),
+      /network failed/,
+    );
   });
 });

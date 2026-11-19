@@ -1,242 +1,318 @@
 import { assert } from "chai";
-import { BasicTool } from "zotero-plugin-toolkit";
 import {
-  registerCoverColumn,
-  unregisterCoverColumn,
-} from "../src/modules/coverColumn";
-import { CoverProvider } from "../src/modules/coverProvider";
-import { getPref, setPref } from "../src/utils/prefs";
-import { coverImageFixture } from "./helpers/coverFixture";
+  focusWindow,
+  GridWindow,
+  ItemSpec,
+  onTeardown,
+  openGrid,
+  painted,
+  setPref,
+  track,
+  until,
+} from "./helpers/gridFixture";
+import {
+  fakeOpenLibrary,
+  imageBytes,
+  interceptOpenLibrary,
+  inventBook,
+  scratchFile,
+  uniqueISBN,
+} from "./helpers/testEnvironment";
 
-type Column = _ZoteroTypes.ItemTreeManager.ItemTreeCustomColumnOptions;
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  const deadline = Date.now() + 8000;
-  while (!condition() && Date.now() < deadline) await Zotero.Promise.delay(20);
-  assert.isTrue(condition(), "cover column did not update");
+function jpeg(): Uint8Array {
+  return imageBytes(40, 60, "image/jpeg");
 }
 
-describe("cover column refresh", function () {
-  this.timeout(20000);
-  const keys = [
-    "enableGridView",
-    "fetchISBNCover",
-    "fetchMetadataCover",
-  ] as const;
-  let saved: boolean[];
-  let originalRegister: typeof Zotero.ItemTreeManager.registerColumn;
-  let originalTrigger: typeof Zotero.Notifier.trigger;
-  let column: Column;
-  let host: HTMLElement;
-  let item: Zotero.Item;
-  let directory: string;
-  let file: string;
-  let cachedData: string | undefined;
+function isPlaceholder(uri: string): boolean {
+  return uri.startsWith("data:");
+}
 
-  before(function () {
-    Object.defineProperty(globalThis, "addon", {
-      value: (Zotero as typeof Zotero & { CoverView: typeof addon }).CoverView,
-      configurable: true,
+async function attachCover(parent: Zotero.Item): Promise<Zotero.Item> {
+  const file = await scratchFile("cover.png", imageBytes(40, 60));
+  const [child] = track(
+    await Zotero.Attachments.importFromFile({ file, parentItemID: parent.id }),
+  );
+  return child;
+}
+
+/** Wait until the Cover column shows one cover for `item` that `accepts`. */
+async function columnShows(
+  view: GridWindow,
+  item: Zotero.Item,
+  accepts: (uri: string) => boolean,
+  description: string,
+): Promise<string> {
+  const covers = () => {
+    try {
+      return view.coverColumnCovers(item);
+    } catch (error) {
+      return String(error);
+    }
+  };
+  return until(
+    () => {
+      const shown = covers();
+      return Array.isArray(shown) && shown.length === 1 && accepts(shown[0])
+        ? shown[0]
+        : undefined;
+    },
+    `the Cover column to show ${description}`,
+    { observe: covers },
+  );
+}
+
+async function tileShows(
+  view: GridWindow,
+  item: Zotero.Item,
+  kind: "attachment" | "online" | "placeholder",
+): Promise<string> {
+  const cover = await until(
+    () =>
+      view.currentCover(item)?.kind === kind
+        ? view.currentCover(item)
+        : undefined,
+    `the tile to show a ${kind} cover`,
+    { observe: () => view.currentCover(item) },
+  );
+  return cover.uri;
+}
+
+/** A book with a cover found by ISBN and one with a cover found by title. */
+function booksWithOnlineCovers(): {
+  isbn: string;
+  edition: string;
+  specs: [ItemSpec, ItemSpec];
+} {
+  const library = fakeOpenLibrary();
+  const isbn = uniqueISBN();
+  library.addISBNCover(isbn, jpeg());
+  const { title, creator } = inventBook();
+  const edition = library.addBook(
+    title,
+    `${creator.lastName}, ${creator.firstName}`,
+    jpeg(),
+  );
+  return {
+    isbn,
+    edition,
+    specs: [
+      { setup: (item) => item.setField("ISBN", isbn) },
+      {
+        title,
+        setup: (item) =>
+          item.setCreators([{ ...creator, creatorType: "author" }]),
+      },
+    ],
+  };
+}
+
+describe("Cover column", function () {
+  this.timeout(30000);
+
+  it("shows the same current cover as the item's tile, whatever the grid's decorations", async function () {
+    setPref("fetchISBNCover", true);
+    setPref("fetchMetadataCover", true);
+    setPref("tileSize", 90);
+    setPref("desaturateOnlineCovers", true);
+    setPref("showItemTypeIcon", true);
+    const { specs } = booksWithOnlineCovers();
+    const families = [
+      "book",
+      "report",
+      "audioRecording",
+      "film",
+      "artwork",
+      "dataset",
+    ] as const;
+    const grid = await openGrid({
+      items: [
+        {},
+        ...specs,
+        ...families.map((itemType) => ({ itemType })),
+        { itemType: "note", setup: (note) => note.setNote("<p>Notes</p>") },
+      ],
     });
-    Object.defineProperty(globalThis, "ztoolkit", {
-      value: new BasicTool(),
-      configurable: true,
-    });
+    const [attached, byISBN, byTitle, ...placeholders] = grid.items;
+    await attachCover(attached);
+    const expected = new Map<Zotero.Item, string>([
+      [attached, await tileShows(grid, attached, "attachment")],
+      [byISBN, await tileShows(grid, byISBN, "online")],
+      [byTitle, await tileShows(grid, byTitle, "online")],
+    ]);
+    for (const item of placeholders)
+      expected.set(item, await tileShows(grid, item, "placeholder"));
+
+    grid.showColumn("Cover");
+    await grid.showList();
+    for (const [item, uri] of expected)
+      await columnShows(
+        grid,
+        item,
+        (shown) => shown === uri,
+        `the tile's cover for ${item.itemType} ${item.getDisplayTitle()}`,
+      );
   });
 
-  after(function () {
-    CoverProvider.unregisterNotifier();
-    Reflect.deleteProperty(globalThis, "addon");
-    Reflect.deleteProperty(globalThis, "ztoolkit");
-  });
-
-  function render(): void {
-    // Native row data may remain cached when only cells are re-rendered.
-    const data = (cachedData ??= column.dataProvider!(item, "cover"));
-    host.replaceChildren(
-      column.renderCell!(
-        0,
-        data,
-        { className: "cover", dataKey: "cover", label: "Cover" },
-        false,
-        host.ownerDocument!,
-      ),
+  it("refreshes when an attachment-derived cover is added and removed, keeping the selection", async function () {
+    setPref("fetchISBNCover", false);
+    setPref("fetchMetadataCover", false);
+    const grid = await openGrid({ view: "list", items: 2 });
+    const [item, other] = grid.items;
+    grid.showColumn("Cover");
+    await grid.select([other]);
+    const placeholder = await columnShows(
+      grid,
+      item,
+      isPlaceholder,
+      "a placeholder cover",
     );
-  }
 
-  beforeEach(async function () {
-    saved = keys.map(getPref);
-    keys.forEach((key) => setPref(key, false));
-    originalRegister = Zotero.ItemTreeManager.registerColumn;
-    originalTrigger = Zotero.Notifier.trigger;
-    Zotero.ItemTreeManager.registerColumn = ((options: Column) => {
-      column = options;
-      return "test-cover";
-    }) as typeof originalRegister;
-    Zotero.Notifier.trigger = ((event, type, ids, ...args) => {
-      if (event === "redraw" && type === "item") render();
-      return originalTrigger.call(Zotero.Notifier, event, type, ids, ...args);
-    }) as typeof originalTrigger;
-    host = Zotero.getMainWindow()!.document.createElement("div");
-    Zotero.getMainWindow()!.document.documentElement!.append(host);
-    directory = `/tmp/opencode/column-${Zotero.Utilities.randomString()}`;
-    await IOUtils.makeDirectory(directory, { createAncestors: true });
-    file = PathUtils.join(directory, "cover.png");
-    await IOUtils.write(file, coverImageFixture(40, 60));
-    item = new Zotero.Item("book");
-    item.setField("title", "Cover column refresh test");
-    await item.saveTx();
-    cachedData = undefined;
-    CoverProvider.registerNotifier();
-    await registerCoverColumn();
-  });
-
-  afterEach(async function () {
-    unregisterCoverColumn();
-    Zotero.ItemTreeManager.registerColumn = originalRegister;
-    Zotero.Notifier.trigger = originalTrigger;
-    host.remove();
-    await item.eraseTx();
-    keys.forEach((key, index) => setPref(key, saved[index]));
-    CoverProvider.clearCache();
-    await IOUtils.remove(directory, { recursive: true });
-  });
-
-  it("refreshes an existing displayed cover on provider notifications without grid view", async function () {
-    render();
-    const image = () => host.querySelector("img");
-    await waitFor(() => !!image());
-    const placeholder = image()!.src;
-    const selection = Zotero.getMainWindow()!.ZoteroPane.getSelectedItems(true);
-    const attachment = await Zotero.Attachments.importFromFile({
-      file,
-      parentItemID: item.id,
-    });
-    await waitFor(() => !!image()?.src.includes(attachment.key));
+    const attachment = await attachCover(item);
+    await columnShows(
+      grid,
+      item,
+      (uri) => uri.includes(attachment.key),
+      "the attachment-derived cover",
+    );
     await attachment.eraseTx();
-    await waitFor(() => image()?.src === placeholder);
-    assert.deepEqual(
-      Zotero.getMainWindow()!.ZoteroPane.getSelectedItems(true),
-      selection,
+    await columnShows(
+      grid,
+      item,
+      (uri) => uri === placeholder,
+      "the placeholder cover again",
     );
+    assert.deepEqual(grid.selectedItems(), [other.id]);
   });
 
-  for (const scenario of ["refresh", "recycle", "teardown"] as const) {
-    it(`ignores a delayed cover after ${scenario}`, async function () {
-      await Zotero.Attachments.importFromFile({ file, parentItemID: item.id });
-      const read = IOUtils.read;
-      let release: (() => void) | undefined;
-      let pending: Promise<Uint8Array> | undefined;
-      let oldCell: HTMLElement | undefined;
-      let replacement: Zotero.Item | undefined;
-      const originalItem = item;
-      IOUtils.read = ((path, options) => {
-        const result = read(path, options);
-        if (options?.maxBytes !== 1 || pending) return result;
-        pending = new Promise<void>((resolve) => {
-          release = resolve;
-        }).then(() => result);
-        return pending;
-      }) as typeof read;
-      try {
-        // Start a fresh lookup whose filesystem probe is held at the boundary.
-        CoverProvider.invalidate(item.id);
-        render();
-        const oldLookup = CoverProvider.getCover(item.id);
-        await waitFor(() => !!release);
-        oldCell = host.firstElementChild as HTMLElement;
-        if (scenario === "refresh") {
-          setPref("fetchISBNCover", true);
-          await waitFor(() => host.firstElementChild !== oldCell);
-        } else if (scenario === "recycle") {
-          replacement = new Zotero.Item("book");
-          replacement.setField("title", "Recycled row");
-          await replacement.saveTx();
-          item = replacement;
-          cachedData = undefined;
-          render();
-          await waitFor(() => !!host.querySelector("img"));
-        } else {
-          unregisterCoverColumn();
-        }
-        release!();
-        await pending;
-        await oldLookup;
-        await Zotero.Promise.delay(100);
-        assert.isNull(
-          oldCell.querySelector("img"),
-          "obsolete cell stays empty",
-        );
-        if (scenario !== "teardown") {
-          await waitFor(() => !!host.querySelector("img"));
-          assert.lengthOf(host.querySelectorAll("img"), 1);
-        }
-      } finally {
-        release?.();
-        await pending;
-        IOUtils.read = read;
-        if (replacement) {
-          await replacement.eraseTx();
-          item = originalItem;
-        }
-      }
-    });
-  }
+  it("refreshes when cover-relevant metadata changes", async function () {
+    setPref("fetchISBNCover", true);
+    setPref("fetchMetadataCover", false);
+    const library = fakeOpenLibrary();
+    const isbn = uniqueISBN();
+    library.addISBNCover(isbn, jpeg());
+    const grid = await openGrid({ view: "list", items: 1 });
+    const [item] = grid.items;
+    grid.showColumn("Cover");
+    const before = await columnShows(
+      grid,
+      item,
+      isPlaceholder,
+      "a placeholder cover",
+    );
 
-  it("re-resolves cached covers when lookup preferences change", async function () {
-    const isbn = "9780140328721";
+    item.setField("title", inventBook().title);
+    await item.saveTx();
+    await columnShows(
+      grid,
+      item,
+      (uri) => isPlaceholder(uri) && uri !== before,
+      "a placeholder cover for the new title",
+    );
+
     item.setField("ISBN", isbn);
     await item.saveTx();
-    const cache = PathUtils.join(
-      Zotero.DataDirectory.dir,
-      "coverview",
-      "covers",
-      "open-library",
+    await columnShows(
+      grid,
+      item,
+      (uri) => uri.includes(`${isbn}.jpg`),
+      "the online-sourced cover found by ISBN",
     );
-    const path = PathUtils.join(cache, `${isbn}.jpg`);
-    const backup = (await IOUtils.exists(path))
-      ? await IOUtils.read(path)
-      : undefined;
-    try {
-      await IOUtils.makeDirectory(cache, { createAncestors: true });
-      await IOUtils.write(path, coverImageFixture(40, 60, "image/jpeg"));
-      render();
-      const image = () => host.querySelector("img");
-      await waitFor(() => !!image());
-      const placeholder = image()!.src;
-      setPref("fetchISBNCover", true);
-      await waitFor(() => !!image()?.src.includes(`${isbn}.jpg`));
-      setPref("fetchISBNCover", false);
-      await waitFor(() => image()?.src === placeholder);
-    } finally {
-      if (backup) await IOUtils.write(path, backup);
-      else await IOUtils.remove(path, { ignoreAbsent: true });
-    }
   });
 
-  it("refreshes across registration cycles and stops updating after teardown", async function () {
-    render();
-    await waitFor(() => !!host.querySelector("img"));
-    await registerCoverColumn();
-    const image = () => host.querySelector("img")!;
-    let previous = image().src;
-    // Changing metadata through the public provider emits a cover change
-    // without involving the separately bundled running add-on's notifier.
-    item.setField("title", "New placeholder title");
-    await item.saveTx({ skipNotifier: true });
-    CoverProvider.cacheCover(item);
-    await waitFor(() => !!image() && image().src !== previous);
-    unregisterCoverColumn();
-    previous = image().src;
-    item.setField("title", "Title changed after teardown");
-    await item.saveTx({ skipNotifier: true });
-    CoverProvider.cacheCover(item);
-    await CoverProvider.getCover(item.id);
-    assert.equal(image().src, previous);
-    await registerCoverColumn();
-    item.setField("title", "Title changed after re-registration");
-    await item.saveTx({ skipNotifier: true });
-    CoverProvider.cacheCover(item);
-    await waitFor(() => !!image() && image().src !== previous);
+  it("refreshes when either cover lookup setting changes", async function () {
+    setPref("fetchISBNCover", false);
+    setPref("fetchMetadataCover", false);
+    const { isbn, edition, specs } = booksWithOnlineCovers();
+    const grid = await openGrid({ view: "list", items: specs });
+    const [byISBN, byTitle] = grid.items;
+    grid.showColumn("Cover");
+    for (const item of [byISBN, byTitle])
+      await columnShows(grid, item, isPlaceholder, "a placeholder cover");
+
+    setPref("fetchISBNCover", true);
+    await columnShows(
+      grid,
+      byISBN,
+      (uri) => uri.includes(`${isbn}.jpg`),
+      "the cover found by ISBN",
+    );
+    await columnShows(grid, byTitle, isPlaceholder, "a placeholder cover");
+
+    setPref("fetchMetadataCover", true);
+    await columnShows(
+      grid,
+      byTitle,
+      (uri) => uri.includes(edition),
+      "the cover found by title and creator",
+    );
+
+    setPref("fetchISBNCover", false);
+    setPref("fetchMetadataCover", false);
+    for (const item of [byISBN, byTitle])
+      await columnShows(grid, item, isPlaceholder, "a placeholder cover again");
+  });
+
+  it("shows covers found after a lookup setting changed while the grid view was active", async function () {
+    setPref("fetchISBNCover", false);
+    setPref("fetchMetadataCover", false);
+    const { specs } = booksWithOnlineCovers();
+    const grid = await openGrid({ items: specs });
+    const [byISBN, byTitle] = grid.items;
+    grid.showColumn("Cover");
+    for (const item of [byISBN, byTitle])
+      await tileShows(grid, item, "placeholder");
+
+    setPref("fetchISBNCover", true);
+    setPref("fetchMetadataCover", true);
+    const covers = [
+      await tileShows(grid, byISBN, "online"),
+      await tileShows(grid, byTitle, "online"),
+    ];
+    await grid.showList();
+    for (const [index, item] of [byISBN, byTitle].entries())
+      await columnShows(
+        grid,
+        item,
+        (uri) => uri === covers[index],
+        "the online-sourced cover",
+      );
+  });
+
+  it("shows only the current cover when an earlier online lookup finishes late", async function () {
+    setPref("fetchISBNCover", true);
+    setPref("fetchMetadataCover", false);
+    const isbn = uniqueISBN();
+    const bytes = jpeg();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    onTeardown(() => release());
+    const { requests } = interceptOpenLibrary(async () => {
+      await gate;
+      return { bytes };
+    });
+    const withISBN: ItemSpec = { setup: (item) => item.setField("ISBN", isbn) };
+    const grid = await openGrid({ view: "list", items: [withISBN, withISBN] });
+    const [item, twin] = grid.items;
+    grid.showColumn("Cover");
+    await until(() => requests.length, "the online lookup to start");
+
+    const attachment = await attachCover(item);
+    const current = await columnShows(
+      grid,
+      item,
+      (uri) => uri.includes(attachment.key),
+      "the attachment-derived cover",
+    );
+    release();
+    // The same reply completes the lookup of a book with the same ISBN.
+    await columnShows(
+      grid,
+      twin,
+      (uri) => uri.includes(`${isbn}.jpg`),
+      "the online-sourced cover of the other book",
+    );
+    focusWindow(grid.win);
+    await painted(grid.win);
+    assert.deepEqual(grid.coverColumnCovers(item), [current]);
   });
 });

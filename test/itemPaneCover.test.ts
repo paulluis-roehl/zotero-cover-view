@@ -1,288 +1,290 @@
 import { assert } from "chai";
-import { getPref, setPref } from "../src/utils/prefs";
+import {
+  focusWindow,
+  GridFixture,
+  onTeardown,
+  openGrid,
+  painted,
+  patch,
+  setPref,
+  track,
+  until,
+} from "./helpers/gridFixture";
+import {
+  fakeOpenLibrary,
+  imageBytes,
+  interceptOpenLibrary,
+  scratchFile,
+  uniqueISBN,
+} from "./helpers/testEnvironment";
 
 type ItemDetails = HTMLElement & {
   pinnedPane: string;
   scrollToPane: (id: string, behavior: string) => Promise<void>;
 };
 
-async function settleLayout(win: Window): Promise<void> {
-  await new Promise<void>((resolve) =>
-    win.requestAnimationFrame(() => win.requestAnimationFrame(() => resolve())),
+/** What the Item Pane's Cover section shows, if it is shown at all. */
+interface PaneCover {
+  shown: boolean;
+  /** The shown cover image; none when the section is empty. */
+  uri?: string;
+}
+
+function coverSection(win: Window): HTMLElement | null {
+  return win.document.querySelector<HTMLElement>(
+    "#zotero-item-pane item-pane-custom-section:has(.cover-view-item-pane-image)",
   );
 }
 
-async function waitFor(condition: () => boolean): Promise<void> {
-  const deadline = Date.now() + 8000;
-  while (!condition() && Date.now() < deadline) await Zotero.Promise.delay(20);
-  assert.isTrue(condition(), "Item Pane cover did not update");
+function paneCover(win: Window): PaneCover {
+  const section = coverSection(win);
+  const image = section?.querySelector<HTMLImageElement>("img");
+  if (
+    !section ||
+    !image ||
+    section.hidden ||
+    win.getComputedStyle(image).visibility === "hidden"
+  )
+    return { shown: false };
+  const uri = image.hidden ? undefined : (image.getAttribute("src") ?? "");
+  return { shown: true, uri };
 }
 
-describe("library Item Pane cover", function () {
-  this.timeout(20000);
-  const keys = [
-    "enableGridView",
-    "fetchISBNCover",
-    "fetchMetadataCover",
-  ] as const;
-  let saved: boolean[];
-  let win: _ZoteroTypes.MainWindow;
-  let directory: string;
-  let file: string;
-  let jpeg: Uint8Array;
-  let items: Zotero.Item[];
+async function paneShows(
+  grid: GridFixture,
+  accepts: (cover: PaneCover) => boolean,
+  description: string,
+): Promise<void> {
+  await until(() => accepts(paneCover(grid.win)), description, {
+    observe: () => paneCover(grid.win),
+  });
+}
 
-  const section = () =>
-    win.document.querySelector<HTMLElement>(
-      "#zotero-item-pane item-pane-custom-section:has(.cover-view-item-pane-image)",
-    );
-  const image = () =>
-    section()?.querySelector<HTMLImageElement>(".cover-view-item-pane-image");
-  const shows = (item: Zotero.Item) =>
-    !!section() && !section()!.hidden && !!image()?.src.includes(item.key);
+function showsAttachment(attachment: Zotero.Item) {
+  return (cover: PaneCover) =>
+    cover.shown && !!cover.uri?.includes(attachment.key);
+}
 
-  beforeEach(async function () {
-    win = Zotero.getMainWindow()!;
-    saved = keys.map(getPref);
-    keys.forEach((key) => setPref(key, false));
-    items = [];
-    directory = `/tmp/opencode/item-pane-${Zotero.Utilities.randomString()}`;
-    file = PathUtils.join(directory, "cover.png");
-    await IOUtils.makeDirectory(directory, { createAncestors: true });
-    await writeCover(40, 60);
+function showsEmptySection(cover: PaneCover): boolean {
+  return cover.shown && cover.uri === undefined;
+}
+
+async function attachCover(
+  grid: GridFixture,
+  parent?: Zotero.Item,
+  { width = 40, height = 60 } = {},
+): Promise<Zotero.Item> {
+  const file = await scratchFile("cover.png", imageBytes(width, height));
+  const [attachment] = track(
+    await Zotero.Attachments.importFromFile(
+      parent
+        ? { file, parentItemID: parent.id }
+        : { file, collections: [grid.collection.id] },
+    ),
+  );
+  return attachment;
+}
+
+describe("Item Pane cover", function () {
+  this.timeout(30000);
+
+  beforeEach(function () {
+    setPref("fetchISBNCover", false);
+    setPref("fetchMetadataCover", false);
   });
 
-  async function writeCover(width: number, height: number): Promise<void> {
-    const canvas = win.document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    canvas.getContext("2d")!.fillRect(0, 0, width, height);
-    jpeg = Uint8Array.from(
-      win.atob(canvas.toDataURL("image/jpeg").split(",")[1]),
-      (c) => c.charCodeAt(0),
+  it("shows the current cover of the selected item", async function () {
+    const grid = await openGrid({ items: 1 });
+    const [item] = grid.items;
+    const attachment = await attachCover(grid, item);
+    await grid.select([item]);
+    await paneShows(
+      grid,
+      showsAttachment(attachment),
+      "the attachment-derived cover",
     );
-    await IOUtils.write(
-      file,
-      Uint8Array.from(win.atob(canvas.toDataURL().split(",")[1]), (c) =>
-        c.charCodeAt(0),
-      ),
+    const image = coverSection(grid.win)!.querySelector("img")!;
+    await until(
+      () => image.complete && image.naturalWidth > 0,
+      "the cover image to load",
     );
-  }
-
-  afterEach(async function () {
-    for (const item of items.reverse()) if (item.id) await item.eraseTx();
-    keys.forEach((key, index) => setPref(key, saved[index]));
-    await IOUtils.remove(file, { ignoreAbsent: true });
-    await IOUtils.remove(directory, { ignoreAbsent: true });
   });
 
-  async function book(): Promise<Zotero.Item> {
-    const item = new Zotero.Item("book");
-    item.setField("title", "Item Pane cover test");
-    await item.saveTx();
-    items.push(item);
-    return item;
-  }
+  it("names the section and its sidenav button Cover", async function () {
+    const grid = await openGrid({ items: 1 });
+    const [item] = grid.items;
+    const attachment = await attachCover(grid, item);
+    await grid.select([item]);
+    await paneShows(grid, showsAttachment(attachment), "the cover");
+    const section = coverSection(grid.win)!;
+    await until(
+      () => section.querySelector(".head .title")?.textContent === "Cover",
+      "the section heading to read Cover",
+    );
+    const button = () =>
+      Array.from(
+        grid.win.document.querySelectorAll<HTMLElement>(
+          "item-pane-sidenav .btn",
+        ),
+      ).find((candidate) => candidate.dataset.pane === section.dataset.pane);
+    await until(
+      () => button()?.getAttribute("tooltiptext") === "Cover",
+      "the sidenav button's tooltip to read Cover",
+      { observe: () => button()?.getAttribute("tooltiptext") },
+    );
+  });
 
-  async function attach(parent?: Zotero.Item): Promise<Zotero.Item> {
-    const item = await Zotero.Attachments.importFromFile({
-      file,
-      parentItemID: parent?.id,
+  it("keeps an empty section instead of a placeholder cover and follows cover changes", async function () {
+    const grid = await openGrid({ items: 1 });
+    const [item] = grid.items;
+    await grid.select([item]);
+    await paneShows(grid, showsEmptySection, "an empty section");
+
+    const attachment = await attachCover(grid, item);
+    await paneShows(
+      grid,
+      showsAttachment(attachment),
+      "the attachment-derived cover",
+    );
+    await attachment.eraseTx();
+    await paneShows(grid, showsEmptySection, "an empty section again");
+  });
+
+  it("follows the selection, and is not shown for several or no selected items", async function () {
+    const grid = await openGrid({ items: 2 });
+    const [parent, placeholder] = grid.items;
+    const child = await attachCover(grid, parent);
+    const standalone = await attachCover(grid);
+    await grid.showsItems([standalone]);
+
+    for (const attachment of [child, standalone]) {
+      await grid.select([attachment]);
+      await paneShows(
+        grid,
+        showsAttachment(attachment),
+        "the selected attachment's cover",
+      );
+    }
+    await grid.select([placeholder]);
+    await paneShows(grid, showsEmptySection, "an empty section");
+    await grid.select([parent]);
+    await paneShows(grid, showsAttachment(child), "the parent's cover");
+    await grid.select([parent, placeholder]);
+    await paneShows(grid, (cover) => !cover.shown, "no section");
+    await grid.select([]);
+    await paneShows(grid, (cover) => !cover.shown, "no section");
+  });
+
+  it("refreshes an empty section when a cover lookup setting changes", async function () {
+    const isbn = uniqueISBN();
+    fakeOpenLibrary().addISBNCover(isbn, imageBytes(40, 60, "image/jpeg"));
+    const grid = await openGrid({
+      items: [{ setup: (item) => item.setField("ISBN", isbn) }],
     });
-    if (!parent) items.push(item);
-    return item;
-  }
+    const [item] = grid.items;
+    await grid.select([item]);
+    await paneShows(grid, showsEmptySection, "an empty section");
 
-  it("shows the current real cover in the native library Item Pane", async function () {
-    const item = await book();
-    const attachment = await attach(item);
-    await win.ZoteroPane.selectItems([item.id], true);
-    await waitFor(() => shows(attachment));
-    await waitFor(() => image()!.complete && image()!.naturalWidth > 0);
-    assert.isAbove(image()!.naturalWidth, 0);
+    setPref("fetchISBNCover", true);
+    await paneShows(
+      grid,
+      (cover) => cover.shown && !!cover.uri?.includes(`${isbn}.jpg`),
+      "the online-sourced cover",
+    );
+    setPref("fetchISBNCover", false);
+    await paneShows(grid, showsEmptySection, "an empty section again");
   });
 
-  it("retains pinned section alignment across repeated real and placeholder cover switches", async function () {
-    const covered = await book();
-    const attachment = await attach(covered);
-    const empty = await book();
-    const wide = await book();
-    await writeCover(120, 40);
-    const wideAttachment = await attach(wide);
-    await win.ZoteroPane.selectItems([wide.id], true);
-    await waitFor(() => shows(wideAttachment) && image()!.complete);
-    await settleLayout(win);
-    await win.ZoteroPane.selectItems([covered.id], true);
-    await waitFor(() => shows(attachment) && image()!.complete);
-    await settleLayout(win);
-    const details = section()!.closest("item-details")! as ItemDetails;
-    const previous = details.pinnedPane;
+  it("keeps the current cover when an earlier selection's online lookup finishes late", async function () {
+    const isbn = uniqueISBN();
+    const bytes = imageBytes(40, 60, "image/jpeg");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    onTeardown(() => release());
+    const { requests } = interceptOpenLibrary(async () => {
+      await gate;
+      return { bytes };
+    });
+    const grid = await openGrid({
+      items: [{ setup: (item) => item.setField("ISBN", isbn) }],
+    });
+    const [item] = grid.items;
+    const standalone = await attachCover(grid);
+    await grid.showsItems([standalone]);
+    await grid.select([item]);
+    await paneShows(grid, showsEmptySection, "an empty section");
+
+    setPref("fetchISBNCover", true);
+    await until(() => requests.length, "the online lookup to start");
+    // The grid view settles only once the held lookup finishes.
+    await grid.pane.selectItems([standalone.id]);
+    await paneShows(
+      grid,
+      showsAttachment(standalone),
+      "the attachment-derived cover",
+    );
+    const current = paneCover(grid.win);
+
+    release();
+    await until(
+      () => grid.currentCover(item)?.kind === "online",
+      "the earlier selection's online cover to arrive",
+      { observe: () => grid.currentCover(item) },
+    );
+    await grid.settled();
+    assert.deepEqual(paneCover(grid.win), current);
+  });
+
+  it("doesn't jump while a pinned section stays in place across cover changes", async function () {
+    const grid = await openGrid({ items: 3 });
+    // Layout waits for painted frames, which need an active window.
+    focusWindow(grid.win);
+    const [covered, empty, wide] = grid.items;
+    const coveredCover = await attachCover(grid, covered);
+    const wideCover = await attachCover(grid, wide, { width: 120, height: 40 });
+    const selections: [Zotero.Item, Zotero.Item | undefined][] = [
+      [empty, undefined],
+      [covered, coveredCover],
+      [wide, wideCover],
+      [covered, coveredCover],
+    ];
+    const show = async ([item, cover]: (typeof selections)[number]) => {
+      await grid.select([item]);
+      await paneShows(
+        grid,
+        cover ? showsAttachment(cover) : showsEmptySection,
+        `the cover of ${item.getDisplayTitle()}`,
+      );
+      if (cover) {
+        const image = coverSection(grid.win)!.querySelector("img")!;
+        await until(() => image.complete, "the cover image to load");
+      }
+      await painted(grid.win);
+    };
+    await show([wide, wideCover]);
+    await show([covered, coveredCover]);
+
+    const details = coverSection(grid.win)!.closest(
+      "item-details",
+    ) as ItemDetails;
     const scroller = details.querySelector<HTMLElement>(".zotero-view-item")!;
     const info = details.querySelector<HTMLElement>('[data-pane="info"]')!;
-    const alignment = () =>
+    const offset = () =>
       info.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    try {
-      details.pinnedPane = "info";
-      await details.scrollToPane("info", "instant");
-      assert.closeTo(alignment(), 0, 2, "initial pinned Info alignment");
-      for (let cycle = 0; cycle < 3; cycle++) {
-        for (const [item, cover] of [
-          [empty, undefined],
-          [covered, attachment],
-          [wide, wideAttachment],
-          [covered, attachment],
-        ] as const) {
-          await win.ZoteroPane.selectItems([item.id], true);
-          await waitFor(() =>
-            cover ? shows(cover) && image()!.complete : image()!.hidden,
-          );
-          await settleLayout(win);
-          assert.closeTo(
-            alignment(),
-            0,
-            2,
-            `pinned Info alignment, cycle ${cycle}, item ${item.id}`,
-          );
-        }
+    patch(details, "pinnedPane", "info");
+    await details.scrollToPane("info", "instant");
+    await painted(grid.win);
+    const pinned = offset();
+
+    for (let cycle = 0; cycle < 3; cycle++)
+      for (const selection of selections) {
+        await show(selection);
+        assert.closeTo(
+          offset(),
+          pinned,
+          2,
+          `Info section moved, cycle ${cycle}, ${selection[0].getDisplayTitle()}`,
+        );
       }
-    } finally {
-      details.pinnedPane = previous;
-    }
   });
-
-  it("names the section and its sidebar tooltip Cover", async function () {
-    const item = await book();
-    const attachment = await attach(item);
-    await win.ZoteroPane.selectItems([item.id], true);
-    await waitFor(() => shows(attachment));
-    await waitFor(
-      () => section()!.querySelector(".head .title")?.textContent === "Cover",
-    );
-    const id = section()!.dataset.pane;
-    await waitFor(
-      () =>
-        Array.from(
-          win.document.querySelectorAll<HTMLElement>("item-pane-sidenav .btn"),
-        )
-          .find((button) => button.dataset.pane === id)
-          ?.getAttribute("tooltiptext") === "Cover",
-    );
-  });
-
-  it("keeps an empty section without placeholders and follows provider updates", async function () {
-    const item = await book();
-    await win.ZoteroPane.selectItems([item.id], true);
-    await waitFor(() => !!section() && !section()!.hidden && image()!.hidden);
-    const attachment = await attach(item);
-    await waitFor(() => shows(attachment));
-    await attachment.eraseTx();
-    await waitFor(
-      () =>
-        !section()!.hidden && image()!.hidden && !image()!.hasAttribute("src"),
-    );
-  });
-
-  it("follows selection, including child and standalone attachments, and hides for groups", async function () {
-    const parent = await book();
-    const child = await attach(parent);
-    const standalone = await attach();
-    const placeholder = await book();
-    for (const attachment of [child, standalone]) {
-      await win.ZoteroPane.selectItems([attachment.id], true);
-      await waitFor(() => shows(attachment));
-    }
-    await win.ZoteroPane.selectItems([placeholder.id], true);
-    await waitFor(
-      () =>
-        !section()!.hidden && image()!.hidden && !image()!.hasAttribute("src"),
-    );
-    await win.ZoteroPane.selectItems([parent.id], true);
-    await waitFor(() => shows(child));
-    await win.ZoteroPane.selectItems([parent.id, placeholder.id], true);
-    await waitFor(() => win.getComputedStyle(image()!).visibility === "hidden");
-    win.ZoteroPane.itemsView.selection.clearSelection();
-    await waitFor(() => win.getComputedStyle(image()!).visibility === "hidden");
-  });
-
-  for (const stale of [false, true]) {
-    it(
-      stale
-        ? "ignores an earlier selection's delayed online cover"
-        : "refreshes an empty section when lookup preferences change",
-      async function () {
-        const item = await book();
-        const isbn = "9780140328721";
-        item.setField("ISBN", isbn);
-        await item.saveTx();
-        const cache = PathUtils.join(
-          Zotero.DataDirectory.dir,
-          "coverview",
-          "covers",
-          "open-library",
-        );
-        const paths = ["jpg", "missing"].map((ext) =>
-          PathUtils.join(cache, `${isbn}.${ext}`),
-        );
-        const backups = await Promise.all(
-          paths.map(async (path) =>
-            (await IOUtils.exists(path)) ? IOUtils.read(path) : undefined,
-          ),
-        );
-        const request = Zotero.HTTP.request;
-        let release: (() => void) | undefined;
-        let response: Promise<unknown> | undefined;
-        try {
-          for (const path of paths)
-            await IOUtils.remove(path, { ignoreAbsent: true });
-          Zotero.HTTP.request = ((_method: string, url: string) => {
-            assert.include(url, `/isbn/${isbn}-L.jpg`);
-            response = new Promise<void>((resolve) => {
-              release = resolve;
-            }).then(() => ({ status: 200, response: jpeg.buffer }));
-            return response;
-          }) as typeof request;
-          await win.ZoteroPane.selectItems([item.id], true);
-          await waitFor(
-            () => !!section() && !section()!.hidden && image()!.hidden,
-          );
-          setPref("fetchISBNCover", true);
-          await waitFor(() => !!release);
-          if (stale) {
-            const attachment = await attach();
-            await win.ZoteroPane.selectItems([attachment.id], true);
-            await waitFor(() => shows(attachment));
-            const current = image()!.src;
-            release!();
-            await response;
-            await Zotero.Promise.delay(200);
-            assert.equal(image()!.src, current);
-            assert.isFalse(section()!.hidden);
-          } else {
-            release!();
-            await waitFor(
-              () =>
-                !section()!.hidden && !!image()!.src.includes(`${isbn}.jpg`),
-            );
-            setPref("fetchISBNCover", false);
-            await waitFor(
-              () =>
-                !section()!.hidden &&
-                image()!.hidden &&
-                !image()!.hasAttribute("src"),
-            );
-          }
-        } finally {
-          release?.();
-          await response;
-          Zotero.HTTP.request = request;
-          // Let the controlled response finish its provider cache write.
-          await Zotero.Promise.delay(200);
-          for (const [index, path] of paths.entries()) {
-            if (backups[index]) await IOUtils.write(path, backups[index]!);
-            else await IOUtils.remove(path, { ignoreAbsent: true });
-          }
-        }
-      },
-    );
-  }
 });

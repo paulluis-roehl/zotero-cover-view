@@ -78,6 +78,9 @@ export class GridRenderer {
   private readonly coverObserver: IntersectionObserver;
   private readonly captionObserver: ResizeObserver;
   private readonly entries = new Map<number, HTMLElement>();
+  // Mounted tiles whose cover is neither displayed, failed nor out of range.
+  private readonly pendingCovers = new Set<HTMLElement>();
+  private coverWaiters: (() => void)[] = [];
   private selectedIDs = new Set<number>();
   private focusedItemID?: number;
   private dragEntry?: HTMLElement;
@@ -147,10 +150,14 @@ export class GridRenderer {
     this.coverObserver = new doc.defaultView!.IntersectionObserver(
       (entries: IntersectionObserverEntry[]) => {
         for (const entry of entries) {
-          if (!entry.isIntersecting || !this.host.contains(entry.target))
+          const tile = entry.target as HTMLElement;
+          if (!entry.isIntersecting || !this.host.contains(tile)) {
+            this.settleCover(tile);
             continue;
-          this.coverObserver.unobserve(entry.target);
-          void this.loadCover(entry.target as HTMLElement);
+          }
+          this.coverObserver.unobserve(tile);
+          this.pendingCovers.add(tile);
+          void this.loadCover(tile);
         }
       },
       { root: this.host, rootMargin: "200px" },
@@ -406,6 +413,7 @@ export class GridRenderer {
     for (const entry of this.entries.values())
       entry.classList.remove("drop-target");
     this.entries.clear();
+    this.settleCovers();
     this.host.replaceChildren();
     this.refreshLayout();
     this.updateActiveDescendant();
@@ -554,7 +562,30 @@ export class GridRenderer {
   private releaseTileObservers(entry: HTMLElement): void {
     this.coverObserver.unobserve(entry);
     this.captionObserver.unobserve(entry);
+    this.settleCover(entry);
     entry.classList.remove("drop-target");
+  }
+
+  get coversPending(): boolean {
+    return this.pendingCovers.size > 0;
+  }
+
+  /** Resolves once every mounted tile's cover has been shown or has failed. */
+  coversSettled(): Promise<void> {
+    if (!this.coversPending) return Promise.resolve();
+    return new Promise((resolve) => this.coverWaiters.push(resolve));
+  }
+
+  private settleCover(entry: HTMLElement): void {
+    if (this.pendingCovers.delete(entry) && !this.pendingCovers.size)
+      this.settleCovers();
+  }
+
+  private settleCovers(): void {
+    this.pendingCovers.clear();
+    const waiters = this.coverWaiters;
+    this.coverWaiters = [];
+    for (const resolve of waiters) resolve();
   }
 
   private positionTile(entry: HTMLElement, index: number): void {
@@ -648,6 +679,7 @@ export class GridRenderer {
     entry.appendChild(coverFrame);
     this.updateItemTypeBadge(entry, rendered);
     this.updateCaption(entry, rendered);
+    this.pendingCovers.add(entry);
     this.coverObserver.observe(entry);
     this.captionObserver.observe(entry);
 
@@ -781,11 +813,21 @@ export class GridRenderer {
   }
 
   private async loadCover(entry: HTMLElement): Promise<void> {
+    let loadingImage = false;
+    try {
+      loadingImage = await this.showCover(entry);
+    } finally {
+      if (!loadingImage) this.settleCover(entry);
+    }
+  }
+
+  /** Returns whether the tile's image started loading a cover. */
+  private async showCover(entry: HTMLElement): Promise<boolean> {
     const renderIndex = Number(entry.dataset.renderIndex);
     const item = Number.isSafeInteger(renderIndex)
       ? this.renderItems[renderIndex]?.item
       : undefined;
-    if (!item) return;
+    if (!item) return false;
 
     const renderVersion = this.renderVersion;
     CoverProvider.cacheCover(item);
@@ -795,11 +837,11 @@ export class GridRenderer {
       renderVersion !== this.renderVersion ||
       !this.host.contains(entry)
     ) {
-      return;
+      return false;
     }
 
     const image = entry.querySelector("img");
-    if (!image) return;
+    if (!image) return false;
     image.addEventListener(
       "load",
       () => {
@@ -809,6 +851,9 @@ export class GridRenderer {
       },
       { once: true },
     );
+    const settle = () => this.settleCover(entry);
+    image.addEventListener("load", settle, { once: true });
+    image.addEventListener("error", settle, { once: true });
     image.dataset.coverSource = cover.source;
     const frame = entry.querySelector<HTMLElement>(".grid-view-cover")!;
     if (cover.source === "online") {
@@ -820,6 +865,7 @@ export class GridRenderer {
       frame.style.removeProperty("--cover-view-online-cover");
     }
     image.src = cover.uri;
+    return true;
   }
 
   /** Update selection presentation without rebuilding tiles or reloading covers. */
@@ -1026,6 +1072,14 @@ export class GridRenderer {
     }
   }
 
+  /**
+   * The next reflow anchors on the first visible row instead of the gesture's
+   * item. While hidden, the last visible anchor still restores the viewport.
+   */
+  endResizeGesture(): void {
+    this.viewportAnchor = undefined;
+  }
+
   /** Preserve the first visible item's offset across explicit and automatic reflows. */
   refreshLayout(updateStyles?: () => void): void {
     if (this.destroyed) return;
@@ -1047,7 +1101,7 @@ export class GridRenderer {
       !returningFromHidden &&
       Date.now() - this.viewportAnchor.resizedAt > RESIZE_GESTURE_PAUSE_MS
     )
-      this.viewportAnchor = undefined;
+      this.endResizeGesture();
     // Capture from the old virtualization geometry before changing CSS. This
     // viewport anchor is independent of selection and keyboard focus.
     const firstRow =
@@ -1184,6 +1238,7 @@ export class GridRenderer {
     this.viewportAnchor = undefined;
     this.host.style.position = this.originalPosition;
     this.entries.clear();
+    this.settleCovers();
     this.selectedIDs.clear();
     this.focusedItemID = undefined;
     this.dragEntry = undefined;

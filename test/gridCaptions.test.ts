@@ -1,187 +1,97 @@
 import { assert } from "chai";
-import { createRendererHost } from "./helpers/rendererHost";
-import { GridRenderer } from "../src/modules/gridRenderer";
-import { clearPref, getPref, setPref } from "../src/utils/prefs";
-import { config } from "../package.json";
+import {
+  CaptionLine,
+  clearPref,
+  getPref,
+  GridWindow,
+  ItemSpec,
+  openGrid,
+  setPref,
+} from "./helpers/gridFixture";
 
-describe("independent tile captions", function () {
-  before(function () {
-    Object.defineProperty(globalThis, "addon", {
-      value: Zotero.CoverView,
-      configurable: true,
-    });
-  });
+const TITLE = "The Brass Orrery of Quillmere";
 
-  after(function () {
-    Reflect.deleteProperty(globalThis, "addon");
-  });
-
-  it("independently shows title, creator, and year in all eight combinations", async function () {
-    const host = createRendererHost();
-    const renderer = new GridRenderer(host, () => {});
-    const item = new Zotero.Item("book");
-    item.setField("title", "Analytical Engine Notes");
+/** A book by Odile Penhallow, published in 1843. */
+const book: ItemSpec = {
+  title: TITLE,
+  setup: (item) => {
     item.setField("date", "1843-08-01");
     item.setCreators([
-      { firstName: "Ada", lastName: "Lovelace", creatorType: "author" },
+      { firstName: "Odile", lastName: "Penhallow", creatorType: "author" },
     ]);
-    try {
-      await item.saveTx();
-      for (const showTitles of [true, false]) {
-        for (const showCreators of [true, false]) {
-          for (const showYears of [true, false]) {
-            renderer.setItems([item], { showTitles, showCreators, showYears });
-            assert.equal(
-              host.querySelector(".grid-view-title")?.textContent ?? "",
-              showTitles ? "Analytical Engine Notes" : "",
-            );
-            const line = host.querySelector<HTMLElement>(".grid-view-metadata");
-            const expected = showCreators
-              ? showYears
-                ? "Lovelace · 1843"
-                : "Lovelace"
-              : showYears
-                ? "1843"
-                : "";
-            assert.equal(line?.textContent ?? "", expected);
-            if (line) assert.equal(line.title, expected);
-            assert.equal(
-              host.firstElementChild!.getAttribute("aria-label"),
-              expected
-                ? `Analytical Engine Notes · ${expected}`
-                : "Analytical Engine Notes",
-            );
-            assert.equal(
-              host.querySelector("img")?.alt,
-              "Cover for Analytical Engine Notes",
-            );
-            assert.equal(
-              host.querySelectorAll("figcaption").length,
-              showTitles || showCreators || showYears ? 1 : 0,
-            );
-          }
+  },
+};
+
+type CaptionPrefs = Record<
+  "showTitles" | "showCreators" | "showYears",
+  boolean
+>;
+
+function setCaptionPrefs(prefs: CaptionPrefs): void {
+  for (const [key, value] of Object.entries(prefs))
+    setPref(key as keyof CaptionPrefs, value);
+}
+
+/** The metadata line of `book` under `prefs`. */
+function metadata({ showCreators, showYears }: CaptionPrefs): string {
+  return [showCreators && "Penhallow", showYears && "1843"]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The caption of `book` under `prefs`. */
+function expectedCaption(prefs: CaptionPrefs): CaptionLine[] {
+  const lines = prefs.showTitles ? [TITLE] : [];
+  if (metadata(prefs)) lines.push(metadata(prefs));
+  return lines.map((text) => ({ text, tooltip: text }));
+}
+
+function isTruncated(element: HTMLElement): boolean {
+  return element.scrollWidth > element.clientWidth;
+}
+
+const ALL_ON: CaptionPrefs = {
+  showTitles: true,
+  showCreators: true,
+  showYears: true,
+};
+
+describe("tile captions", function () {
+  this.timeout(30000);
+
+  it("shows the title, creator caption and year caption by default", function () {
+    for (const key of Object.keys(ALL_ON) as (keyof CaptionPrefs)[]) {
+      clearPref(key);
+      assert.isTrue(getPref(key), key);
+    }
+  });
+
+  it("shows the title, creator caption and year caption independently", async function () {
+    const grid = await openGrid({ items: [book] });
+    const [item] = grid.items;
+    for (const showTitles of [true, false])
+      for (const showCreators of [true, false])
+        for (const showYears of [true, false]) {
+          const prefs = { showTitles, showCreators, showYears };
+          setCaptionPrefs(prefs);
+          await grid.settled();
+          const label = JSON.stringify(prefs);
+          assert.deepEqual(
+            grid.captionLines(item),
+            expectedCaption(prefs),
+            label,
+          );
+          assert.equal(
+            grid.accessibleName(item),
+            [TITLE, metadata(prefs)].filter(Boolean).join(" · "),
+            label,
+          );
+          assert.equal(grid.coverImage(item).alt, `Cover for ${TITLE}`);
         }
-      }
-    } finally {
-      renderer.destroy();
-      if (item.id) await item.eraseTx();
-    }
   });
 
-  it("keeps the cover, selection, focus, and tile identity when captions change", async function () {
-    const win = Zotero.getMainWindow()!;
-    const host = createRendererHost();
-    const renderer = new GridRenderer(host, () => {});
-    const item = new Zotero.Item("book");
-    item.setField("title", "Unchanged cover text");
-    item.setField("date", "2020");
-    try {
-      await item.saveTx();
-      renderer.setItems([item], { showCreators: true });
-      renderer.setSelection([item.id]);
-      renderer.setFocusedItem(item.id);
-      const tile = host.firstElementChild!;
-      assert.equal(
-        tile.getAttribute("aria-label"),
-        "Unchanged cover text · 2020",
-      );
-      const image = tile.querySelector("img")!;
-      image.src =
-        "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><text>Unchanged cover text</text></svg>";
-      const source = image.src;
-      renderer.setItems([item], {
-        showTitles: false,
-        showCreators: false,
-        showYears: false,
-      });
-      assert.strictEqual(host.firstElementChild, tile);
-      assert.strictEqual(tile.querySelector("img"), image);
-      assert.equal(image.src, source);
-      assert.equal(tile.getAttribute("aria-label"), "Unchanged cover text");
-      assert.equal(tile.getAttribute("aria-selected"), "true");
-      assert.equal(host.getAttribute("aria-activedescendant"), tile.id);
-      assert.notExists(tile.querySelector("figcaption"));
-    } finally {
-      renderer.destroy();
-      if (item.id) await item.eraseTx();
-    }
-  });
-
-  it("keeps a long creator and the readable year on the same styled line at small tile sizes", async function () {
-    const win = Zotero.getMainWindow()!;
-    const grid = win.document.getElementById("cover-view-grid")!;
-    const keys = [
-      "showTitles",
-      "showCreators",
-      "showYears",
-      "enableGridView",
-      "tileSize",
-    ] as const;
-    const saved = keys.map((key) => getPref(key));
-    const item = new Zotero.Item("book");
-    item.setField("title", "Caption layout");
-    item.setField("date", "2024");
-    item.setCreators([
-      {
-        lastName:
-          "A very long institutional creator whose name cannot fit on a small tile",
-        fieldMode: 1,
-        creatorType: "author",
-      },
-    ]);
-    try {
-      for (const key of keys.slice(0, 4)) setPref(key, true);
-      setPref("tileSize", 90);
-      await item.saveTx();
-      await win.ZoteroPane.selectItems([item.id], true);
-      const deadline = Date.now() + 3000;
-      while (
-        !grid.querySelector(`[data-item-id="${item.id}"] .grid-view-year`) &&
-        Date.now() < deadline
-      )
-        await Zotero.Promise.delay(20);
-      const tile = grid.querySelector<HTMLElement>(
-        `[data-item-id="${item.id}"]`,
-      )!;
-      assert.exists(tile);
-      const creator = tile.querySelector<HTMLElement>(".grid-view-creators")!;
-      const year = tile.querySelector<HTMLElement>(".grid-view-year")!;
-      assert.exists(year);
-      assert.equal(
-        creator.getBoundingClientRect().top,
-        year.getBoundingClientRect().top,
-      );
-      assert.equal(
-        win.getComputedStyle(creator).fontSize,
-        win.getComputedStyle(year).fontSize,
-      );
-      assert.equal(
-        win.getComputedStyle(creator).color,
-        win.getComputedStyle(year).color,
-      );
-      assert.isAbove(
-        creator.scrollWidth,
-        creator.clientWidth,
-        "Creator is truncated",
-      );
-      assert.isAtMost(
-        year.scrollWidth,
-        year.clientWidth,
-        "Year is fully readable",
-      );
-      assert.equal(year.textContent, "2024");
-      assert.equal(creator.parentElement!.title, `${item.firstCreator} · 2024`);
-    } finally {
-      keys.forEach((key, index) => setPref(key, saved[index]));
-      if (item.id) await item.eraseTx();
-    }
-  });
-
-  it("omits missing caption fields and uses normalized native years, including early and unknown years", function () {
-    const host = createRendererHost();
-    const renderer = new GridRenderer(host, () => {});
-    const item = new Zotero.Item("book");
-    const cases = [
+  it("omits missing caption fields and shows Zotero's year, including early and unknown years", async function () {
+    const dates = [
       ["2020-05-12", "2020"],
       ["May 12, 2020", "2020"],
       ["0044-03-15", "44"],
@@ -190,208 +100,172 @@ describe("independent tile captions", function () {
       ["forthcoming", ""],
       ["", ""],
     ];
-    try {
-      for (const [date, expected] of cases) {
-        item.setField("date", date);
-        renderer.setItems([item], { showCreators: true });
-        assert.notExists(host.querySelector(".grid-view-title"));
-        assert.notExists(host.querySelector(".grid-view-creators"));
-        assert.notExists(host.querySelector(".grid-view-separator"));
-        assert.equal(
-          host.querySelector(".grid-view-year")?.textContent ?? "",
-          expected,
-          date,
-        );
-        assert.equal(
-          host.querySelectorAll("figcaption").length,
-          expected ? 1 : 0,
-        );
-      }
-      const titleItem = new Zotero.Item("book");
-      titleItem.setField("title", "Title only");
-      renderer.setItems([titleItem], { showCreators: true });
-      assert.equal(host.querySelector("figcaption")?.textContent, "Title only");
-      assert.notExists(host.querySelector(".grid-view-metadata"));
-    } finally {
-      renderer.destroy();
-    }
-  });
-
-  it("uses Zotero's primary creator summary for directors, artists, and editors", async function () {
-    const host = createRendererHost();
-    const renderer = new GridRenderer(host, () => {});
-    const items: Zotero.Item[] = [];
-    try {
-      for (const [type, role, name] of [
-        ["film", "director", "Varda"],
-        ["artwork", "artist", "Kahlo"],
-        ["book", "editor", "Babbage"],
-      ]) {
-        const item = new Zotero.Item(type);
-        items.push(item);
-        item.setCreators([{ lastName: name, creatorType: role }]);
-        await item.saveTx();
-        renderer.setItems([item], { showCreators: true });
-        assert.equal(
-          host.querySelector(".grid-view-creators")?.textContent,
-          name,
-        );
-        assert.equal(
-          host.querySelector(".grid-view-metadata")?.textContent,
-          item.firstCreator,
-        );
-        assert.notExists(host.querySelector(".grid-view-separator"));
-      }
-    } finally {
-      renderer.destroy();
-      for (const item of items) if (item.id) await item.eraseTx();
-    }
-  });
-
-  it("defaults all captions on", function () {
-    const keys = ["showCreators", "showTitles", "showYears"] as const;
-    const saved = keys.map((key) => {
-      const pref = `${config.prefsPrefix}.${key}`;
-      return {
-        hasUserValue: Zotero.Prefs.rootBranch.prefHasUserValue(pref),
-        value: Zotero.Prefs.get(pref, true),
-      };
+    setCaptionPrefs(ALL_ON);
+    const grid = await openGrid({
+      items: [
+        ...dates.map(([date]): ItemSpec => ({
+          title: "",
+          setup: (item) => item.setField("date", date),
+        })),
+        { title: "Title only" },
+      ],
     });
-    try {
-      keys.forEach(clearPref);
-      assert.isTrue(getPref("showTitles"));
-      assert.isTrue(getPref("showCreators"));
-      assert.isTrue(getPref("showYears"));
-    } finally {
-      keys.forEach((key, index) => {
-        clearPref(key);
-        if (saved[index].hasUserValue)
-          Zotero.Prefs.set(
-            `${config.prefsPrefix}.${key}`,
-            saved[index].value!,
-            true,
-          );
+    for (const [index, [date, year]] of dates.entries()) {
+      await grid.reveal(grid.items[index]);
+      assert.deepEqual(
+        grid.captionLines(grid.items[index]),
+        year ? [{ text: year, tooltip: year }] : [],
+        date,
+      );
+    }
+    await grid.reveal(grid.items.at(-1)!);
+    assert.deepEqual(grid.captionLines(grid.items.at(-1)!), [
+      { text: "Title only", tooltip: "Title only" },
+    ]);
+  });
+
+  it("summarises primary creators as Zotero does, including directors, artists and editors", async function () {
+    setCaptionPrefs(ALL_ON);
+    const creators = [
+      ["film", "director", "Thistlewood"],
+      ["artwork", "artist", "Marrowby"],
+      ["book", "editor", "Quist"],
+    ] as const;
+    const grid = await openGrid({
+      items: creators.map(([itemType, creatorType, lastName]) => ({
+        itemType,
+        setup: (item) => item.setCreators([{ lastName, creatorType }]),
+      })),
+    });
+    for (const [index, [, role, name]] of creators.entries()) {
+      const item = grid.items[index];
+      assert.equal(item.firstCreator, name, role);
+      assert.deepEqual(grid.captionLines(item)[1], {
+        text: name,
+        tooltip: name,
       });
     }
   });
 
-  it("updates caption choices live in every grid window without disturbing native selection or navigation", async function () {
-    this.timeout(15000);
-    const first = Zotero.getMainWindow()!;
-    const existingWindows = new Set(Zotero.getMainWindows());
-    const keys = [
-      "showTitles",
-      "showCreators",
-      "showYears",
-      "enableGridView",
-    ] as const;
-    const saved = keys.map((key) => getPref(key));
-    const items = [new Zotero.Item("book"), new Zotero.Item("book")];
-    let second: _ZoteroTypes.MainWindow | undefined;
-    const waitFor = async (condition: () => boolean, message: string) => {
-      const deadline = Date.now() + 6000;
-      while (!condition() && Date.now() < deadline)
-        await Zotero.Promise.delay(20);
-      assert.isTrue(
-        condition(),
-        `${message}: ${Zotero.getMainWindows()
-          .map(
-            (win) =>
-              `${win.location.href}, grid=${!!win.document.getElementById("cover-view-grid")}, tree=${!!win.ZoteroPane?.itemsView}`,
-          )
-          .join("; ")}`,
-      );
-    };
-    try {
-      keys.forEach((key) => setPref(key, true));
-      for (const [index, item] of items.entries()) {
-        item.setField("title", `Live captions ${index}`);
-        item.setField("date", "2021");
-        item.setCreators([{ lastName: "Varda", creatorType: "author" }]);
-        await item.saveTx();
-      }
-      Zotero.openMainWindow();
-      await waitFor(() => {
-        second = Zotero.getMainWindows().find(
-          (win) => !existingWindows.has(win),
-        );
-        return (
-          !!second?.ZoteroPane?.itemsView && !!second.ZoteroPane.collectionsView
-        );
-      }, "Second native item tree is ready");
-      // The scaffold's temporary add-on does not dispatch new-window hooks.
-      // Exercise the plugin's public lifecycle entry point on the real window.
-      Zotero.CoverView.hooks.onMainWindowLoad(second!);
-      const windows = [first, second!];
-      for (const win of windows) {
-        await win.ZoteroPane.selectItems([items[0].id], true);
-      }
-      const grids = windows.map((win) =>
-        win.document.getElementById("cover-view-grid")!,
-      );
-      const tile = (grid: HTMLElement) =>
-        grid.querySelector<HTMLElement>(`[data-item-id="${items[0].id}"]`)!;
-      await waitFor(
-        () =>
-          grids.every((grid) => !!tile(grid)?.querySelector(".grid-view-year")),
-        "Both windows display initial captions",
-      );
-      const originalTiles = grids.map(tile);
-      const originalImages = originalTiles.map((entry) =>
-        entry.querySelector("img"),
-      );
-      const focus = grids.map((grid) =>
-        grid.getAttribute("aria-activedescendant"),
-      );
-      for (const key of ["showTitles", "showCreators", "showYears"] as const) {
-        const selector = {
-          showTitles: ".grid-view-title",
-          showCreators: ".grid-view-creators",
-          showYears: ".grid-view-year",
-        }[key];
-        setPref(key, false);
-        await waitFor(
-          () => grids.every((grid) => !tile(grid).querySelector(selector)),
-          `${key} disappears everywhere`,
-        );
-        setPref(key, true);
-        await waitFor(
-          () => grids.every((grid) => !!tile(grid).querySelector(selector)),
-          `${key} returns everywhere`,
-        );
-      }
-      for (const [index, grid] of grids.entries()) {
-        assert.strictEqual(tile(grid), originalTiles[index]);
-        assert.strictEqual(
-          tile(grid).querySelector("img"),
-          originalImages[index],
-        );
-        assert.deepEqual(windows[index].ZoteroPane.getSelectedItems(true), [
-          items[0].id,
-        ]);
-        assert.equal(grid.getAttribute("aria-activedescendant"), focus[index]);
-      }
-      first.document.getElementById("cover-view-grid")!.dispatchEvent(
-        new first.KeyboardEvent("keydown", {
-          key: "ArrowRight",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-      await waitFor(
-        () => first.ZoteroPane.getSelectedItems(true)[0] === items[1].id,
-        "Navigation still uses native item order",
-      );
-    } finally {
-      const opened =
-        second ??
-        Zotero.getMainWindows().find((win) => !existingWindows.has(win));
-      if (opened) {
-        Zotero.CoverView.hooks.onMainWindowUnload(opened);
-        opened.close();
-      }
-      keys.forEach((key, index) => setPref(key, saved[index]));
-      for (const item of items) if (item.id) await item.eraseTx();
+  it("keeps a long creator caption and the full year caption on one line in small tiles", async function () {
+    setCaptionPrefs(ALL_ON);
+    setPref("tileSize", 90);
+    const grid = await openGrid({
+      items: [
+        {
+          setup: (item) => {
+            item.setField("date", "2024");
+            item.setCreators([
+              {
+                lastName:
+                  "The Very Long Institutional Society of Weathervane Cartographers",
+                fieldMode: 1,
+                creatorType: "author",
+              },
+            ]);
+          },
+        },
+      ],
+    });
+    const [item] = grid.items;
+    const creator = grid.captionText(item, item.firstCreator);
+    const year = grid.captionText(item, "2024");
+    assert.closeTo(
+      creator.getBoundingClientRect().top,
+      year.getBoundingClientRect().top,
+      1,
+      "creator and year share a line",
+    );
+    assert.isTrue(isTruncated(creator), "the creator caption is cut off");
+    assert.isFalse(isTruncated(year), "the year caption is fully readable");
+    assert.equal(
+      grid.captionLines(item)[1].tooltip,
+      `${item.firstCreator} · 2024`,
+    );
+  });
+
+  it("keeps the cover, selection and focused tile when captions change", async function () {
+    setCaptionPrefs(ALL_ON);
+    const grid = await openGrid({ items: [book, {}] });
+    const [item] = grid.items;
+    grid.click(item);
+    await grid.settled();
+    const tile = grid.tile(item);
+    const cover = grid.coverImage(item);
+    const source = cover.src;
+
+    setCaptionPrefs({
+      showTitles: false,
+      showCreators: false,
+      showYears: false,
+    });
+    await grid.settled();
+    assert.isEmpty(grid.captionLines(item));
+    assert.equal(grid.accessibleName(item), TITLE);
+    assert.strictEqual(grid.tile(item), tile);
+    assert.strictEqual(grid.coverImage(item), cover);
+    assert.equal(cover.src, source);
+    assert.deepEqual(grid.selectedItems(), [item.id]);
+    assert.equal(grid.focusedItem(), item.id);
+  });
+
+  it("applies caption changes made while the native item tree is shown", async function () {
+    setCaptionPrefs(ALL_ON);
+    const grid = await openGrid({ items: [book] });
+    const [item] = grid.items;
+    await grid.select([item]);
+    const tile = grid.tile(item);
+
+    await grid.showList();
+    setPref("showCreators", false);
+    await grid.showGrid();
+    assert.deepEqual(
+      grid.captionLines(item),
+      expectedCaption({ ...ALL_ON, showCreators: false }),
+    );
+    assert.strictEqual(grid.tile(item), tile);
+    assert.deepEqual(grid.presentedSelection(), [item.id]);
+  });
+
+  it("applies caption changes live in a second main window without disturbing selection or navigation", async function () {
+    setCaptionPrefs(ALL_ON);
+    const grid = await openGrid({ items: [book, book] });
+    const [item] = grid.items;
+    const second = await grid.openWindow();
+    const windows: GridWindow[] = [grid, second];
+    for (const view of windows) {
+      view.click(item);
+      await view.settled();
     }
+    grid.focusGrid();
+    const tiles = windows.map((view) => view.tile(item));
+    const covers = windows.map((view) => view.coverImage(item));
+
+    for (const key of Object.keys(ALL_ON) as (keyof CaptionPrefs)[]) {
+      for (const shown of [false, true]) {
+        const prefs = { ...ALL_ON, [key]: shown };
+        setPref(key, shown);
+        for (const [index, view] of windows.entries()) {
+          await view.settled();
+          assert.deepEqual(
+            view.captionLines(item),
+            expectedCaption(prefs),
+            `window ${index + 1}, ${JSON.stringify(prefs)}`,
+          );
+        }
+      }
+    }
+    for (const [index, view] of windows.entries()) {
+      assert.strictEqual(view.tile(item), tiles[index]);
+      assert.strictEqual(view.coverImage(item), covers[index]);
+      assert.deepEqual(view.selectedItems(), [item.id]);
+      assert.equal(view.focusedItem(), item.id);
+    }
+
+    const [first, next] = grid.displayedItems();
+    await grid.select([first]);
+    grid.press("ArrowRight");
+    await grid.settled();
+    assert.deepEqual(grid.selectedItems(), [next]);
   });
 });

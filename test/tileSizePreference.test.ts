@@ -1,110 +1,159 @@
 import { assert } from "chai";
 import { attachTileSizePreference } from "../src/modules/tileSizePreference";
-import { getPref, setPref } from "../src/utils/prefs";
+import {
+  getPref,
+  GridFixture,
+  onTeardown,
+  openGrid,
+  openPreferences,
+  setPref,
+  until,
+} from "./helpers/gridFixture";
 
-describe("tile size preference controls", function () {
-  before(function () {
-    Object.defineProperty(globalThis, "addon", {
-      value: Zotero.CoverView,
-      configurable: true,
-    });
-  });
+const SLIDER_ID = "zotero-prefpane-coverview-tile-size";
+const PERCENT_ID = `${SLIDER_ID}-percent`;
 
-  after(function () {
-    Reflect.deleteProperty(globalThis, "addon");
-  });
+/** A grid of fixed size, so that the largest tiles fit its width. */
+async function fixedGrid(items = 1): Promise<GridFixture> {
+  const grid = await openGrid({ items });
+  grid.setStyle({ flex: "none", width: "630px", height: "300px" });
+  setPref("tileSize", 180);
+  await grid.settled();
+  return grid;
+}
 
-  it("keeps a percentage entry and slider synchronized within 50–200%", function () {
-    const doc = Zotero.getMainWindow()!.document;
-    const slider = doc.createElement("input");
-    const percentage = doc.createElement("input");
-    slider.type = "range";
-    slider.min = "90";
-    slider.max = "360";
-    slider.step = "1";
-    percentage.type = "number";
-    const originalSize = getPref("tileSize");
-    setPref("tileSize", 180);
-    const detach = attachTileSizePreference(slider, percentage);
+function tileWidth(grid: GridFixture): number {
+  return grid.tile(grid.items[0]).getBoundingClientRect().width;
+}
 
-    try {
+function input(element: HTMLInputElement, value: string, type = "input") {
+  element.value = value;
+  element.dispatchEvent(
+    new element.ownerDocument.defaultView!.Event(type, { bubbles: true }),
+  );
+}
+
+describe("tile size preference", function () {
+  describe("settings controls", function () {
+    it("keeps a percentage entry and slider synchronized within 50–200%", function () {
+      const doc = Zotero.getMainWindow()!.document;
+      const slider = doc.createElement("input");
+      const percentage = doc.createElement("input");
+      slider.type = "range";
+      slider.min = "90";
+      slider.max = "360";
+      slider.step = "1";
+      percentage.type = "number";
+      setPref("tileSize", 180);
+      onTeardown(attachTileSizePreference(slider, percentage));
+
       assert.equal(percentage.value, "100");
-      slider.value = "270";
-      slider.dispatchEvent(new doc.defaultView!.Event("input"));
+      input(slider, "270");
       assert.equal(percentage.value, "150");
 
-      percentage.value = "125";
-      percentage.dispatchEvent(new doc.defaultView!.Event("input"));
+      input(percentage, "125");
       assert.equal(slider.value, "225");
       assert.equal(getPref("tileSize"), 225);
 
-      percentage.value = "201";
-      percentage.dispatchEvent(new doc.defaultView!.Event("input"));
-      assert.equal(getPref("tileSize"), 225, "Out-of-range input is not saved");
-      percentage.dispatchEvent(new doc.defaultView!.Event("change"));
+      input(percentage, "201");
+      assert.equal(getPref("tileSize"), 225, "out-of-range input is not saved");
+      input(percentage, "201", "change");
       assert.equal(percentage.value, "200");
       assert.equal(slider.value, "360");
 
-      percentage.value = "";
-      percentage.dispatchEvent(new doc.defaultView!.Event("change"));
-      assert.equal(percentage.value, "200", "Empty input restores the size");
+      input(percentage, "", "change");
+      assert.equal(percentage.value, "200", "empty input restores the size");
 
       setPref("tileSize", 90);
-      slider.value = "90";
-      slider.dispatchEvent(new doc.defaultView!.Event("syncfrompreference"));
+      input(slider, "90", "syncfrompreference");
       assert.equal(percentage.value, "50");
-    } finally {
-      detach();
-      setPref("tileSize", originalSize);
-    }
+    });
+
+    it("connects the percentage entry to the settings pane slider", async function () {
+      setPref("tileSize", 180);
+      const prefs = await openPreferences();
+      const slider = prefs.document.getElementById(
+        SLIDER_ID,
+      ) as HTMLInputElement;
+      const percent = prefs.document.getElementById(
+        PERCENT_ID,
+      ) as HTMLInputElement;
+      await until(
+        () => percent.value === "100",
+        "the percentage to show the tile size",
+        { observe: () => percent.value },
+      );
+
+      input(slider, "270");
+      await until(
+        () => percent.value === "150" && getPref("tileSize") === 270,
+        "the percentage to follow the slider",
+        { observe: () => [percent.value, getPref("tileSize")] },
+      );
+
+      input(percent, "125");
+      await until(
+        () => slider.value === "225" && getPref("tileSize") === 225,
+        "the slider to follow the percentage",
+        { observe: () => [slider.value, getPref("tileSize")] },
+      );
+    });
   });
 
-  it("connects the percentage entry to Zotero's preference pane slider", async function () {
-    const originalSize = getPref("tileSize");
-    const pane = Zotero.PreferencePanes.pluginPanes.find(
-      (entry) => entry.pluginID === "coverview@insature.net",
-    )!;
-    const win = Zotero.Utilities.Internal.openPreferences(pane.id)!;
-    const waitFor = async (condition: () => boolean) => {
-      const deadline = Date.now() + 5000;
-      while (!condition() && Date.now() < deadline) {
-        await Zotero.Promise.delay(20);
-      }
-      assert.isTrue(
-        condition(),
-        "Preference pane should synchronize both inputs",
-      );
-    };
+  describe("grid view", function () {
+    it("resizes tiles without replacing them when the preference changes", async function () {
+      const grid = await fixedGrid();
+      const tile = grid.tile(grid.items[0]);
+      const width = tileWidth(grid);
+      setPref("tileSize", 240);
+      await grid.settled();
+      assert.isAbove(tileWidth(grid), width);
+      setPref("tileSize", 120);
+      await grid.settled();
+      assert.isBelow(tileWidth(grid), width);
+      assert.strictEqual(grid.tile(grid.items[0]), tile);
+    });
 
-    try {
-      setPref("tileSize", 180);
-      const sliderID = "zotero-prefpane-coverview-tile-size";
-      const percentID = `${sliderID}-percent`;
-      await waitFor(() => {
-        const percent = win.document.getElementById(
-          percentID,
-        ) as HTMLInputElement;
-        return percent?.value === "100";
-      });
-      const slider = win.document.getElementById(sliderID) as HTMLInputElement;
-      const percent = win.document.getElementById(
-        percentID,
+    it("applies a change made while the native item tree is shown", async function () {
+      const grid = await fixedGrid();
+      const tile = grid.tile(grid.items[0]);
+      const width = tileWidth(grid);
+      await grid.showList();
+      setPref("tileSize", 240);
+      await grid.showGrid();
+      assert.isAbove(tileWidth(grid), width);
+      assert.strictEqual(grid.tile(grid.items[0]), tile);
+    });
+
+    it("keeps the first visible item and the selection when the size is changed in the settings", async function () {
+      const grid = await fixedGrid(40);
+      const [, selected, next] = grid.displayedItems();
+      grid.click(selected);
+      await grid.settled();
+      grid.scrollToTile(grid.displayedItems()[2 * grid.columns()], 37);
+      const prefs = await openPreferences();
+      const percent = prefs.document.getElementById(
+        PERCENT_ID,
       ) as HTMLInputElement;
-
-      slider.value = "270";
-      slider.dispatchEvent(new win.Event("input", { bubbles: true }));
-      await waitFor(
-        () => percent.value === "150" && getPref("tileSize") === 270,
+      await until(
+        () => percent.value === "100",
+        "the percentage to show the tile size",
       );
 
-      percent.value = "125";
-      percent.dispatchEvent(new win.Event("input", { bubbles: true }));
-      await waitFor(
-        () => slider.value === "225" && getPref("tileSize") === 225,
-      );
-    } finally {
-      setPref("tileSize", originalSize);
-      win.close();
-    }
+      grid.endResizeGesture();
+      const anchor = grid.topRow()[0];
+      const clipped = grid.isClippedAtTop(anchor);
+      input(percent, "120");
+      await grid.settled();
+      assert.isAbove(getPref("tileSize"), 180);
+      assert.include(grid.topRow(), anchor);
+      assert.equal(grid.isClippedAtTop(anchor), clipped);
+      assert.deepEqual(grid.selectedItems(), [selected]);
+      assert.equal(grid.focusedItem(), selected);
+
+      grid.press("ArrowRight", { shift: true });
+      await grid.settled();
+      assert.sameMembers(grid.selectedItems(), [selected, next]);
+    });
   });
 });

@@ -1,277 +1,207 @@
 import { assert } from "chai";
+import {
+  createCollection,
+  createItems,
+  focus,
+  focusWindow,
+  GridWindow,
+  openGrid,
+  painted,
+  setPref,
+  shutDownPlugin,
+  until,
+} from "./helpers/gridFixture";
+
+/** Wait until the item tree shows `item` as its selected row, in view. */
+async function showsSelectedRow(
+  view: GridWindow,
+  item: Zotero.Item,
+): Promise<void> {
+  await until(
+    () => view.itemTreeShowsSelected(item),
+    `the item tree to show "${item.getDisplayTitle()}" as its selected row in view`,
+    { observe: () => view.itemTreeRows() },
+  );
+}
+
+/** Wait until the native item tree owns keyboard focus. */
+async function itemTreeOwnsFocus(view: GridWindow): Promise<void> {
+  await until(
+    () => view.itemTreeOwnsFocus,
+    "the native item tree to own focus",
+    { observe: () => view.describeFocus() },
+  );
+}
 
 describe("native item tree restoration", function () {
   this.timeout(30000);
 
-  async function waitFor(condition: () => boolean, message: string) {
-    const deadline = Date.now() + 6000;
-    while (!condition() && Date.now() < deadline)
-      await Zotero.Promise.delay(20);
-    assert.isTrue(condition(), message);
-  }
+  describe("switching views", function () {
+    it("shows the selected row and returns focus to the item tree", async function () {
+      const grid = await openGrid({ items: 90 });
+      // Native focus restoration waits for an animation frame.
+      focusWindow(grid.win);
+      const order = grid.displayedItems();
+      for (const id of [order.at(-1)!, order[0], order.at(-1)!]) {
+        const item = grid.itemByID(id);
+        await grid.select([item]);
+        grid.focusGrid();
+        await grid.showList();
+        await showsSelectedRow(grid, item);
+        await itemTreeOwnsFocus(grid);
+        assert.deepEqual(grid.selectedItems(), [item.id]);
+        await grid.showGrid();
+      }
+    });
 
-  it("restores visible selected rows and focus on list switching and hot window detach/attach", async function () {
-    const win = Zotero.getMainWindow()!;
-    // The scaffold's test window can occlude this window and suspend its
-    // animation-frame-based native layout/focus restoration.
-    win.focus();
-    const pane = win.ZoteroPane;
-    const tree = win.document.getElementById("zotero-items-tree")!;
-    const originallyHidden =
-      win.document.getElementById("cover-view-grid")!.hidden;
-    const collection = new Zotero.Collection();
-    const items = Array.from({ length: 90 }, () => new Zotero.Item("book"));
-    const hooks = Zotero.CoverView.hooks;
-    const grid = () => win.document.getElementById("cover-view-grid")!;
-    const toggle = () =>
-      win.document
-        .getElementById("cover-view-toggle")!
-        .dispatchEvent(new win.Event("command"));
-    const selectedRowVisible = (item: Zotero.Item) => {
-      const row = tree.querySelector<HTMLElement>(".row.selected");
-      if (!row?.textContent?.includes(String(item.getField("title"))))
-        return false;
-      const rect = row.getBoundingClientRect();
-      const viewport = tree.getBoundingClientRect();
-      return (
-        rect.height > 0 &&
-        rect.top >= viewport.top - 2 &&
-        rect.bottom <= viewport.bottom + 2
-      );
-    };
-    try {
-      collection.name = "Native restoration";
-      await collection.saveTx();
-      for (const [index, item] of items.entries()) {
-        item.setField("title", `Restoration ${String(index).padStart(3, "0")}`);
-        item.addToCollection(collection.id);
-        await item.saveTx();
-      }
-      await pane.collectionsView!.selectByID(`C${collection.id}`);
-      if (grid().hidden) toggle();
-      for (const item of [items.at(-1)!, items[0], items.at(-1)!]) {
-        await pane.selectItems([item.id]);
-        grid().focus();
-        toggle();
-        await waitFor(
-          () => selectedRowVisible(item),
-          "List mode shows its selected row inside the viewport",
-        );
-        await waitFor(
-          () => tree.contains(win.document.activeElement),
-          "List mode owns focus",
-        );
-        assert.deepEqual(pane.getSelectedItems(true), [item.id]);
-        toggle();
-      }
-      grid().focus();
-      hooks.onMainWindowUnload(win);
-      assert.isNull(win.document.getElementById("cover-view-grid"));
-      assert.notEqual(tree.style.display, "none");
-      await waitFor(
-        () => selectedRowVisible(items.at(-1)!),
-        "Hot detach repairs the native viewport",
-      );
-      await waitFor(
-        () => tree.contains(win.document.activeElement),
-        "Hot detach returns grid-owned focus to the native tree",
-      );
-      hooks.onMainWindowLoad(win);
-      await waitFor(
-        () => !!grid() && !grid().hidden,
-        "Hot attach restores grid mode",
-      );
-      assert.deepEqual(pane.getSelectedItems(true), [items.at(-1)!.id]);
-    } finally {
-      if (!win.document.getElementById("cover-view-grid"))
-        hooks.onMainWindowLoad(win);
-      if (grid().hidden !== originallyHidden) toggle();
-      await pane.collectionsView!.selectLibrary(Zotero.Libraries.userLibraryID);
-      for (const item of items) if (item.id) await item.eraseTx();
-      if (collection.id) await collection.eraseTx();
-    }
+    it("moves focus into the grid view, keeping its focused tile", async function () {
+      const grid = await openGrid({ items: 2 });
+      focusWindow(grid.win);
+      const [first, second] = grid.items;
+      grid.click(first);
+      await grid.settled();
+      await grid.showList();
+      await itemTreeOwnsFocus(grid);
+
+      await grid.select([second]);
+      grid.focusItemTree();
+      await grid.showGrid();
+      assert.isTrue(grid.ownsFocus, "the grid view owns focus");
+      assert.equal(grid.focusedItem(), first.id);
+      assert.deepEqual(grid.selectedItems(), [second.id]);
+    });
+
+    it("moves focus into the grid view when switched with the toolbar button", async function () {
+      const grid = await openGrid({ items: 1, view: "list" });
+      focusWindow(grid.win);
+      grid.focusItemTree();
+      // The toolbar button can take focus before its command is dispatched.
+      focus(grid.toggleButton);
+      grid.pressToggle();
+      await grid.settled();
+      await until(() => grid.ownsFocus, "the grid view to own focus", {
+        observe: () => grid.describeFocus(),
+      });
+    });
+
+    it("keeps the grid view's first visible item across a switch to the item tree and back", async function () {
+      const grid = await openGrid({ items: 40 });
+      grid.setStyle({ flex: "none", width: "630px", height: "300px" });
+      setPref("tileSize", 180);
+      await grid.settled();
+      const anchor = grid.displayedItems()[2 * grid.columns()];
+      grid.scrollToTile(anchor, 37);
+      await grid.settled();
+
+      await grid.showList();
+      await grid.showGrid();
+      assert.include(grid.topRow(), anchor);
+      assert.isTrue(grid.isClippedAtTop(anchor));
+    });
   });
 
-  it("restores the current collection after hot reattachment and window reopening without stealing other-pane focus", async function () {
-    const first = Zotero.getMainWindow()!;
-    const existing = new Set(Zotero.getMainWindows());
-    const hooks = Zotero.CoverView.hooks;
-    const originallyHidden =
-      first.document.getElementById("cover-view-grid")!.hidden;
-    const collections = [new Zotero.Collection(), new Zotero.Collection()];
-    const items = [new Zotero.Item("book"), new Zotero.Item("book")];
-    let opened: _ZoteroTypes.MainWindow | undefined;
-    const open = async () => {
-      Zotero.openMainWindow();
-      await waitFor(() => {
-        opened = Zotero.getMainWindows().find(
-          (win) => !existing.has(win) && !win.closed,
-        );
-        return (
-          !!opened?.ZoteroPane?.loaded &&
-          !!opened.ZoteroPane.itemsView &&
-          !!opened.ZoteroPane.collectionsView
-        );
-      }, "Reopened native window is ready");
-      await opened!.ZoteroPane.collectionsView!.waitForLoad();
-      await opened!.ZoteroPane.itemsView!.waitForLoad();
-      // Temporary scaffold add-ons do not dispatch new-window hooks.
-      hooks.onMainWindowLoad(opened!);
-      opened!.focus();
-      return opened!;
-    };
-    try {
-      if (originallyHidden)
-        first.document
-          .getElementById("cover-view-toggle")!
-          .dispatchEvent(new first.Event("command"));
-      for (const [index, collection] of collections.entries()) {
-        collection.name = `Restored context ${index}`;
-        await collection.saveTx();
-        items[index].setField("title", `Context item ${index}`);
-        items[index].addToCollection(collection.id);
-        await items[index].saveTx();
-      }
+  describe("hot reload", function () {
+    it("restores the item tree with its selected row and focus when the grid view is detached", async function () {
+      const grid = await openGrid({ items: 90 });
+      focusWindow(grid.win);
+      const last = grid.itemByID(grid.displayedItems().at(-1)!);
+      await grid.select([last]);
+      grid.focusGrid();
+
+      grid.detach();
+      assert.isFalse(grid.attached, "the grid view is detached");
+      assert.isTrue(grid.showsItemTree, "the item tree is shown");
+      await showsSelectedRow(grid, last);
+      await itemTreeOwnsFocus(grid);
+    });
+
+    it("leaves focus in another pane when the grid view is detached", async function () {
+      const grid = await openGrid({ items: 1 });
+      focusWindow(grid.win);
+      const collectionTree = grid.win.document.querySelector(
+        "#zotero-collections-tree [role=tree]",
+      )!;
+      focus(collectionTree);
+
+      grid.detach();
+      await painted(grid.win);
+      assert.strictEqual(grid.win.document.activeElement, collectionTree);
+    });
+
+    it("shows the grid view with the same selection when attached again", async function () {
+      const grid = await openGrid({ items: 3 });
+      const [, second] = grid.items;
+      await grid.select([second]);
+      grid.detach();
+      await grid.attach();
+      assert.isTrue(grid.showsGrid, "the grid view is shown");
+      assert.sameMembers(
+        grid.mountedItems(),
+        grid.items.map(({ id }) => id),
+      );
+      assert.deepEqual(grid.selectedItems(), [second.id]);
+      assert.deepEqual(grid.presentedSelection(), [second.id]);
+    });
+
+    it("shows the current collection when attached again", async function () {
+      const grid = await openGrid({ items: 1 });
+      const other = await createCollection();
+      const [item] = await createItems(1, other);
+      await grid.showRow(`C${other.id}`, [item]);
+      await grid.select([item]);
+
+      grid.detach();
+      await grid.attach();
+      assert.deepEqual(grid.mountedItems(), [item.id]);
+      assert.deepEqual(grid.selectedItems(), [item.id]);
+    });
+
+    it("restores the item tree when the plugin shuts down and the grid view when it starts again", async function () {
+      const grid = await openGrid({ items: 1 });
+      focusWindow(grid.win);
+      const [item] = grid.items;
+      await grid.select([item]);
+      grid.focusGrid();
+
+      const start = shutDownPlugin();
+      assert.isFalse(grid.attached, "the grid view is removed");
+      await showsSelectedRow(grid, item);
+      await itemTreeOwnsFocus(grid);
+      assert.deepEqual(grid.selectedItems(), [item.id]);
+
+      await start();
+      await grid.settled();
+      assert.isTrue(grid.showsGrid, "the grid view is shown");
+      assert.deepEqual(grid.mountedItems(), [item.id]);
+      assert.deepEqual(grid.selectedItems(), [item.id]);
+    });
+  });
+
+  describe("new main windows", function () {
+    it("restores the item tree and the current collection in each newly opened main window", async function () {
+      const grid = await openGrid({ items: 1 });
+      const other = await createCollection();
+      const [item] = await createItems(2, other);
       for (let cycle = 0; cycle < 2; cycle++) {
-        const win = await open();
-        const pane = win.ZoteroPane;
-        for (const collection of collections)
-          await pane.collectionsView!.selectByID(`C${collection.id}`);
-        await pane.selectItems([items[1].id]);
-        const currentGrid = () =>
-          win.document.getElementById("cover-view-grid")!;
-        await waitFor(
-          () =>
-            !!currentGrid().querySelector(`[data-item-id="${items[1].id}"]`),
-          "Grid follows the new collection",
+        const view = await grid.openWindow();
+        focusWindow(view.win);
+        await view.showRow(`C${other.id}`, [item]);
+        await view.select([item]);
+        view.detach();
+        await view.attach();
+        assert.sameMembers(
+          view.mountedItems(),
+          other.getChildItems(true),
+          `the reattached grid view shows the current collection in window ${cycle + 1}`,
         );
-        const collectionsTree = win.document.getElementById(
-          "zotero-collections-tree",
-        )!;
-        collectionsTree.querySelector<HTMLElement>("[role=tree]")!.focus();
-        const otherPaneFocus = win.document.activeElement;
-        hooks.onMainWindowUnload(win);
-        await new Promise<void>((resolve) =>
-          win.requestAnimationFrame(() => resolve()),
-        );
-        assert.strictEqual(
-          win.document.activeElement,
-          otherPaneFocus,
-          "Teardown does not steal collection-pane focus",
-        );
-        hooks.onMainWindowLoad(win);
-        await waitFor(
-          () =>
-            !!currentGrid().querySelector(`[data-item-id="${items[1].id}"]`),
-          "Hot reattachment uses the current collection",
-        );
-        assert.isNull(
-          currentGrid().querySelector(`[data-item-id="${items[0].id}"]`),
-        );
-        assert.deepEqual(pane.getSelectedItems(true), [items[1].id]);
-        win.focus();
-        currentGrid().focus();
-        await waitFor(
-          () => win.document.activeElement === currentGrid(),
-          "Reattached grid owns focus before switching modes",
-        );
-        win.document
-          .getElementById("cover-view-toggle")!
-          .dispatchEvent(new win.Event("command"));
-        const tree = win.document.getElementById("zotero-items-tree")!;
-        await waitFor(
-          () =>
-            !!tree
-              .querySelector(".row.selected")
-              ?.textContent?.includes("Context item 1"),
-          "Reopened window returns to the correct native rows",
-        );
-        await waitFor(
-          () => tree.contains(win.document.activeElement),
-          "Reopened window returns focus to the native tree",
-        );
-        // Restore the shared grid preference before creating the next window.
-        win.document
-          .getElementById("cover-view-toggle")!
-          .dispatchEvent(new win.Event("command"));
-        hooks.onMainWindowUnload(win);
-        win.close();
-        opened = undefined;
-      }
-    } finally {
-      if (opened && !opened.closed) {
-        hooks.onMainWindowUnload(opened);
-        opened.close();
-      }
-      const grid = first.document.getElementById("cover-view-grid")!;
-      if (grid.hidden !== originallyHidden)
-        first.document
-          .getElementById("cover-view-toggle")!
-          .dispatchEvent(new first.Event("command"));
-      await first.ZoteroPane.collectionsView!.selectLibrary(
-        Zotero.Libraries.userLibraryID,
-      );
-      for (const item of items) if (item.id) await item.eraseTx();
-      for (const collection of collections)
-        if (collection.id) await collection.eraseTx();
-    }
-  });
 
-  it("restores the native item tree through hot plugin shutdown/startup", async function () {
-    const win = Zotero.getMainWindow()!;
-    win.focus();
-    const pane = win.ZoteroPane;
-    const plugin = Zotero.CoverView;
-    const originallyHidden =
-      win.document.getElementById("cover-view-grid")!.hidden;
-    const item = new Zotero.Item("book");
-    let shutdown = false;
-    const restart = async () => {
-      // The scaffold directly loads the temporary plugin sandbox. Recreate
-      // its bootstrap registration before invoking the actual startup hook.
-      Zotero.CoverView = plugin;
-      plugin.data.alive = true;
-      await plugin.hooks.onStartup();
-      shutdown = false;
-    };
-    try {
-      item.setField("title", "Hot plugin restoration");
-      await item.saveTx();
-      await pane.selectItems([item.id]);
-      let grid = win.document.getElementById("cover-view-grid")!;
-      if (grid.hidden)
-        win.document
-          .getElementById("cover-view-toggle")!
-          .dispatchEvent(new win.Event("command"));
-      grid.focus();
-      shutdown = true;
-      plugin.hooks.onShutdown();
-      const tree = win.document.getElementById("zotero-items-tree")!;
-      await waitFor(
-        () =>
-          !win.document.getElementById("cover-view-grid") &&
-          !!tree
-            .querySelector(".row.selected")
-            ?.textContent?.includes("Hot plugin restoration") &&
-          tree.contains(win.document.activeElement),
-        "Disabling the plugin restores native rows and focus",
-      );
-      assert.deepEqual(pane.getSelectedItems(true), [item.id]);
-      await restart();
-      grid = win.document.getElementById("cover-view-grid")!;
-      await waitFor(
-        () => !!grid.querySelector(`[data-item-id="${item.id}"]`),
-        "Re-enabling the plugin renders the current native items",
-      );
-      assert.deepEqual(pane.getSelectedItems(true), [item.id]);
-    } finally {
-      if (shutdown) await restart();
-      const grid = win.document.getElementById("cover-view-grid")!;
-      if (grid.hidden !== originallyHidden)
-        win.document
-          .getElementById("cover-view-toggle")!
-          .dispatchEvent(new win.Event("command"));
-      if (item.id) await item.eraseTx();
-    }
+        view.focusGrid();
+        await view.showList();
+        await showsSelectedRow(view, item);
+        await itemTreeOwnsFocus(view);
+        await view.showGrid();
+        await view.close();
+      }
+    });
   });
 });
