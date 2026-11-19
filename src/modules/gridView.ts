@@ -34,6 +34,8 @@ export class GridView {
   private readonly stopCoverRefresh: () => void;
   private readonly pendingCoverIDs = new Set<number>();
   private syncTimer?: number;
+  /** Item changes arrived while the grid view was not presented. */
+  private syncDeferred = false;
   private focusFrame?: number;
   private readonly selectionTimer: number;
   private itemIDs: number[] = [];
@@ -277,6 +279,10 @@ export class GridView {
     // animation frames can be suspended while the window is occluded.
     if (this.syncTimer !== undefined || this.pendingSelections) return true;
     if (!this.isPresenting()) return false;
+    // Changes made behind another tab are applied once Zotero announces the
+    // library tab's return, which it does asynchronously. Not synced here, so
+    // tests still catch a missed announcement.
+    if (this.syncDeferred || this.pendingCoverIDs.size) return true;
     const itemIDs = this.tree.getItems().map((item) => item.id);
     if (
       !sameIDs(this.tree.getSelectedIDs(), this.selectedIDs) ||
@@ -353,8 +359,10 @@ export class GridView {
   }
 
   readonly scheduleSync = (): void => {
-    if (!getPref("enableGridView")) return;
-    if (this.win.Zotero_Tabs.selectedType !== "library") return;
+    if (!this.isPresenting()) {
+      this.syncDeferred = true;
+      return;
+    }
     this.cancelSync();
     this.syncTimer = this.win.setTimeout(() => {
       this.syncTimer = undefined;
@@ -831,8 +839,8 @@ export class GridView {
   }
 
   private syncItems(preserveFocusOnEntry = false): void {
-    if (!getPref("enableGridView")) return;
-    if (this.win.Zotero_Tabs.selectedType !== "library") return;
+    if (!this.isPresenting()) return;
+    this.syncDeferred = false;
     const items = this.tree.getItems();
     const previousIDs = this.itemIDs;
     this.itemIDs = items.map((item) => item.id);

@@ -197,19 +197,6 @@ describe("tag indicators", function () {
     await showsTags(grid, last, ["🔥 Current"]);
   });
 
-  it("shows tag changes made while a reader tab was in front", async function () {
-    const grid = await openGrid({ items: 1 });
-    const [item] = grid.items;
-    const cover = grid.coverImage(item);
-    await grid.openReaderTab(item);
-
-    item.addTag("🌈 Updated");
-    await item.saveTx();
-    await grid.showLibraryTab();
-    await showsTags(grid, item, ["🌈 Updated"]);
-    assert.strictEqual(grid.coverImage(item), cover);
-  });
-
   describe("tag shortcuts", function () {
     let one: string;
     let two: string;

@@ -198,6 +198,24 @@ describe("hidden grid viewport", function () {
       assert.deepEqual(grid.currentCover(anchor), cover, "the cover is kept");
     });
 
+    it("shows item changes made behind it once the library tab is back", async function () {
+      const { grid, anchor } = await changeBehindReaderTab();
+      const item = grid.itemByID(anchor);
+      // Changes that keep the item's place in the displayed order.
+      item.setField("date", "1999");
+      item.addTag("🌈 Updated");
+      await item.saveTx();
+      await returnToLibrary(grid, anchor);
+      assert.isTrue(
+        grid.captionLines(item).some(({ text }) => text.includes("1999")),
+        "the caption shows the new year",
+      );
+      assert.deepEqual(
+        grid.tagIndicators(item).shown.map(({ name }) => name),
+        ["🌈 Updated"],
+      );
+    });
+
     it("keeps the selection, focused tile and selection anchor", async function () {
       const { grid, anchor, selected, next } = await changeBehindReaderTab();
       await returnToLibrary(grid, anchor);
