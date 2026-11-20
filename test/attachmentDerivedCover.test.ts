@@ -458,23 +458,52 @@ describe("attachment-derived cover", function () {
     describe("is kept on disk", function () {
       let item: Zotero.Item;
       let attachment: Zotero.Item;
+      let path: string;
+      let modified: number;
+
+      /**
+       * Replace the PDF without Zotero noticing, keeping its modification time.
+       */
+      async function replacePDF(bytes: Uint8Array): Promise<void> {
+        await IOUtils.write(path, bytes);
+        await IOUtils.setModificationTime(path, modified);
+      }
 
       beforeEach(async function () {
         item = await book();
         attachment = await attachPDF(PORTRAIT_PAGE, item);
+        path = (await attachment.getFilePathAsync()) as string;
+        modified = (await IOUtils.stat(path)).lastModified!;
         await assertCover(await displayedCover(item), "attachment", 2 / 3);
-        // Change the page without Zotero noticing, so that a cover rendered
-        // afresh can be told apart from the one on disk.
-        await IOUtils.write(
-          (await attachment.getFilePathAsync()) as string,
-          pdfBytes(LANDSCAPE_PAGE),
-        );
+        // Change the page but neither the file's size nor its modification
+        // time, so that a cover rendered afresh can be told apart from the
+        // one on disk.
+        const landscape = pdfBytes(LANDSCAPE_PAGE);
+        assert.equal(landscape.length, (await IOUtils.stat(path)).size);
+        await replacePDF(landscape);
       });
 
       it("across sessions, until the attachment file is renamed", async function () {
         CoverProvider.clearCache();
         await assertCover(await findCover(item), "attachment", 2 / 3);
         await attachment.renameAttachmentFile("renamed.pdf");
+        await assertCover(await findCover(item), "attachment", 3 / 2);
+      });
+
+      it("until the file's size changes", async function () {
+        await replacePDF(
+          pdfBytes({
+            ...LANDSCAPE_PAGE,
+            content: "BT /F1 24 Tf 30 100 Td (Revised cover) Tj ET",
+          }),
+        );
+        CoverProvider.clearCache();
+        await assertCover(await findCover(item), "attachment", 3 / 2);
+      });
+
+      it("until the file's modification time changes", async function () {
+        await IOUtils.setModificationTime(path, modified + 60_000);
+        CoverProvider.clearCache();
         await assertCover(await findCover(item), "attachment", 3 / 2);
       });
 

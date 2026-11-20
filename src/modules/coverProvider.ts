@@ -232,7 +232,7 @@ export class CoverProvider {
         } else if (isEPUBAttachment(attachment)) {
           cover = await findEPUBCover(filePath);
         } else {
-          const signature = createPDFCacheSignature(attachment, filePath);
+          const signature = await createPDFCacheSignature(attachment, filePath);
           const cached =
             findPDFCover === findPDFCoverURI
               ? await getCachedPDFCover(item.id, signature)

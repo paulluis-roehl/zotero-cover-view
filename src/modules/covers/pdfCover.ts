@@ -82,11 +82,12 @@ const diskCacheImagePath = (itemID: number): string =>
 const diskCacheSignaturePath = (itemID: number): string =>
   PathUtils.join(diskCacheDirectory(), `${itemID}.signature`);
 
-export function createPDFCacheSignature(
+export async function createPDFCacheSignature(
   attachment: Zotero.Item,
   filePath: string,
-): string {
-  return `v4:${attachment.id}:${attachment.dateModified ?? ""}:${filePath}`;
+): Promise<string> {
+  const { size, lastModified } = await IOUtils.stat(filePath);
+  return `v4:${attachment.id}:${attachment.dateModified ?? ""}:${size ?? ""}:${lastModified ?? ""}:${filePath}`;
 }
 
 export async function getCachedPDFCover(
