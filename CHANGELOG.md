@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-20
+
+### Added
+
+- large PDF files can now load covers in chunks, rather than having the whole file loaded into memory
+- items with missing attachments are re-checked when selected
+
+### Changed
+
+- completely rewrote the test suite
+
+### Fixed
+
+- downloading a missing attachment triggers cover re-render
+- changing a file's size or modification time outside of Zotero now triggers cover re-render
+- fixed a bug where the pdf reader could trigger cover re-renders
+
+### Deprecated
+
+- old PDF cover fallback (only relevant for Zotero v<7)
+
 ## [0.6.0] - 2026-10-19
 
 ### Added

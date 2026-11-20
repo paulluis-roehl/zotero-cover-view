@@ -14,11 +14,12 @@
   - update in `coverView.css` and also `placeholderCover.ts` default cover svg
 - [ ] save fetched cover(s) as attachment (maybe also in right click menu) (warning: in large libraries, this may create a lot of attachments)
 - [ ] option to overwrite default covers
+- [ ] option to clear cached covers and re-render
 
 **UI/UX**
 
 - [ ] hot key for switching between list and grid view
-- [ ] add cover section to item info view
+- [x] add cover section to item info view
 - [ ] improve graphics / effects while loading covers
 - [ ] add cover flow pane
 
@@ -33,7 +34,7 @@
   - [ ] only target items that actually need refreshing
   - maybe give coverProvider a way to notify about a change and request that specific item to be re-rendered?
 - [ ] check [ZoteroThumbLibrary](https://github.com/gchapron/ZoteroThumbLibrary) for improvements to current architecture
-- [ ] improve pdf handling
+- [x] improve pdf handling
 
 **Bugs**
 
