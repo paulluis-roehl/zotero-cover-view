@@ -36,15 +36,6 @@ interface PDFJSModule {
   };
 }
 
-interface ZoteroPDFWorker {
-  _enqueue<T>(action: () => Promise<T>): Promise<T>;
-  _query<T>(
-    action: string,
-    data: Record<string, unknown>,
-    transfer: ArrayBuffer[],
-  ): Promise<T>;
-}
-
 const PNG_DATA_PREFIX = "data:image/png;base64,";
 
 export function isPDFAttachment(item: Zotero.Item): boolean {
@@ -142,13 +133,9 @@ export async function findPDFCoverURI(
   if (!win) throw new Error("Cannot render PDF cover without a Zotero window");
   // Import in the window realm: Zotero's sandbox freezes Map.prototype, while
   // the reader's PDF.js module installs a Map polyfill during initialization.
-  let pdfjs: PDFJSModule;
-  try {
-    pdfjs = (await win.eval(`import("${PDFJS_MODULE_URL}")`)) as PDFJSModule;
-  } catch {
-    // Older Zotero versions do not ship the reader as an ES module.
-    return renderWithDocumentWorker(filePath, targetWidth);
-  }
+  const pdfjs = (await win.eval(
+    `import("${PDFJS_MODULE_URL}")`,
+  )) as PDFJSModule;
   pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
   const document = await pdfjs.getDocument({
     data: new Uint8Array(await IOUtils.read(filePath)),
@@ -198,49 +185,6 @@ function coverScale(
     targetWidth === undefined ? DEFAULT_COVER_EDGE / edge : targetWidth / width,
     MAX_CANVAS_EDGE / edge,
   );
-}
-
-// Older Zotero: the PDF worker's renderArea accepts no PDF.js loading or
-// rendering options, so covers use whatever resources the worker itself loads.
-async function renderWithDocumentWorker(
-  filePath: string,
-  targetWidth?: number,
-): Promise<string | null> {
-  const bytes = new Uint8Array(await IOUtils.read(filePath));
-  const buf = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-  const worker = Zotero.PDFWorker as ZoteroPDFWorker;
-  const render = (scale: number) => {
-    const input = buf.slice(0);
-    return worker._query<{ buf: ArrayBuffer | null }>(
-      "pdf.renderArea",
-      {
-        buf: input,
-        pageIndex: 0,
-        rect: [-1e7, -1e7, 1e7, 1e7],
-        scale,
-      },
-      [input],
-    );
-  };
-  const result = await worker._enqueue(async () => {
-    // The older worker exposes scale, not page bounds. Probe at unit scale to
-    // discover the rotated page size rather than assuming US Letter. Its own
-    // renderArea pixel budget bounds both passes; provider caching avoids
-    // repeating these passes on redraws or pane resizes.
-    const probe = await render(1);
-    if (!probe.buf) return probe;
-    const header = new DataView(probe.buf);
-    const scale = coverScale(
-      header.getUint32(16),
-      header.getUint32(20),
-      targetWidth,
-    );
-    return scale === 1 ? probe : render(scale);
-  });
-  return result.buf ? `${PNG_DATA_PREFIX}${encodeBase64(result.buf)}` : null;
 }
 
 function encodeBase64(buffer: ArrayBuffer | Uint8Array): string {

@@ -1,6 +1,6 @@
 import { assert } from "chai";
 import { CoverProvider } from "../src/modules/coverProvider";
-import { createItems, patch, track } from "./helpers/gridFixture";
+import { createItems, track } from "./helpers/gridFixture";
 import {
   assertCover,
   attach,
@@ -380,16 +380,6 @@ describe("attachment-derived cover", function () {
       assert.isAbove(red, 200);
       assert.isBelow(green, 80);
       assert.isBelow(blue, 80);
-    });
-
-    it("is rendered by older Zotero versions without the reader module", async function () {
-      const win = Zotero.getMainWindow()!;
-      patch(win, "eval", (() => {
-        throw new Error("Reader ES module unavailable");
-      }) as typeof win.eval);
-      const cover = await findCover(await attachPDF(PORTRAIT_PAGE));
-      await assertCover(cover, "attachment", 2 / 3);
-      assert.isAtLeast((await imageSize(cover.uri)).width, 1200);
     });
 
     describe("is kept on disk", function () {
