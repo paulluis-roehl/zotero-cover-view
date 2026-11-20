@@ -1,6 +1,7 @@
 import { assert } from "chai";
 import { CoverProvider } from "../src/modules/coverProvider";
-import { createItems, track } from "./helpers/gridFixture";
+import { findPDFCoverURI } from "../src/modules/covers/pdfCover";
+import { createItems, patch, track } from "./helpers/gridFixture";
 import {
   assertCover,
   attach,
@@ -380,6 +381,78 @@ describe("attachment-derived cover", function () {
       assert.isAbove(red, 200);
       assert.isBelow(green, 80);
       assert.isBelow(blue, 80);
+    });
+
+    describe("of a large file", function () {
+      /** A PDF of 16 pages over 2 MB, its first page black, the others blue. */
+      async function largePDF(): Promise<string> {
+        const padding = " ".repeat(128 * 1024);
+        return scratchFile(
+          "large.pdf",
+          pdfBytes({
+            width: 100,
+            height: 100,
+            content: "0 0 0 rg 0 0 100 100 re f",
+            morePages: Array.from(
+              { length: 16 },
+              () => `0 0 1 rg 0 0 100 100 re f\n${padding}`,
+            ),
+          }),
+        );
+      }
+
+      /**
+       * Pass reads of `path` through `read` until the end of the test, and
+       * return the bytes read from it so far.
+       */
+      function watchReads(
+        path: string,
+        read: (
+          original: typeof IOUtils.read,
+          options?: ReadOptions,
+        ) => Promise<Uint8Array> = (original, options) =>
+          original(path, options),
+      ): () => number {
+        let bytes = 0;
+        const original: typeof IOUtils.read = patch(
+          IOUtils,
+          "read",
+          async (file: string, options?: ReadOptions) => {
+            if (file !== path) return original(file, options);
+            const data = await read(original.bind(IOUtils), options);
+            bytes += data.length;
+            return data;
+          },
+        );
+        return () => bytes;
+      }
+
+      it("is drawn from its first page without reading the whole file", async function () {
+        const path = await largePDF();
+        const bytesRead = watchReads(path);
+        const cover = await findPDFCoverURI(path);
+        const {
+          colour: [red, green, blue],
+        } = await imagePaint(cover!);
+        assert.isBelow(Math.max(red, green, blue), 60);
+        assert.isBelow(bytesRead(), (await IOUtils.stat(path)).size! / 4);
+      });
+
+      it("is not drawn when the file can no longer be read", async function () {
+        const path = await largePDF();
+        let reads = 0;
+        watchReads(path, async (read, options) => {
+          if (reads++ > 0) throw new Error("File gone");
+          return read(path, options);
+        });
+        let error: unknown;
+        try {
+          await findPDFCoverURI(path);
+        } catch (caught) {
+          error = caught;
+        }
+        assert.match(String(error), /File gone/);
+      });
     });
 
     describe("is kept on disk", function () {

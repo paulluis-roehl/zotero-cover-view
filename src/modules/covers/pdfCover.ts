@@ -8,6 +8,10 @@ const PDFJS_WORKER_URL = "resource://zotero/reader/pdf/build/pdf.worker.mjs";
 const PDFJS_WEB_URL = "resource://zotero/reader/pdf/web/";
 // PDF.js "enable": paint annotation appearances stored in the PDF itself.
 const PDFJS_ANNOTATION_MODE_ENABLE = 1;
+// PDFs up to the limit are read whole; larger ones in chunks, as PDF.js
+// requests them.
+const PDF_SMALL_FILE_LIMIT = 512 * 1024;
+const PDF_RANGE_CHUNK_SIZE = 64 * 1024;
 
 interface PDFPage {
   getViewport(options: { scale: number }): { width: number; height: number };
@@ -18,21 +22,44 @@ interface PDFPage {
   }): { promise: Promise<void> };
 }
 
+interface PDFDocument {
+  getPage(index: number): Promise<PDFPage>;
+}
+
+interface PDFDataRangeTransport {
+  onDataRange(begin: number, chunk: Uint8Array): void;
+  requestDataRange(begin: number, end: number): void;
+  abort(): void;
+}
+
+type PDFSource =
+  | { data: Uint8Array }
+  | {
+      range: PDFDataRangeTransport;
+      rangeChunkSize: number;
+      disableStream: boolean;
+      disableAutoFetch: boolean;
+    };
+
 interface PDFJSModule {
   GlobalWorkerOptions: { workerSrc: string };
-  getDocument(options: {
-    data: Uint8Array;
-    cMapUrl: string;
-    cMapPacked: boolean;
-    standardFontDataUrl: string;
-    iccUrl: string;
-    wasmUrl: string;
-    isEvalSupported: boolean;
-  }): {
-    promise: Promise<{
-      getPage(index: number): Promise<PDFPage>;
-      destroy(): Promise<void>;
-    }>;
+  PDFDataRangeTransport: new (
+    length: number,
+    initialData: Uint8Array,
+    progressiveDone: boolean,
+  ) => PDFDataRangeTransport;
+  getDocument(
+    options: PDFSource & {
+      cMapUrl: string;
+      cMapPacked: boolean;
+      standardFontDataUrl: string;
+      iccUrl: string;
+      wasmUrl: string;
+      isEvalSupported: boolean;
+    },
+  ): {
+    promise: Promise<PDFDocument>;
+    destroy(): Promise<void>;
   };
 }
 
@@ -117,6 +144,11 @@ export async function deleteCachedPDFCover(itemID: number): Promise<void> {
 
 /**
  * Render the first page with the same PDF.js engine and decoder assets as Zotero's reader.
+ *
+ * Range reads and their failure handling are adapted from `localPDFSource`
+ * and `renderPDF` in ZoteroThumbLibrary 0.1.10
+ * (https://github.com/gchapron/ZoteroThumbLibrary), by Guillaume Chapron,
+ * AGPL-3.0-or-later.
  */
 export async function findPDFCoverURI(
   filePath: string,
@@ -137,42 +169,124 @@ export async function findPDFCoverURI(
     `import("${PDFJS_MODULE_URL}")`,
   )) as PDFJSModule;
   pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-  const document = await pdfjs.getDocument({
-    data: new Uint8Array(await IOUtils.read(filePath)),
-    // Zotero's bundled resources only: local resource:// URLs, no network.
-    cMapUrl: `${PDFJS_WEB_URL}cmaps/`,
-    cMapPacked: true,
-    standardFontDataUrl: `${PDFJS_WEB_URL}standard_fonts/`,
-    iccUrl: `${PDFJS_WEB_URL}iccs/`,
-    wasmUrl: `${PDFJS_WEB_URL}wasm/`,
-    // Defence in depth: PDF.js 5 never evaluates PDF code when rendering and
-    // ignores this option; PDF.js 4 and earlier honour it.
-    isEvalSupported: false,
-  }).promise;
+  // PDF.js waits forever for a range that never arrives; fail the render instead.
+  let failRead!: (error: unknown) => void;
+  const readFailure = new Promise<never>((_, reject) => (failRead = reject));
+  const { source, abort } = await localPDFSource(pdfjs, filePath, failRead);
+  let task: ReturnType<PDFJSModule["getDocument"]> | undefined;
   try {
-    const page = await document.getPage(1);
-    const bounds = page.getViewport({ scale: 1 });
-    const scale = Math.min(
-      coverScale(bounds.width, bounds.height, targetWidth),
-      Math.sqrt(MAX_CANVAS_PIXELS / (bounds.width * bounds.height)),
-    );
-    const viewport = page.getViewport({ scale });
-    const canvas = win.document.createElement("canvas");
-    canvas.width = Math.ceil(Math.min(viewport.width, MAX_CANVAS_EDGE));
-    canvas.height = Math.ceil(Math.min(viewport.height, MAX_CANVAS_EDGE));
-    const context = canvas.getContext("2d", {
-      alpha: false,
-    }) as CanvasRenderingContext2D | null;
-    if (!context) throw new Error("Cannot create PDF cover canvas");
-    await page.render({
-      canvasContext: context,
-      viewport,
-      annotationMode: PDFJS_ANNOTATION_MODE_ENABLE,
-    }).promise;
-    return canvas.toDataURL("image/png");
+    task = pdfjs.getDocument({
+      ...source,
+      // Zotero's bundled resources only: local resource:// URLs, no network.
+      cMapUrl: `${PDFJS_WEB_URL}cmaps/`,
+      cMapPacked: true,
+      standardFontDataUrl: `${PDFJS_WEB_URL}standard_fonts/`,
+      iccUrl: `${PDFJS_WEB_URL}iccs/`,
+      wasmUrl: `${PDFJS_WEB_URL}wasm/`,
+      // Defence in depth: PDF.js 5 never evaluates PDF code when rendering and
+      // ignores this option; PDF.js 4 and earlier honour it.
+      isEvalSupported: false,
+    });
+    return await Promise.race([
+      readFailure,
+      task.promise.then((document) =>
+        renderFirstPage(win, document, targetWidth),
+      ),
+    ]);
   } finally {
-    await document.destroy();
+    abort();
+    // A failed cleanup must not replace the cover or the original error.
+    await task?.destroy().catch(() => {});
   }
+}
+
+/**
+ * The PDF at `path` as a PDF.js source. Small files are read whole; larger
+ * ones are read in ranges as PDF.js requests them, reporting failed reads to
+ * `onError`. `abort` ignores outstanding and further reads.
+ */
+async function localPDFSource(
+  pdfjs: PDFJSModule,
+  path: string,
+  onError: (error: unknown) => void,
+): Promise<{ source: PDFSource; abort(): void }> {
+  const { size } = await IOUtils.stat(path);
+  if (size === undefined || size <= PDF_SMALL_FILE_LIMIT) {
+    return {
+      source: { data: new Uint8Array(await IOUtils.read(path)) },
+      abort() {},
+    };
+  }
+
+  const initialData = await readRange(path, 0, PDF_RANGE_CHUNK_SIZE);
+  let aborted = false;
+  const range = new pdfjs.PDFDataRangeTransport(size, initialData, true);
+  range.requestDataRange = (begin, end) => {
+    if (aborted) return;
+    readRange(path, begin, end)
+      .then((bytes) => {
+        if (!aborted) range.onDataRange(begin, bytes);
+      })
+      .catch((error) => {
+        if (!aborted) onError(error);
+      });
+  };
+  // PDF.js also calls this when the document is destroyed.
+  range.abort = () => {
+    aborted = true;
+  };
+  return {
+    // Without both switches PDF.js fetches the rest of the file, although a
+    // cover needs only the first page.
+    source: {
+      range,
+      rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
+      disableStream: true,
+      disableAutoFetch: true,
+    },
+    abort: () => range.abort(),
+  };
+}
+
+async function readRange(
+  path: string,
+  begin: number,
+  end: number,
+): Promise<Uint8Array> {
+  const bytes = await IOUtils.read(path, {
+    offset: begin,
+    maxBytes: end - begin,
+  });
+  if (bytes.length !== end - begin)
+    throw new Error("PDF file changed while reading");
+  return bytes;
+}
+
+async function renderFirstPage(
+  win: Window,
+  document: PDFDocument,
+  targetWidth?: number,
+): Promise<string> {
+  const page = await document.getPage(1);
+  const bounds = page.getViewport({ scale: 1 });
+  const scale = Math.min(
+    coverScale(bounds.width, bounds.height, targetWidth),
+    Math.sqrt(MAX_CANVAS_PIXELS / (bounds.width * bounds.height)),
+  );
+  const viewport = page.getViewport({ scale });
+  const canvas = win.document.createElement("canvas");
+  canvas.width = Math.ceil(Math.min(viewport.width, MAX_CANVAS_EDGE));
+  canvas.height = Math.ceil(Math.min(viewport.height, MAX_CANVAS_EDGE));
+  const context = canvas.getContext("2d", {
+    alpha: false,
+  }) as CanvasRenderingContext2D | null;
+  if (!context) throw new Error("Cannot create PDF cover canvas");
+  await page.render({
+    canvasContext: context,
+    viewport,
+    annotationMode: PDFJS_ANNOTATION_MODE_ENABLE,
+  }).promise;
+  return canvas.toDataURL("image/png");
 }
 
 function coverScale(

@@ -166,6 +166,8 @@ export interface PDFOptions {
    * and content stream.
    */
   objects?: string[];
+  /** Content streams of further pages of the same size, numbered after `objects`. */
+  morePages?: string[];
 }
 
 /** A PDF stream object with the given dictionary entries and ASCII data. */
@@ -173,20 +175,30 @@ export function pdfStream(dictionary: string, data: string): string {
   return `<< ${dictionary} /Length ${data.length} >>\nstream\n${data}\nendstream`;
 }
 
-/** A minimal valid one-page PDF, by default with the given page size in points. */
+/** A minimal valid PDF, by default one page with the given page size in points. */
 export function pdfBytes({
   width = 200,
   height = 300,
   content = `BT /F1 24 Tf 30 ${Math.round(height / 2)} Td (Cover) Tj ET`,
   page = "/Resources << /Font << /F1 5 0 R >> >>",
   objects: extra = ["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"],
+  morePages = [],
 }: PDFOptions = {}): Uint8Array {
+  // Further page dictionaries come together, before their content streams.
+  const firstMore = 5 + extra.length;
+  const kids = [3, ...morePages.map((_, index) => firstMore + index)];
+  const pageObject = (entries: string, contents: number) =>
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] ${entries} /Contents ${contents} 0 R >>`;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] ${page} /Contents 4 0 R >>`,
+    `<< /Type /Pages /Kids [${kids.map((kid) => `${kid} 0 R`).join(" ")}] /Count ${kids.length} >>`,
+    pageObject(page, 4),
     pdfStream("", content),
     ...extra,
+    ...morePages.map((_, index) =>
+      pageObject("", firstMore + morePages.length + index),
+    ),
+    ...morePages.map((pageContent) => pdfStream("", pageContent)),
   ];
   let pdf = "%PDF-1.4\n";
   const offsets: number[] = [];
