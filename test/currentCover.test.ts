@@ -264,6 +264,36 @@ describe("current cover", function () {
       assertRefreshed(item);
       await assertCover(await displayedCover(item), "attachment", WIDE);
     });
+
+    it("when the best-ranked attachment is moved to the trash and restored", async function () {
+      await displayedCover(item);
+      a.deleted = true;
+      await a.saveTx();
+      assertRefreshed(item);
+      await assertCover(await displayedCover(item), "attachment", WIDE);
+      a.deleted = false;
+      await a.saveTx();
+      assertRefreshed(item);
+      await assertCover(await displayedCover(item), "attachment", TALL);
+    });
+
+    it("after attachments' URLs change during a lookup", async function () {
+      const pending = displayedCover(item);
+      a.setField("url", urlB);
+      b.setField("url", urlA);
+      await assertCover(await pending, "attachment", TALL, "not yet saved");
+      await a.saveTx();
+      await b.saveTx();
+      assertRefreshed(item);
+      await assertCover(await displayedCover(item), "attachment", WIDE);
+    });
+
+    it("when the best-ranked attachment's file is relinked", async function () {
+      await displayedCover(item);
+      await a.relinkAttachmentFile(await image(SQUARE));
+      assertRefreshed(item);
+      await assertCover(await displayedCover(item), "attachment", SQUARE);
+    });
   });
 
   describe("is looked up again once a missing attachment file is downloaded", function () {
@@ -362,25 +392,33 @@ describe("current cover", function () {
     });
   });
 
-  it("is not looked up again when a page is turned in the reader", async function () {
-    const item = await book();
-    const file = await image(TALL);
-    const attachment = await attach(file, "image/png", { parent: item });
-    // Just read, so Zotero does not save the last-read time on a page turn.
-    attachment.attachmentLastRead = Math.round(Date.now() / 1000);
-    await attachment.saveTx();
-    await assertCover(await displayedCover(item), "attachment", TALL);
-    const changes: number[] = [];
-    onTeardown(CoverProvider.onCoverChanged((id) => changes.push(id)));
+  describe("is not looked up again when Zotero saves an attachment's last-read time", function () {
+    for (const event of ["open", "pageChange", "close"] as const) {
+      it(`on ${event}`, async function () {
+        const item = await book();
+        const file = await image(TALL);
+        const attachment = await attach(file, "image/png", { parent: item });
+        // Read long ago, so Zotero saves the last-read time even on a page turn.
+        attachment.attachmentLastRead = 1;
+        await attachment.saveTx();
+        await assertCover(await displayedCover(item), "attachment", TALL);
+        const changes = announcedChanges();
 
-    // Without its file, a fresh lookup finds no attachment-derived cover.
-    await IOUtils.remove(file);
-    await Zotero.Notifier.trigger("pageChange", "file", attachment.id);
-    assert.isEmpty(changes, "no cover change is announced");
-    await assertCover(await displayedCover(item), "attachment", TALL);
+        // Without its file, a fresh lookup finds no attachment-derived cover.
+        await IOUtils.remove(file);
+        await Zotero.Notifier.trigger(event, "file", attachment.id);
+        assert.isAbove(
+          attachment.attachmentLastRead,
+          1,
+          "Zotero saves the last-read time",
+        );
+        assert.isEmpty(changes, "no cover change is announced");
+        await assertCover(await displayedCover(item), "attachment", TALL);
+      });
+    }
   });
 
-  it("is not looked up again after note or annotation edits", async function () {
+  it("is not looked up again after note or annotation changes", async function () {
     const item = await book();
     const file = await scratchFile("book.pdf", pdfBytes());
     const attachment = await attach(file, "application/pdf", { parent: item });
@@ -393,24 +431,27 @@ describe("current cover", function () {
         },
       },
     ]);
-    const annotation = new Zotero.Item("annotation");
-    annotation.libraryID = attachment.libraryID;
-    annotation.parentID = attachment.id;
-    annotation.annotationType = "highlight";
-    annotation.annotationText = "Highlighted text";
-    annotation.annotationComment = "";
-    annotation.annotationColor = "#ffd400";
-    annotation.annotationPageLabel = "1";
-    annotation.annotationSortIndex = "00000|000000|00000";
-    annotation.annotationPosition = JSON.stringify({
-      pageIndex: 0,
-      rects: [[0, 0, 10, 10]],
-    });
-    track(annotation);
-    await annotation.saveTx();
+    const annotate = async (text: string) => {
+      const annotation = new Zotero.Item("annotation");
+      annotation.libraryID = attachment.libraryID;
+      annotation.parentID = attachment.id;
+      annotation.annotationType = "highlight";
+      annotation.annotationText = text;
+      annotation.annotationComment = "";
+      annotation.annotationColor = "#ffd400";
+      annotation.annotationPageLabel = "1";
+      annotation.annotationSortIndex = "00000|000000|00000";
+      annotation.annotationPosition = JSON.stringify({
+        pageIndex: 0,
+        rects: [[0, 0, 10, 10]],
+      });
+      track(annotation);
+      await annotation.saveTx();
+      return annotation;
+    };
+    const annotation = await annotate("Highlighted text");
     await assertCover(await displayedCover(item), "attachment");
-    const changes: number[] = [];
-    onTeardown(CoverProvider.onCoverChanged((id) => changes.push(id)));
+    const changes = announcedChanges();
 
     // Without its file, a fresh lookup finds no attachment-derived cover.
     await IOUtils.remove(file);
@@ -418,6 +459,7 @@ describe("current cover", function () {
     await note.saveTx();
     annotation.annotationComment = "An edited comment";
     await annotation.saveTx();
+    await annotate("Further highlighted text");
 
     assert.isEmpty(changes, "no cover change is announced");
     await assertCover(await displayedCover(item), "attachment");

@@ -39,6 +39,7 @@ export class CoverProvider {
   >();
   private static generations = new Map<number, number>();
   private static attachmentParents = new Map<number, number>();
+  private static attachmentSignatures = new Map<number, string>();
   private static notifierID: string | undefined;
   private static listeners = new Set<(itemID: number) => void>();
   private static refreshListeners = new Set<() => void>();
@@ -208,10 +209,12 @@ export class CoverProvider {
     /** Receives the candidates passed over because their file is missing. */
     missingFileAttachments: Zotero.Item[] = [],
   ): Promise<CoverResult | null> {
+    const signatures = this.savedAttachmentSignatures(item);
     const attachments = await this.findAttachments(item);
     // Remember the entire ranked list, including candidates after the winner,
     // so removal or reparenting can invalidate the former parent's choice.
-    for (const attachment of attachments) this.rememberParent(attachment, item);
+    for (const attachment of attachments)
+      this.rememberParent(attachment, item, signatures.get(attachment.id));
     for (const attachment of attachments) {
       try {
         if (!this.isSupportedAttachment(attachment)) continue;
@@ -305,6 +308,7 @@ export class CoverProvider {
     this.dimensions.clear();
     this.generations.clear();
     this.attachmentParents.clear();
+    this.attachmentSignatures.clear();
   }
 
   private static metadataSignature(item: Zotero.Item): string {
@@ -342,6 +346,17 @@ export class CoverProvider {
           for (const rawID of ids) {
             const id = Number(rawID);
             const attachment = Zotero.Items.get(id);
+            // Zotero also saves attachments for reading (last-read time) and
+            // annotating, without changing anything that affects a cover.
+            const signature = this.attachmentSignatures.get(id);
+            if (
+              event === "modify" &&
+              attachment &&
+              signature !== undefined &&
+              signature === this.attachmentSignature(attachment)
+            )
+              continue;
+            this.attachmentSignatures.delete(id);
             if (
               event === "modify" &&
               attachment &&
@@ -437,10 +452,44 @@ export class CoverProvider {
   private static rememberParent(
     attachment: Zotero.Item,
     item: Zotero.Item,
+    signature: string | undefined,
   ): void {
     if (attachment.id && item.isRegularItem?.()) {
       this.attachmentParents.set(attachment.id, item.id);
+      if (signature === undefined)
+        this.attachmentSignatures.delete(attachment.id);
+      else this.attachmentSignatures.set(attachment.id, signature);
     }
+  }
+
+  /**
+   * Signatures of the child attachments as ranked by a lookup starting now.
+   * Unsaved changes are left out: the ranking may not reflect them yet.
+   */
+  private static savedAttachmentSignatures(
+    item: Zotero.Item,
+  ): Map<number, string> {
+    const signatures = new Map<number, string>();
+    if (!item.isRegularItem?.()) return signatures;
+    for (const id of item.getAttachments(true)) {
+      const attachment = Zotero.Items.get(id);
+      if (attachment && !attachment.hasChanged())
+        signatures.set(id, this.attachmentSignature(attachment));
+    }
+    return signatures;
+  }
+
+  /** What decides an attachment's ranking and the cover drawn from it. */
+  private static attachmentSignature(attachment: Zotero.Item): string {
+    return JSON.stringify([
+      attachment.parentItemID,
+      attachment.deleted,
+      attachment.attachmentLinkMode,
+      attachment.attachmentContentType,
+      attachment.attachmentPath,
+      attachment.getField?.("url"),
+      attachment.dateAdded,
+    ]);
   }
 
   private static isSupportedAttachment(item: Zotero.Item): boolean {
