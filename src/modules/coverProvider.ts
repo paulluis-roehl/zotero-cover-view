@@ -293,7 +293,15 @@ export class CoverProvider {
     );
     this.notifierID = Zotero.Notifier.registerObserver(
       {
-        notify: (event, _type, ids, extraData) => {
+        notify: (event, type, ids, extraData) => {
+          if (type === "file") {
+            // Only a finished download can make an attachment file appear;
+            // reader events such as page turns must not trigger lookups.
+            if ((event as string) === "download") this.onFileDownloaded(ids);
+            return;
+          }
+          // Redraws only repaint rows, e.g. the Cover column after a change.
+          if (event === "redraw") return;
           for (const rawID of ids) {
             const id = Number(rawID);
             const attachment = Zotero.Items.get(id);
@@ -343,9 +351,25 @@ export class CoverProvider {
           }
         },
       },
-      ["item"],
+      ["item", "file"],
       "cover-view-covers",
     );
+  }
+
+  private static onFileDownloaded(ids: (number | string)[]): void {
+    for (const rawID of ids) {
+      const id = Number(rawID);
+      const itemIDs = new Set<number>([id]);
+      const knownParent = this.attachmentParents.get(id);
+      if (knownParent) itemIDs.add(knownParent);
+      const attachment = Zotero.Items.get(id);
+      if (attachment && attachment.parentItemID)
+        itemIDs.add(attachment.parentItemID);
+      for (const itemID of itemIDs) {
+        this.invalidate(itemID);
+        this.emitCoverChanged(itemID);
+      }
+    }
   }
 
   static unregisterNotifier(): void {

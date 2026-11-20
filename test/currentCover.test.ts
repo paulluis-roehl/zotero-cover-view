@@ -5,6 +5,7 @@ import {
   ItemSpec,
   onTeardown,
   setPref,
+  track,
   until,
 } from "./helpers/gridFixture";
 import {
@@ -247,6 +248,109 @@ describe("current cover", function () {
       assertRefreshed(item);
       await assertCover(await displayedCover(item), "attachment", WIDE);
     });
+  });
+
+  describe("is looked up again once a missing attachment file is downloaded", function () {
+    let changes: number[];
+
+    /** Link an image whose file is missing until `restore` is called. */
+    async function missingImage(parent?: Zotero.Item) {
+      const file = await image(TALL);
+      const attachment = await attach(file, "image/png", { parent });
+      const bytes = await IOUtils.read(file);
+      await IOUtils.remove(file);
+      return { attachment, restore: () => IOUtils.write(file, bytes) };
+    }
+
+    /** Collect cover changes announced from now on. */
+    function listen() {
+      changes = [];
+      onTeardown(CoverProvider.onCoverChanged((id) => changes.push(id)));
+    }
+
+    it("for the parent of a child attachment", async function () {
+      const item = await book();
+      const { attachment, restore } = await missingImage(item);
+      await assertCover(await displayedCover(item), "placeholder");
+      listen();
+
+      await restore();
+      await Zotero.Notifier.trigger("download", "file", attachment.id);
+      assert.include(changes, item.id, "the cover change is announced");
+      await assertCover(await displayedCover(item), "attachment", TALL);
+    });
+
+    it("for a standalone attachment", async function () {
+      const { attachment, restore } = await missingImage();
+      await assertCover(await displayedCover(attachment), "placeholder");
+      listen();
+
+      await restore();
+      await Zotero.Notifier.trigger("download", "file", attachment.id);
+      assert.include(changes, attachment.id, "the cover change is announced");
+      await assertCover(await displayedCover(attachment), "attachment", TALL);
+    });
+  });
+
+  it("is not looked up again when a page is turned in the reader", async function () {
+    const item = await book();
+    const file = await image(TALL);
+    const attachment = await attach(file, "image/png", { parent: item });
+    // Just read, so Zotero does not save the last-read time on a page turn.
+    attachment.attachmentLastRead = Math.round(Date.now() / 1000);
+    await attachment.saveTx();
+    await assertCover(await displayedCover(item), "attachment", TALL);
+    const changes: number[] = [];
+    onTeardown(CoverProvider.onCoverChanged((id) => changes.push(id)));
+
+    // Without its file, a fresh lookup finds no attachment-derived cover.
+    await IOUtils.remove(file);
+    await Zotero.Notifier.trigger("pageChange", "file", attachment.id);
+    assert.isEmpty(changes, "no cover change is announced");
+    await assertCover(await displayedCover(item), "attachment", TALL);
+  });
+
+  it("is not looked up again after note or annotation edits", async function () {
+    const item = await book();
+    const file = await scratchFile("book.pdf", pdfBytes());
+    const attachment = await attach(file, "application/pdf", { parent: item });
+    const [note] = await createItems([
+      {
+        itemType: "note",
+        setup: (note) => {
+          note.setNote("<p>A child note</p>");
+          note.parentID = item.id;
+        },
+      },
+    ]);
+    const annotation = new Zotero.Item("annotation");
+    annotation.libraryID = attachment.libraryID;
+    annotation.parentID = attachment.id;
+    annotation.annotationType = "highlight";
+    annotation.annotationText = "Highlighted text";
+    annotation.annotationComment = "";
+    annotation.annotationColor = "#ffd400";
+    annotation.annotationPageLabel = "1";
+    annotation.annotationSortIndex = "00000|000000|00000";
+    annotation.annotationPosition = JSON.stringify({
+      pageIndex: 0,
+      rects: [[0, 0, 10, 10]],
+    });
+    track(annotation);
+    await annotation.saveTx();
+    await assertCover(await displayedCover(item), "attachment");
+    const changes: number[] = [];
+    onTeardown(CoverProvider.onCoverChanged((id) => changes.push(id)));
+
+    // Without its file, a fresh lookup finds no attachment-derived cover.
+    await IOUtils.remove(file);
+    note.setNote("<p>An edited child note</p>");
+    await note.saveTx();
+    annotation.annotationComment = "An edited comment";
+    await annotation.saveTx();
+
+    assert.isEmpty(changes, "no cover change is announced");
+    await assertCover(await displayedCover(item), "attachment");
   });
 
   it("is reused until cover-relevant metadata changes, but not after a tag edit", async function () {
