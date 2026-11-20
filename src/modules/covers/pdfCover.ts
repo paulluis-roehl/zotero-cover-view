@@ -187,8 +187,7 @@ function coverScale(
   );
 }
 
-function encodeBase64(buffer: ArrayBuffer | Uint8Array): string {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+function encodeBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunkSize = 8192;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
