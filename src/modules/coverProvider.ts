@@ -29,8 +29,8 @@ export class CoverProvider {
       promise: Promise<CoverResult | null>;
       uriPromise: Promise<string | null>;
       result?: CoverResult | null;
-      /** Candidates ranked ahead of the result whose files were missing. */
-      missingFiles: Zotero.Item[];
+      /** Candidates passed over because their file was missing. */
+      missingFileAttachments: Zotero.Item[];
     }
   >();
   private static dimensions = new Map<
@@ -69,7 +69,7 @@ export class CoverProvider {
         this.generations.set(item.id, this.currentGeneration(item.id) + 1);
       }
       const generation = this.currentGeneration(item.id);
-      const missingFiles: Zotero.Item[] = [];
+      const missingFileAttachments: Zotero.Item[] = [];
       const cover = this.findCoverResult(
         item,
         undefined,
@@ -80,7 +80,7 @@ export class CoverProvider {
         fetchISBNCover,
         undefined,
         fetchMetadataCover,
-        missingFiles,
+        missingFileAttachments,
       )
         .catch((error) => {
           ztoolkit.log("Failed to resolve cover", item.id, error);
@@ -108,7 +108,7 @@ export class CoverProvider {
         metadata,
         promise: cover,
         uriPromise: cover.then((result) => result?.uri ?? null),
-        missingFiles,
+        missingFileAttachments,
       });
       // Native row rendering may observe the edited item before its notifier
       // callback. Still refresh the grid when this happens first.
@@ -142,9 +142,13 @@ export class CoverProvider {
    */
   static async recheckMissingAttachmentFiles(item: Zotero.Item): Promise<void> {
     const entry = this.cache.get(item.id);
-    if (!entry || entry.result === undefined || !entry.missingFiles.length)
+    if (
+      !entry ||
+      entry.result === undefined ||
+      !entry.missingFileAttachments.length
+    )
       return;
-    for (const attachment of entry.missingFiles) {
+    for (const attachment of entry.missingFileAttachments) {
       let exists = false;
       try {
         exists = await attachment.fileExists();
@@ -202,7 +206,7 @@ export class CoverProvider {
     findMetadataCover: typeof findMetadataCoverURI = findMetadataCoverURI,
     fetchMetadataCover = this.shouldFetchMetadataCover(),
     /** Receives the candidates passed over because their file is missing. */
-    missingFiles: Zotero.Item[] = [],
+    missingFileAttachments: Zotero.Item[] = [],
   ): Promise<CoverResult | null> {
     const attachments = await this.findAttachments(item);
     // Remember the entire ranked list, including candidates after the winner,
@@ -213,7 +217,7 @@ export class CoverProvider {
         if (!this.isSupportedAttachment(attachment)) continue;
         const filePath = await attachment.getFilePathAsync();
         if (!filePath) {
-          missingFiles.push(attachment);
+          missingFileAttachments.push(attachment);
           continue;
         }
         // A URI (or a cached PDF cover) alone does not prove the candidate is
