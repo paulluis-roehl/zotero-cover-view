@@ -29,6 +29,8 @@ export class CoverProvider {
       promise: Promise<CoverResult | null>;
       uriPromise: Promise<string | null>;
       result?: CoverResult | null;
+      /** Candidates ranked ahead of the result whose files were missing. */
+      missingFiles: Zotero.Item[];
     }
   >();
   private static dimensions = new Map<
@@ -67,6 +69,7 @@ export class CoverProvider {
         this.generations.set(item.id, this.currentGeneration(item.id) + 1);
       }
       const generation = this.currentGeneration(item.id);
+      const missingFiles: Zotero.Item[] = [];
       const cover = this.findCoverResult(
         item,
         undefined,
@@ -77,6 +80,7 @@ export class CoverProvider {
         fetchISBNCover,
         undefined,
         fetchMetadataCover,
+        missingFiles,
       )
         .catch((error) => {
           ztoolkit.log("Failed to resolve cover", item.id, error);
@@ -104,6 +108,7 @@ export class CoverProvider {
         metadata,
         promise: cover,
         uriPromise: cover.then((result) => result?.uri ?? null),
+        missingFiles,
       });
       // Native row rendering may observe the edited item before its notifier
       // callback. Still refresh the grid when this happens first.
@@ -129,6 +134,29 @@ export class CoverProvider {
     uri: string,
   ): { width: number; height: number } | undefined {
     return this.dimensions.get(uri);
+  }
+
+  /**
+   * Look up the current cover again if an attachment file that was missing
+   * during the lookup has since appeared, e.g. restored outside Zotero.
+   */
+  static async recheckMissingAttachmentFiles(item: Zotero.Item): Promise<void> {
+    const entry = this.cache.get(item.id);
+    if (!entry || entry.result === undefined || !entry.missingFiles.length)
+      return;
+    for (const attachment of entry.missingFiles) {
+      let exists = false;
+      try {
+        exists = await attachment.fileExists();
+      } catch (error) {
+        ztoolkit.log("Failed to check attachment file", attachment.id, error);
+      }
+      if (!exists) continue;
+      if (this.cache.get(item.id) !== entry) return;
+      this.invalidate(item.id, { discardPDF: false });
+      this.emitCoverChanged(item.id);
+      return;
+    }
   }
 
   private static async readCoverDimensions(
@@ -173,6 +201,8 @@ export class CoverProvider {
     fetchISBNCover = this.shouldFetchISBNCover(),
     findMetadataCover: typeof findMetadataCoverURI = findMetadataCoverURI,
     fetchMetadataCover = this.shouldFetchMetadataCover(),
+    /** Receives the candidates passed over because their file is missing. */
+    missingFiles: Zotero.Item[] = [],
   ): Promise<CoverResult | null> {
     const attachments = await this.findAttachments(item);
     // Remember the entire ranked list, including candidates after the winner,
@@ -182,7 +212,10 @@ export class CoverProvider {
       try {
         if (!this.isSupportedAttachment(attachment)) continue;
         const filePath = await attachment.getFilePathAsync();
-        if (!filePath) continue;
+        if (!filePath) {
+          missingFiles.push(attachment);
+          continue;
+        }
         // A URI (or a cached PDF cover) alone does not prove the candidate is
         // available. Probe readability without introducing image decoding.
         if (item.isRegularItem?.()) {

@@ -56,6 +56,8 @@ function updateCover(props: SectionProps): void {
 
   // Resolve even while collapsed: native async rendering is visibility-dependent.
   CoverProvider.cacheCover(item);
+  // Files can reappear without any notification, e.g. restored by a cloud drive.
+  void CoverProvider.recheckMissingAttachmentFiles(item);
   const showCover = (cover: CoverResult | null) => {
     if (
       sections.get(body) !== state ||

@@ -48,6 +48,22 @@ function displayedCover(item: Zotero.Item) {
   return CoverProvider.getCoverResult(item.id);
 }
 
+/** Link an image whose file is missing until `restore` is called. */
+async function missingImage(parent?: Zotero.Item) {
+  const file = await image(TALL);
+  const attachment = await attach(file, "image/png", { parent });
+  const bytes = await IOUtils.read(file);
+  await IOUtils.remove(file);
+  return { attachment, restore: () => IOUtils.write(file, bytes) };
+}
+
+/** Collect cover changes announced from now on. */
+function announcedChanges(): number[] {
+  const changes: number[] = [];
+  onTeardown(CoverProvider.onCoverChanged((id) => changes.push(id)));
+  return changes;
+}
+
 describe("current cover", function () {
   this.timeout(20000);
 
@@ -251,28 +267,11 @@ describe("current cover", function () {
   });
 
   describe("is looked up again once a missing attachment file is downloaded", function () {
-    let changes: number[];
-
-    /** Link an image whose file is missing until `restore` is called. */
-    async function missingImage(parent?: Zotero.Item) {
-      const file = await image(TALL);
-      const attachment = await attach(file, "image/png", { parent });
-      const bytes = await IOUtils.read(file);
-      await IOUtils.remove(file);
-      return { attachment, restore: () => IOUtils.write(file, bytes) };
-    }
-
-    /** Collect cover changes announced from now on. */
-    function listen() {
-      changes = [];
-      onTeardown(CoverProvider.onCoverChanged((id) => changes.push(id)));
-    }
-
     it("for the parent of a child attachment", async function () {
       const item = await book();
       const { attachment, restore } = await missingImage(item);
       await assertCover(await displayedCover(item), "placeholder");
-      listen();
+      const changes = announcedChanges();
 
       await restore();
       await Zotero.Notifier.trigger("download", "file", attachment.id);
@@ -283,12 +282,83 @@ describe("current cover", function () {
     it("for a standalone attachment", async function () {
       const { attachment, restore } = await missingImage();
       await assertCover(await displayedCover(attachment), "placeholder");
-      listen();
+      const changes = announcedChanges();
 
       await restore();
       await Zotero.Notifier.trigger("download", "file", attachment.id);
       assert.include(changes, attachment.id, "the cover change is announced");
       await assertCover(await displayedCover(attachment), "attachment", TALL);
+    });
+  });
+
+  describe("is looked up again on a re-check once a missing attachment file reappears", function () {
+    it("replacing an online-sourced cover", async function () {
+      setPref("fetchISBNCover", true);
+      const isbn = uniqueISBN();
+      fakeOpenLibrary().addISBNCover(isbn, online(WIDE));
+      const item = await book({
+        setup: (item) => item.setField("ISBN", isbn),
+      });
+      const { restore } = await missingImage(item);
+      await assertCover(await displayedCover(item), "online", WIDE);
+      const changes = announcedChanges();
+
+      await CoverProvider.recheckMissingAttachmentFiles(item);
+      assert.isEmpty(changes, "nothing is announced while the file is missing");
+      await restore();
+      await CoverProvider.recheckMissingAttachmentFiles(item);
+      assert.include(changes, item.id, "the cover change is announced");
+      await assertCover(await displayedCover(item), "attachment", TALL);
+    });
+
+    it("of a standalone attachment, replacing a placeholder cover", async function () {
+      const { attachment, restore } = await missingImage();
+      await assertCover(await displayedCover(attachment), "placeholder");
+      const changes = announcedChanges();
+
+      await restore();
+      await CoverProvider.recheckMissingAttachmentFiles(attachment);
+      assert.include(changes, attachment.id, "the cover change is announced");
+      await assertCover(await displayedCover(attachment), "attachment", TALL);
+    });
+
+    it("but not while the lookup is pending", async function () {
+      setPref("fetchISBNCover", true);
+      let release: (() => void) | undefined;
+      interceptOpenLibrary(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ bytes: online(WIDE) });
+          }),
+      );
+      onTeardown(() => release?.());
+      const item = await book({
+        setup: (item) => item.setField("ISBN", uniqueISBN()),
+      });
+      const { restore } = await missingImage(item);
+      const pending = displayedCover(item);
+      await until(() => release, "the ISBN lookup to start");
+      const changes = announcedChanges();
+
+      await restore();
+      await CoverProvider.recheckMissingAttachmentFiles(item);
+      assert.isEmpty(changes, "nothing is announced while pending");
+      release!();
+      await assertCover(await pending, "online", WIDE);
+    });
+
+    it("but does not retry a corrupt PDF that was present", async function () {
+      const item = await book();
+      const file = await scratchFile("book.pdf", new Uint8Array([1, 2, 3]));
+      await attach(file, "application/pdf", { parent: item });
+      await assertCover(await displayedCover(item), "placeholder");
+      const changes = announcedChanges();
+
+      // Repaired without Zotero noticing, the PDF would give a cover.
+      await IOUtils.write(file, pdfBytes());
+      await CoverProvider.recheckMissingAttachmentFiles(item);
+      assert.isEmpty(changes, "no cover change is announced");
+      await assertCover(await displayedCover(item), "placeholder");
     });
   });
 

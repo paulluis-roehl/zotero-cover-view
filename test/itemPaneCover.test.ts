@@ -1,5 +1,6 @@
 import { assert } from "chai";
 import {
+  createItems,
   focusWindow,
   GridFixture,
   onTeardown,
@@ -173,6 +174,36 @@ describe("Item Pane cover", function () {
     await paneShows(grid, (cover) => !cover.shown, "no section");
     await grid.select([]);
     await paneShows(grid, (cover) => !cover.shown, "no section");
+  });
+
+  it("shows the cover once a missing attachment file reappears and the item is selected again", async function () {
+    const grid = await openGrid({ items: 1 });
+    const [other] = grid.items;
+    // Out of view until its file is missing, so that no cover is looked up.
+    const [item] = await createItems(1);
+    const file = await scratchFile("cover.png", imageBytes(40, 60));
+    const bytes = await IOUtils.read(file);
+    track(
+      await Zotero.Attachments.linkFromFile({ file, parentItemID: item.id }),
+    );
+    await IOUtils.remove(file);
+    item.addToCollection(grid.collection.id);
+    await item.saveTx();
+    await grid.showsItems([other, item]);
+    await grid.select([item]);
+    await paneShows(grid, showsEmptySection, "an empty section");
+
+    // Restored outside Zotero, which notices nothing.
+    await IOUtils.write(file, bytes);
+    await grid.select([other]);
+    await paneShows(grid, showsEmptySection, "the other item's empty section");
+    await grid.select([item]);
+    const uri = Zotero.File.pathToFileURI(file);
+    await paneShows(
+      grid,
+      (cover) => cover.shown && cover.uri === uri,
+      "the attachment-derived cover",
+    );
   });
 
   it("refreshes an empty section when a cover lookup setting changes", async function () {
